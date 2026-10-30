@@ -1,0 +1,825 @@
+#!/usr/bin/env python3
+"""Lower a small scalar subset of clang -O0 LLVM IR to a CIVM bytecode module.
+
+The VM is stack-based, but this lowering maps every LLVM SSA value / alloca to a
+VM local slot. That avoids phi/stack-merge issues at -O0 and keeps the lowering
+mechanical:
+  add -> LOAD_LOCAL a; LOAD_LOCAL b; ADD; STORE_LOCAL result
+  br  -> LOAD_LOCAL cond; JNZ then; JMP else
+"""
+from __future__ import annotations
+
+import re
+import struct
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+from ..codegen.binary_writer import write_package
+from ..ffi.plan import PlanTable, build_sysv_plan
+
+OP_RET = 0x01
+OP_RET_VOID = 0x02
+OP_LOAD_CONST_I64 = 0x10
+OP_ADD = 0x11
+OP_SUB = 0x12
+OP_MUL = 0x13
+OP_XOR = 0x17
+OP_DIV_S = 0x18
+OP_DIV_U = 0x19
+OP_REM_S = 0x1A
+OP_REM_U = 0x1B
+OP_AND = 0x1C
+OP_OR = 0x1D
+OP_SHL = 0x1E
+OP_SHR_S = 0x1F
+OP_SHR_U = 0x24
+OP_LOAD_LOCAL = 0x20
+OP_STORE_LOCAL = 0x21
+OP_JMP = 0x30
+OP_JZ = 0x31
+OP_JNZ = 0x32
+OP_CMP_EQ = 0x33
+OP_CMP_LT = 0x34
+OP_CMP_LT_U = 0x35
+OP_CALL = 0x40
+OP_ALLOCA = 0x60
+OP_LOAD_MEM = 0x61
+OP_STORE_MEM = 0x62
+OP_MEMCPY = 0x63
+OP_MEMSET = 0x64
+OP_ADDR_CONST = 0x65
+OP_SET_MEM_TOP = 0x66
+OP_CALL_NATIVE = 0x70
+OP_CALL_VARARG = 0x71
+
+
+def split_top(s: str, sep: str = ",") -> list[str]:
+    parts: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    for ch in s:
+        if ch in "([{<":
+            depth += 1
+        elif ch in ")]}>":
+            depth -= 1
+        if ch == sep and depth == 0:
+            part = "".join(cur).strip()
+            if part:
+                parts.append(part)
+            cur = []
+        else:
+            cur.append(ch)
+    part = "".join(cur).strip()
+    if part:
+        parts.append(part)
+    return parts
+
+
+def strip_meta(line: str) -> str:
+    line = line.split(";", 1)[0].strip()
+    line = re.sub(r",\s*!dbg\s*!\d+", "", line)
+    line = re.sub(r"\s*!dbg\s*!\d+", "", line)
+    line = re.sub(r",\s*!llvm\.loop\s*!\d+", "", line)
+    line = re.sub(r"\s*!llvm\.loop\s*!\d+", "", line)
+    line = re.sub(r"\s*#\d+", "", line)
+    return line.strip()
+
+
+def align_up(n: int, a: int) -> int:
+    return (n + a - 1) // a * a
+
+
+def parse_structs(text: str) -> dict[str, list[str]]:
+    structs: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        m = re.match(r"^(%[\w.$]+)\s*=\s*type\s+\{(.*)\}\s*$", line.strip())
+        if m:
+            inner = m.group(2).strip()
+            structs[m.group(1)] = split_top(inner) if inner else []
+    return structs
+
+
+def struct_layout(fields: list[str], structs: dict[str, list[str]]) -> tuple[list[int], int, int]:
+    offsets: list[int] = []
+    off = 0
+    max_align = 1
+    for field in fields:
+        size, alignment = type_size_align(field, structs)
+        off = align_up(off, alignment)
+        offsets.append(off)
+        off += size
+        max_align = max(max_align, alignment)
+    return offsets, align_up(off, max_align), max_align
+
+
+def type_size_align(ty: str, structs: dict[str, list[str]]) -> tuple[int, int]:
+    ty = ty.strip()
+    if ty.startswith("%"):
+        fields = structs.get(ty)
+        if fields is None:
+            raise ValueError(f"unknown struct type {ty}")
+        _, size, alignment = struct_layout(fields, structs)
+        return size, alignment
+    if ty.startswith("["):
+        m = re.match(r"\[(\d+)\s+x\s+(.+)\]$", ty)
+        if not m:
+            raise ValueError(f"bad array type {ty}")
+        count = int(m.group(1))
+        elem_size, elem_align = type_size_align(m.group(2), structs)
+        return count * align_up(elem_size, elem_align), elem_align
+    if ty.startswith("{"):
+        inner = ty[1:-1].strip()
+        fields = split_top(inner) if inner else []
+        _, size, alignment = struct_layout(fields, structs)
+        return size, alignment
+    if ty == "ptr":
+        return 8, 8
+    if ty == "void":
+        return 0, 1
+    if ty == "float":
+        return 4, 4
+    if ty == "double":
+        return 8, 8
+    m = re.match(r"i(\d+)$", ty)
+    if m:
+        bits = int(m.group(1))
+        size = max(1, (bits + 7) // 8)
+        return size, size
+    raise ValueError(f"unsupported type {ty}")
+
+
+def array_element(ty: str) -> str | None:
+    m = re.match(r"\[(\d+)\s+x\s+(.+)\]$", ty.strip())
+    return m.group(2).strip() if m else None
+
+
+def struct_fields(ty: str, structs: dict[str, list[str]]) -> list[str] | None:
+    ty = ty.strip()
+    if ty.startswith("%"):
+        return structs.get(ty)
+    if ty.startswith("{"):
+        inner = ty[1:-1].strip()
+        return split_top(inner) if inner else []
+    return None
+
+
+def parse_llvm_cstring(body: str) -> bytes:
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 2 < len(body):
+            pair = body[i + 1 : i + 3]
+            if all(c in "0123456789abcdefABCDEF" for c in pair):
+                out.append(int(pair, 16))
+                i += 3
+                continue
+        if ch == "\\" and i + 1 < len(body):
+            esc = body[i + 1]
+            out.append({"n": 10, "t": 9, "r": 13, "\\": 92, '"': 34, "0": 0}.get(esc, ord(esc)))
+            i += 2
+            continue
+        out.append(ord(ch))
+        i += 1
+    return bytes(out)
+
+
+def parse_globals(text: str, structs: dict[str, list[str]]) -> tuple[dict[str, int], bytes]:
+    globals_map: dict[str, int] = {}
+    data = bytearray()
+    for line in text.splitlines():
+        line = strip_meta(line.strip())
+        m = re.match(r"^(@[A-Za-z0-9_.$]+)\s*=\s*(.+)$", line)
+        if not m:
+            continue
+        name, rest = m.group(1), m.group(2)
+        km = re.search(r"\b(global|constant)\b", rest)
+        if not km:
+            continue
+        tail = re.sub(r",\s*align\s+\d+\s*$", "", rest[km.end():].strip()).strip()
+        tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)\s+(.+)$", tail)
+        if not tm:
+            continue
+        ty, init = tm.group(1).strip(), tm.group(2).strip()
+        try:
+            size, align = type_size_align(ty, structs)
+        except ValueError:
+            continue
+        off = align_up(len(data), max(align, 1))
+        if off > len(data):
+            data.extend(b"\x00" * (off - len(data)))
+        raw = bytearray(size)
+        if init.startswith('c"') and init.endswith('"'):
+            raw_bytes = parse_llvm_cstring(init[2:-1])
+            raw[: min(len(raw_bytes), size)] = raw_bytes[:size]
+        elif init == "zeroinitializer" or init == "null":
+            pass
+        elif re.match(r"^-?\d+$", init):
+            v = int(init)
+            for i in range(size):
+                raw[i] = (v >> (8 * i)) & 0xFF
+        elif init in ("true", "false"):
+            raw[0] = 1 if init == "true" else 0
+        data.extend(raw)
+        globals_map[name] = off
+    if len(data) % 8:
+        data.extend(b"\x00" * (8 - len(data) % 8))
+    return globals_map, bytes(data)
+
+
+def parse_decls(text: str) -> dict[str, tuple[str, list[str], bool]]:
+    decls: dict[str, tuple[str, list[str], bool]] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        m = re.match(r"declare\s+(\S+)(?:\s+\([^)]*\))?\s+@([\w.$]+)\((.*)\)", line)
+        if not m:
+            continue
+        ret, name, params_text = m.group(1), m.group(2), m.group(3)
+        is_varargs = False
+        types: list[str] = []
+        for p in split_top(params_text):
+            p = p.strip()
+            if p == "...":
+                is_varargs = True
+                continue
+            tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)", p)
+            if tm:
+                types.append(tm.group(1))
+        decls[name] = (ret, types, is_varargs)
+    return decls
+
+
+@dataclass
+class Function:
+    name: str
+    ret: str
+    params: list[tuple[str, str]]
+    body: list[str]
+    index: int = 0
+    code: bytes = b""
+    local_count: int = 0
+
+
+class Lowerer:
+    def __init__(
+        self,
+        fn: Function,
+        func_indices: dict[str, int],
+        structs: dict[str, list[str]],
+        globals_map: dict[str, int],
+        global_data: bytes,
+        decls: dict[str, tuple[str, list[str], bool]],
+        plans: PlanTable,
+    ):
+        self.fn = fn
+        self.func_indices = func_indices
+        self.structs = structs
+        self.globals = globals_map
+        self.global_data = global_data
+        self.decls = decls
+        self.plans = plans
+        self.code = bytearray()
+        self.slots: dict[str, int] = {}
+        self.allocas: dict[str, int] = {}
+        self.next_slot = 0
+        self.label_pos: dict[str, int] = {}
+        self.patches: list[tuple[int, str]] = []
+
+        for _ptype, pname in fn.params:
+            self.slots[pname] = self.alloc_slot()
+
+    def alloc_slot(self) -> int:
+        s = self.next_slot
+        self.next_slot += 1
+        return s
+
+    def slot_for(self, name: str) -> int:
+        if name not in self.slots:
+            self.slots[name] = self.alloc_slot()
+        return self.slots[name]
+
+    def emit_u8(self, v: int) -> None:
+        self.code.append(v & 0xFF)
+
+    def emit_u16(self, v: int) -> None:
+        self.code += (v & 0xFFFF).to_bytes(2, "little")
+
+    def emit_u32(self, v: int) -> None:
+        self.code += (v & 0xFFFFFFFF).to_bytes(4, "little")
+
+    def emit_i64(self, v: int) -> None:
+        self.code += (v & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "little")
+
+    def emit_const(self, v: int) -> None:
+        self.emit_u8(OP_LOAD_CONST_I64)
+        self.emit_i64(v)
+
+    def load_slot(self, slot: int) -> None:
+        self.emit_u8(OP_LOAD_LOCAL)
+        self.emit_u16(slot)
+
+    def store_slot(self, slot: int) -> None:
+        self.emit_u8(OP_STORE_LOCAL)
+        self.emit_u16(slot)
+
+    def emit_operand(self, text: str) -> None:
+        m = re.search(r"@[\w.$]+", text)
+        if m:
+            name = m.group(0)
+            if name not in self.globals:
+                raise ValueError(f"unknown global {name}")
+            self.emit_u8(OP_ADDR_CONST)
+            self.emit_u32(self.globals[name])
+            return
+        m = re.search(r"%[\w.$]+", text)
+        if m:
+            self.load_slot(self.slot_for(m.group(0)[1:]))
+            return
+        if re.search(r"\btrue\b", text):
+            self.emit_const(1)
+            return
+        if re.search(r"\bfalse\b", text):
+            self.emit_const(0)
+            return
+        if re.search(r"\b(double|float)\b", text):
+            fnums = re.findall(r"[-+]?\d+(?:\.\d*)?(?:[eE][-+]?\d+)?", text)
+            if fnums:
+                value = float(fnums[-1])
+                if re.search(r"\bdouble\b", text):
+                    bits = struct.unpack("<Q", struct.pack("<d", value))[0]
+                else:
+                    bits = struct.unpack("<I", struct.pack("<f", value))[0]
+                self.emit_const(bits)
+                return
+        nums = re.findall(r"-?\d+", text)
+        if nums:
+            self.emit_const(int(nums[-1]))
+            return
+        raise ValueError(f"unsupported operand: {text!r}")
+
+    def type_size(self, ty: str) -> int:
+        return type_size_align(ty, self.structs)[0]
+
+    def emit_pointer(self, text: str) -> None:
+        text = text.strip()
+        if text.startswith("ptr "):
+            text = text[4:].strip()
+        if text.startswith("@"):
+            self.emit_operand(text)
+            return
+        if text.startswith("null"):
+            self.emit_const(0)
+            return
+        self.emit_operand(text)
+
+    def emit_index_add(self, index: str, step: int) -> None:
+        if step == 0:
+            return
+        if "%" not in index:
+            nums = re.findall(r"-?\d+", index)
+            if nums:
+                off = int(nums[-1]) * step
+                if off:
+                    self.emit_const(off)
+                    self.emit_u8(OP_ADD)
+                return
+        self.emit_operand(index)
+        self.emit_const(step)
+        self.emit_u8(OP_MUL)
+        self.emit_u8(OP_ADD)
+
+    def lower_gep(self, rhs: str, result: str | None) -> None:
+        if result is None:
+            raise ValueError("getelementptr without result")
+        rest = re.sub(r"^(?:inbounds\s+|nuw\s+)*", "", rhs[len("getelementptr"):].strip())
+        parts = split_top(rest)
+        if len(parts) < 2:
+            raise ValueError(f"bad getelementptr: {rhs}")
+        source_ty = parts[0].strip()
+        ptr = parts[1].strip()
+        indices = [p.strip() for p in parts[2:]]
+
+        self.emit_pointer(ptr)
+        current = source_ty
+        for pos, index in enumerate(indices):
+            if pos == 0:
+                self.emit_index_add(index, self.type_size(current))
+                continue
+            elem = array_element(current)
+            fields = struct_fields(current, self.structs)
+            if elem is not None:
+                self.emit_index_add(index, self.type_size(elem))
+                current = elem
+            elif fields is not None:
+                nums = re.findall(r"-?\d+", index)
+                if not nums:
+                    raise ValueError(f"non-constant struct index: {index}")
+                field_idx = int(nums[-1])
+                offsets, _, _ = struct_layout(fields, self.structs)
+                if field_idx < 0 or field_idx >= len(fields):
+                    raise ValueError(f"bad struct field index {field_idx}")
+                off = offsets[field_idx]
+                if off:
+                    self.emit_const(off)
+                    self.emit_u8(OP_ADD)
+                current = fields[field_idx]
+            else:
+                raise ValueError(f"too many gep indices for {current}")
+        self.store_slot(self.slot_for(result))
+
+    def jump(self, op: int, label: str) -> None:
+        self.emit_u8(op)
+        self.patches.append((len(self.code), label))
+        self.emit_u32(0)
+
+    def lower(self) -> None:
+        if self.fn.name == "main" and self.global_data:
+            self.emit_u8(OP_SET_MEM_TOP)
+            self.emit_u32(len(self.global_data))
+            data = self.global_data
+            for off in range(0, len(data), 8):
+                chunk = int.from_bytes(data[off : off + 8].ljust(8, b"\x00"), "little")
+                self.emit_const(chunk)
+                self.emit_u8(OP_ADDR_CONST)
+                self.emit_u32(off)
+                self.emit_u8(OP_STORE_MEM)
+                self.emit_u8(min(8, len(data) - off))
+
+        i = 0
+        while i < len(self.fn.body):
+            line = strip_meta(self.fn.body[i])
+            if not line or line.startswith("#dbg"):
+                i += 1
+                continue
+            m = re.match(r"^([\w.$]+):$", line)
+            if m:
+                self.label_pos[m.group(1)] = len(self.code)
+                i += 1
+                continue
+            if line.startswith("switch "):
+                header = line
+                cases: list[str] = []
+                i += 1
+                while i < len(self.fn.body):
+                    part = strip_meta(self.fn.body[i])
+                    closed = "]" in part
+                    part = part.replace("]", "").strip()
+                    if part:
+                        cases.append(part)
+                    i += 1
+                    if closed:
+                        break
+                self.lower_switch(header, cases)
+                continue
+            self.lower_instr(line)
+            i += 1
+
+        for pos, label in self.patches:
+            if label not in self.label_pos:
+                raise ValueError(f"unknown label %{label}")
+            target = self.label_pos[label]
+            self.code[pos:pos + 4] = target.to_bytes(4, "little")
+
+        self.fn.code = bytes(self.code)
+        self.fn.local_count = self.next_slot
+
+    def lower_switch(self, header: str, cases: list[str]) -> None:
+        m = re.match(r"switch\s+\S+\s+(%[\w.$]+),\s*label\s+%([\w.$]+)\s*\[?$", header)
+        if not m:
+            raise ValueError(f"bad switch: {header}")
+        cond, default = m.group(1), m.group(2)
+        for case in cases:
+            cm = re.match(r"\S+\s+(-?\d+),\s*label\s+%([\w.$]+)", case)
+            if not cm:
+                raise ValueError(f"bad switch case: {case}")
+            value = int(cm.group(1))
+            label = cm.group(2)
+            self.emit_operand(cond)
+            self.emit_const(value)
+            self.emit_u8(OP_CMP_EQ)
+            self.jump(OP_JNZ, label)
+        self.jump(OP_JMP, default)
+
+    def lower_instr(self, line: str) -> None:
+        result: str | None = None
+        rhs = line
+        if "=" in line:
+            lhs, rhs = line.split("=", 1)
+            lhs = lhs.strip()
+            rhs = rhs.strip()
+            if lhs.startswith("%"):
+                result = lhs[1:]
+
+        if rhs.startswith("alloca "):
+            if result is None:
+                raise ValueError("alloca without result")
+            ty = re.sub(r",\s*align\s+\d+\s*$", "", rhs[len("alloca "):]).strip()
+            if re.search(r",\s*i\d+\s+%", ty):
+                raise ValueError("VLA alloca unsupported")
+            size = self.type_size(ty)
+            if size <= 0 or size > 0xFFFF:
+                raise ValueError(f"bad alloca size {size} for {ty}")
+            self.emit_u8(OP_ALLOCA)
+            self.emit_u16(size)
+            self.store_slot(self.slot_for(result))
+            return
+
+        if rhs.startswith("store "):
+            m = re.match(r"store\s+(\S+)\s+([^,]+),\s*ptr\s+(.+)$", rhs)
+            if not m:
+                raise ValueError(f"bad store: {line}")
+            ty, value, ptr = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+            size = self.type_size(ty)
+            if size <= 0 or size > 8:
+                raise ValueError(f"aggregate store unsupported: {ty}")
+            self.emit_operand(value)
+            self.emit_pointer(ptr)
+            self.emit_u8(OP_STORE_MEM)
+            self.emit_u8(size)
+            return
+
+        if rhs.startswith("load "):
+            if result is None:
+                raise ValueError("load without result")
+            m = re.match(r"load\s+(\S+),\s*ptr\s+(.+)$", rhs)
+            if not m:
+                raise ValueError(f"bad load: {line}")
+            ty, ptr = m.group(1).strip(), m.group(2).strip()
+            size = self.type_size(ty)
+            if size <= 0 or size > 8:
+                raise ValueError(f"aggregate load unsupported: {ty}")
+            self.emit_pointer(ptr)
+            self.emit_u8(OP_LOAD_MEM)
+            self.emit_u8(size)
+            self.store_slot(self.slot_for(result))
+            return
+
+        m = re.match(
+            r"(add|sub|mul|sdiv|udiv|srem|urem|and|or|xor|shl|lshr|ashr)\s+"
+            r"(?:nsw\s+|nuw\s+|exact\s+)?\S+\s+(.+)$",
+            rhs,
+        )
+        if m:
+            if result is None:
+                raise ValueError(f"arithmetic without result: {line}")
+            a, b = split_top(m.group(2), ",")
+            self.emit_operand(a)
+            self.emit_operand(b)
+            self.emit_u8({
+                "add": OP_ADD,
+                "sub": OP_SUB,
+                "mul": OP_MUL,
+                "sdiv": OP_DIV_S,
+                "udiv": OP_DIV_U,
+                "srem": OP_REM_S,
+                "urem": OP_REM_U,
+                "and": OP_AND,
+                "or": OP_OR,
+                "xor": OP_XOR,
+                "shl": OP_SHL,
+                "lshr": OP_SHR_U,
+                "ashr": OP_SHR_S,
+            }[m.group(1)])
+            self.store_slot(self.slot_for(result))
+            return
+
+        m = re.match(r"icmp\s+(\w+)\s+\S+\s+(.+)$", rhs)
+        if m:
+            if result is None:
+                raise ValueError(f"icmp without result: {line}")
+            pred = m.group(1)
+            a, b = split_top(m.group(2), ",")
+            invert = False
+            if pred in ("eq",):
+                self.emit_operand(a)
+                self.emit_operand(b)
+                self.emit_u8(OP_CMP_EQ)
+            elif pred in ("ne",):
+                self.emit_operand(a)
+                self.emit_operand(b)
+                self.emit_u8(OP_CMP_EQ)
+                invert = True
+            elif pred in ("slt", "ult"):
+                self.emit_operand(a)
+                self.emit_operand(b)
+                self.emit_u8(OP_CMP_LT if pred == "slt" else OP_CMP_LT_U)
+            elif pred in ("sgt", "ugt"):
+                self.emit_operand(b)
+                self.emit_operand(a)
+                self.emit_u8(OP_CMP_LT if pred == "sgt" else OP_CMP_LT_U)
+            elif pred in ("sle", "ule"):
+                self.emit_operand(b)
+                self.emit_operand(a)
+                self.emit_u8(OP_CMP_LT if pred == "sle" else OP_CMP_LT_U)
+                invert = True
+            elif pred in ("sge", "uge"):
+                self.emit_operand(a)
+                self.emit_operand(b)
+                self.emit_u8(OP_CMP_LT if pred == "sge" else OP_CMP_LT_U)
+                invert = True
+            else:
+                raise ValueError(f"unsupported icmp predicate: {pred}")
+            if invert:
+                self.emit_const(1)
+                self.emit_u8(OP_XOR)
+            self.store_slot(self.slot_for(result))
+            return
+
+        m = re.match(r"(trunc|zext|sext)\s+(i\d+)\s+(.+?)\s+to\s+(i\d+)$", rhs)
+        if m:
+            if result is None:
+                raise ValueError(f"cast without result: {line}")
+            op, src_ty, value, dst_ty = m.group(1), m.group(2), m.group(3), m.group(4)
+            src_bits = int(src_ty[1:])
+            dst_bits = int(dst_ty[1:])
+            self.emit_operand(value)
+            if op == "trunc":
+                self.emit_const((1 << dst_bits) - 1)
+                self.emit_u8(OP_AND)
+            elif op == "zext":
+                self.emit_const((1 << src_bits) - 1)
+                self.emit_u8(OP_AND)
+            else:
+                shift = 64 - src_bits
+                if shift > 0:
+                    self.emit_const(shift)
+                    self.emit_u8(OP_SHL)
+                    self.emit_const(shift)
+                    self.emit_u8(OP_SHR_S)
+            self.store_slot(self.slot_for(result))
+            return
+
+        if rhs.startswith("getelementptr "):
+            self.lower_gep(rhs, result)
+            return
+
+        if rhs.startswith("br "):
+            m = re.match(r"br\s+i1\s+(%[\w.$]+),\s*label\s+%([\w.$]+),\s*label\s+%([\w.$]+)", rhs)
+            if m:
+                self.emit_operand(m.group(1))
+                self.jump(OP_JNZ, m.group(2))
+                self.jump(OP_JMP, m.group(3))
+                return
+            m = re.match(r"br\s+label\s+%([\w.$]+)", rhs)
+            if m:
+                self.jump(OP_JMP, m.group(1))
+                return
+            raise ValueError(f"bad br: {line}")
+
+        if rhs == "ret void":
+            self.emit_u8(OP_RET_VOID)
+            return
+        m = re.match(r"ret\s+\S+\s+(.+)$", rhs)
+        if m:
+            self.emit_operand(m.group(1))
+            self.emit_u8(OP_RET)
+            return
+
+        if re.match(r"(?:tail\s+)?call\s+void\s+@llvm\.(lifetime|dbg)\.", rhs):
+            return
+
+        m = re.match(r"(?:tail\s+)?call\s+void\s+@llvm\.(memcpy|memset)\.[^(]*\((.*)\)$", rhs)
+        if m:
+            kind = m.group(1)
+            args = split_top(m.group(2))
+            if len(args) < 3:
+                raise ValueError(f"bad {kind}: {line}")
+            self.emit_pointer(args[0])
+            if kind == "memcpy":
+                self.emit_pointer(args[1])
+                self.emit_operand(args[2])
+                self.emit_u8(OP_MEMCPY)
+            else:
+                self.emit_operand(args[1])
+                self.emit_operand(args[2])
+                self.emit_u8(OP_MEMSET)
+            return
+
+        m = re.match(r"(?:tail\s+)?call\s+(\S+)(?:\s+\([^)]*\))?\s+@([\w.$]+)\((.*)\)$", rhs)
+        if m:
+            ret_type, fname, args_text = m.group(1), m.group(2), m.group(3)
+            args = split_top(args_text) if args_text.strip() else []
+            arg_types: list[str] = []
+            arg_values: list[str] = []
+            for arg in args:
+                tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)\s+(.+)$", arg.strip())
+                if not tm:
+                    raise ValueError(f"bad call argument: {arg!r}")
+                arg_types.append(tm.group(1).strip())
+                arg_values.append(arg.strip())
+
+            if fname not in self.func_indices:
+                decl = self.decls.get(fname)
+                plan_ret = decl[0] if decl else ret_type
+                is_varargs = decl[2] if decl else ("..." in rhs)
+                plan = build_sysv_plan(fname, plan_ret, arg_types, is_varargs)
+                plan_index = self.plans.add(plan)
+                for value in arg_values:
+                    self.emit_operand(value)
+                self.emit_u8(OP_CALL_VARARG if is_varargs else OP_CALL_NATIVE)
+                self.emit_u16(plan_index)
+                if plan_ret != "void":
+                    if result is None:
+                        raise ValueError(f"call without result: {line}")
+                    self.store_slot(self.slot_for(result))
+                return
+
+            for value in arg_values:
+                self.emit_operand(value)
+            self.emit_u8(OP_CALL)
+            self.emit_u16(self.func_indices[fname])
+            if ret_type != "void":
+                if result is None:
+                    raise ValueError(f"call without result: {line}")
+                self.store_slot(self.slot_for(result))
+            return
+
+        if rhs == "unreachable":
+            self.emit_u8(OP_RET_VOID)
+            return
+
+        raise ValueError(f"unsupported instruction: {line}")
+
+
+def parse_functions(text: str) -> list[Function]:
+    lines = text.splitlines()
+    functions: list[Function] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        line = re.sub(r"\s*!dbg\s*!\d+", "", line).strip()
+        m = re.search(r"define\s+(.+?)\s+@([\w.$]+)\((.*)\)\s*(?:#\d+)?\s*\{", line)
+        if not m:
+            i += 1
+            continue
+        pre, name, params_text = m.group(1), m.group(2), m.group(3)
+        ret = pre.split()[-1]
+        params: list[tuple[str, str]] = []
+        for p in (split_top(params_text) if params_text.strip() else []):
+            pm = re.match(r"(i\d+|ptr|void)\s+.*?%([\w.$]+)", p)
+            if not pm:
+                raise ValueError(f"bad parameter: {p!r}")
+            params.append((pm.group(1), pm.group(2)))
+
+        body: list[str] = []
+        i += 1
+        while i < len(lines) and lines[i].strip() != "}":
+            body.append(lines[i])
+            i += 1
+        functions.append(Function(name=name, ret=ret, params=params, body=body))
+        i += 1
+    return functions
+
+
+def serialize(functions: list[Function]) -> bytes:
+    out = bytearray()
+    out += b"CIVM"
+    out += bytes([1, 1])
+    out += len(functions).to_bytes(2, "little")
+    out += (0).to_bytes(2, "little")
+    for fn in functions:
+        name = fn.name.encode()
+        if len(name) > 255:
+            raise ValueError("function name too long")
+        out += bytes([len(name)])
+        out += name
+        out += len(fn.params).to_bytes(2, "little")
+        out += fn.local_count.to_bytes(2, "little")
+        out += len(fn.code).to_bytes(4, "little")
+        out += fn.code
+    return bytes(out)
+
+
+def compile_text(text: str, source_name: str = "<input>"):
+    structs = parse_structs(text)
+    globals_map, global_data = parse_globals(text, structs)
+    decls = parse_decls(text)
+    functions = parse_functions(text)
+    indices = {fn.name: idx for idx, fn in enumerate(functions)}
+    plans = PlanTable()
+    for fn in functions:
+        fn.index = indices[fn.name]
+        Lowerer(fn, indices, structs, globals_map, global_data, decls, plans).lower()
+    module = serialize(functions)
+    plan_bytes = plans.serialize()
+    package = write_package(module, plan_bytes)
+    return package, module, plan_bytes, functions, plans
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("usage: lower.py input.ll [-o output.cib]", file=sys.stderr)
+        return 1
+    src = Path(sys.argv[1])
+    out_path = Path(sys.argv[3]) if len(sys.argv) >= 4 and sys.argv[2] == "-o" else src.with_suffix(".cib")
+    package, module, plan_bytes, functions, plans = compile_text(src.read_text(), str(src))
+    out_path.write_bytes(package)
+    print(f"wrote {out_path}: {len(functions)} functions, {len(plans.plans)} plans, {len(module)}B module")
+    for fn in functions:
+        print(f"  {fn.name}: params={len(fn.params)} locals={fn.local_count} code={len(fn.code)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,7 @@
+int main(void) {
+    int a[4];
+    a[0] = 1; a[1] = 2; a[2] = 3; a[3] = 4;
+    int sum = 0;
+    for (int i = 0; i < 4; i = i + 1) sum = sum + a[i];
+    return sum;
+}

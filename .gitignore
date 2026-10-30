@@ -1,0 +1,9 @@
+.commandcode/
+spike/
+build/
+runtime/.zig-cache/
+runtime/zig-out/
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/

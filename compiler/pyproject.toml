@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cinterp"
+version = "0.1.0"
+description = "Build-time C-to-bytecode compiler for the cinterp VM"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+cinterp = "cinterp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
