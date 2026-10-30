@@ -20,6 +20,21 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.args[2].locs[0].index, 0)
         self.assertEqual(plan.sse_count, 1)
 
+    def test_byval_and_sret_plans(self):
+        byval = build_sysv_plan("c_sum_s24", "i64", ["ptr"], byval_sizes=[24])
+        self.assertEqual(byval.args[0].locs[0].kind, "stack")
+        self.assertTrue(byval.args[0].is_struct)
+        self.assertEqual(byval.stack_size, 24)
+
+        sret = build_sysv_plan(
+            "c_make_s24", "void", ["ptr", "i64"], sret_idx=0, sret_size=24
+        )
+        self.assertTrue(sret.sret)
+        self.assertEqual(sret.args[0].locs[0].kind, "sret")
+        self.assertEqual(sret.args[1].locs[0].kind, "gpr")
+        self.assertEqual(sret.args[1].locs[0].index, 1)
+        self.assertEqual(sret.ret_size, 24)
+
     def test_plan_serialization_and_package(self):
         table = PlanTable()
         table.add(build_sysv_plan("puts", "i32", ["ptr"]))

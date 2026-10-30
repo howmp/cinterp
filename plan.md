@@ -11,7 +11,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 
 已完成：
 
-- **v1 实现（Linux x64）**：`compiler/`（C→CIVM、CIPL FFI 计划、CIPKG）+ `runtime/`（Zig VM、线性内存、SysV FFI、C ABI）+ `examples/`；`make test` 通过（runtime 2、compiler 6、端到端 7）。
+- **v1 实现（Linux x64）**：`compiler/`（C→CIVM、CIPL FFI 计划、CIPKG）+ `runtime/`（Zig VM、线性内存、SysV FFI、C ABI、`--lib`）+ `examples/`；`make test` 通过（runtime 2、compiler 7、端到端 8），含 MEMORY struct `byval`/`sret` FFI。
 - **x86-64 SysV 固定汇编引擎**：`spike/asm_abi_call` 5/5，`ReleaseSmall` 8.7K。
 - **前端 CallPlan 生成器（x86-64 SysV 原型）**：`spike/callplan_gen` 从 clang LLVM IR 生成 15 个计划，4/4，`ReleaseSmall` 8.7K。
 - **计划二进制序列化 + loader**：`spike/callplan_gen` 的 `plans.bin` 995 字节/15 计划；Zig loader round-trip、名称查找、解码后调用、错误路径全部通过；总计 6/6。
@@ -28,7 +28,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 
 下一步：
 
-- **编译器侧 struct FFI / callback**：runtime 引擎已由 spike 验证，编译器计划/字节码集成待做。
+- **编译器侧 register-class struct FFI / callback**：MEMORY `byval`/`sret` 已集成；小结构体寄存器分类与 callback 字节码/计划待做。
 - **多 ABI 计划生成**：Win64/Win32/ARM64 的 compiler plan builder 与 runtime 选择。
 - **C11 扩展**：bitfield（v1 排除）、float/`long double`、c-testsuite/chibicc 子集。
 - **M11 加固/发布**：ABI 边界、体积、错误路径、CI/发布检查。
@@ -155,9 +155,9 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 
 - `compiler/`：Python 包 + `cinterp compile`；LLVM IR 降级、线性内存、globals/字符串、CIPL FFI 计划、CIPKG 包。
 - `runtime/`：Zig VM、线性内存、`ci_vm_*` C ABI、SysV 固定汇编 FFI 引擎、`dlsym`/`libc` 解析、CIPKG 加载。
-- `examples/`：hello、arrays、structs、puts、printf、snprintf、malloc/free。
-- `make test`：runtime 2 单测 + compiler 6 单测 + 7 个端到端用例通过。
-- 后续：编译器侧 struct-by-value/sret FFI 计划、callback 集成、Win64/Win32/ARM64 计划生成、bitfield/float、c-testsuite。
+- `examples/`：hello、arrays、structs、puts、printf、snprintf、malloc/free、byval/sret struct FFI。
+- `make test`：runtime 2 单测 + compiler 7 单测 + 8 个端到端用例通过；包含 `byval`/`sret` MEMORY struct FFI（`--lib` 加载 helper `.so`，结果 28）。
+- 后续：register-class struct FFI、callback 集成、Win64/Win32/ARM64 计划生成、bitfield/float、c-testsuite。
 
 ## 4. Spike 计划
 
@@ -348,7 +348,8 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - [x] compiler Python 包 + CLI（C→CIVM/CIPL/CIPKG）
 - [x] runtime Zig VM + 线性内存 + SysV FFI + C ABI
 - [x] examples + 集成测试（`make test`）
-- [ ] 编译器侧 struct-by-value/sret FFI 计划
+- [x] 编译器侧 MEMORY struct `byval`/`sret` FFI 计划
+- [ ] register-class struct FFI（小结构体寄存器分类）
 - [ ] callback 字节码/计划集成
 - [ ] Win64/Win32/ARM64 计划生成与运行时选择
 - [ ] float/bitfield/c-testsuite
@@ -391,4 +392,5 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - **2026-10-30**：S9 线性内存/数组/结构体/指针/union/memcpy/memset/globals/字符串通过（sample1..12 12/12，21K）。
 - **2026-10-30**：完成 S12（ARM64 AAPCS64，qemu 6/6，12K）。
 - **2026-10-30**：S9 剩余扩展：bitfield（v1 排除）、float/`long double`、外部调用、c-testsuite。
-- **2026-10-30**：v1 Linux x64 实现落地：`compiler/` + `runtime/` + `examples/`；`make test`（runtime 2、compiler 6、端到端 7）通过。
+- **2026-10-30**：v1 Linux x64 实现落地：`compiler/` + `runtime/` + `examples/`；`make test`（runtime 2、compiler 7、端到端 8）通过。
+- **2026-10-30**：编译器侧 MEMORY struct `byval`/`sret` FFI + runtime `--lib` 加载；`ffi_structs` 结果 28。

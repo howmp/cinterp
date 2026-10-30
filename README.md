@@ -31,6 +31,12 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o buil
 # 7 2.5
 # result: 0
 
+# struct byval + sret FFI through a user shared library
+cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so
+PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_structs.c -o build/ffi_structs.cib
+./runtime/zig-out/bin/cinterp-run --lib build/libstruct_helpers.so build/ffi_structs.cib
+# result: 28
+
 # full test suite
 make test
 ```
@@ -55,10 +61,12 @@ The compiler currently supports:
   GEP, union aliasing, `memcpy`/`memset`, globals and string literals
 - external scalar/pointer/varargs calls (FFI plans), e.g. `puts`, `printf`,
   `malloc`, `free`, `snprintf`
+- external MEMORY structs by value (`byval`) and struct returns through `sret`
+  (see `examples/ffi_structs.c` + `--lib`)
 
 Not yet in the compiler (the runtime engines and spikes validate the ABI):
-compiler-emitted struct-by-value/sret FFI plans and callbacks; bitfields, float
-arithmetic, `long double`, external calls through arbitrary user `.so` files.
+callbacks, register-class struct FFI, bitfields, float arithmetic,
+`long double`.
 
 ## Binary formats
 
@@ -78,7 +86,7 @@ The runtime exports a C ABI from `runtime/src/vm.zig`:
 
 ```c
 ci_vm_create, ci_vm_destroy,
-ci_vm_load_module, ci_vm_load_plans, ci_vm_load_package,
+ci_vm_load_module, ci_vm_load_plans, ci_vm_load_package, ci_vm_load_library,
 ci_vm_run, ci_vm_last_error
 ```
 
@@ -99,7 +107,8 @@ runtime/               Zig VM/runtime (shipped)
   src/vm.zig           VM, linear memory, FFI marshaler, C ABI
   src/ffi/             plan loader, ABI loc types, asm engines
   src/main.zig         cinterp-run CLI
-examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free
+examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
+                       struct byval/sret FFI helper library
 scripts/test.sh        integration suite
 spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
 plan.md, dev.md        implementation plan and architecture/decisions

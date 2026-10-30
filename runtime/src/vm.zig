@@ -93,6 +93,7 @@ comptime {
 extern fn ci_abi_call_sysv64(frame: *SysV64Frame, target: *const anyopaque) callconv(.C) void;
 
 const RTLD_NOW: c_int = 2;
+const RTLD_GLOBAL: c_int = 0x100;
 extern fn dlopen(path: [*:0]const u8, mode: c_int) ?*anyopaque;
 extern fn dlsym(handle: ?*anyopaque, name: [*:0]const u8) ?*anyopaque;
 
@@ -107,6 +108,8 @@ pub const VM = struct {
     mem_top: usize = 0,
     plan_store: ?*plan_loader.Store = null,
     libc_handle: ?*anyopaque = null,
+    libraries: [8]?*anyopaque = [_]?*anyopaque{null} ** 8,
+    library_count: usize = 0,
     symbol_buf: [256]u8 = undefined,
     ret_buf: [256]u8 = undefined,
     frames: [MAX_FRAMES]Frame = undefined,
@@ -131,6 +134,17 @@ pub const VM = struct {
             std.heap.page_allocator.destroy(old);
             self.plan_store = null;
         }
+    }
+
+    pub fn loadLibrary(self: *VM, path: []const u8) !void {
+        if (path.len >= self.symbol_buf.len) return error.PathTooLong;
+        if (self.library_count >= self.libraries.len) return error.TooManyLibraries;
+        @memcpy(self.symbol_buf[0..path.len], path);
+        self.symbol_buf[path.len] = 0;
+        const cpath: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+        const handle = dlopen(cpath, RTLD_NOW | RTLD_GLOBAL) orelse return error.LibraryNotFound;
+        self.libraries[self.library_count] = handle;
+        self.library_count += 1;
     }
 
     pub fn loadPackage(self: *VM, bytes: []const u8) !void {
@@ -169,13 +183,18 @@ pub const VM = struct {
 
     fn invokeFfi(self: *VM, plan: abi.CallPlan, target: *const anyopaque) !void {
         var arg_block: [256]u8 = [_]u8{0} ** 256;
+        var sret_ptr: ?*anyopaque = null;
 
         var i: usize = plan.args.len;
         while (i > 0) {
             i -= 1;
             const arg = plan.args[i];
             const loc = arg.locs[0];
-            if (loc.kind == .sret) continue;
+            if (loc.kind == .sret) {
+                const v = try self.pop();
+                sret_ptr = @ptrFromInt(v.u);
+                continue;
+            }
             const off: usize = @intCast(loc.offset);
             if (arg.is_struct) {
                 const v = try self.pop();
@@ -197,7 +216,7 @@ pub const VM = struct {
         if (plan.sret) {
             const rs: usize = @intCast(plan.ret_size);
             if (rs > self.ret_buf.len) return error.ReturnTooLarge;
-            frame.sret = @ptrCast(&self.ret_buf);
+            frame.sret = sret_ptr orelse @ptrCast(&self.ret_buf);
         }
         marshal(&frame, plan, &arg_block, &stack_buf);
         ci_abi_call_sysv64(&frame, target);
@@ -206,7 +225,7 @@ pub const VM = struct {
         readRet(&frame, plan, &ret_block);
 
         if (plan.sret) {
-            try self.push(.{ .i = @bitCast(@intFromPtr(&self.ret_buf)) });
+            // sret calls in C are void; the callee wrote through the caller's pointer.
         } else if (plan.ret_locs.len == 1) {
             const loc = plan.ret_locs[0];
             const off: usize = @intCast(loc.offset);
@@ -732,6 +751,15 @@ pub export fn ci_vm_load_plans(machine: ?*VM, data: [*]const u8, size: usize) c_
 pub export fn ci_vm_load_package(machine: ?*VM, data: [*]const u8, size: usize) c_int {
     const m = machine orelse return -1;
     m.loadPackage(data[0..size]) catch |err| {
+        m.setError(@errorName(err));
+        return -1;
+    };
+    return 0;
+}
+
+pub export fn ci_vm_load_library(machine: ?*VM, path: [*:0]const u8) c_int {
+    const m = machine orelse return -1;
+    m.loadLibrary(std.mem.span(path)) catch |err| {
         m.setError(@errorName(err));
         return -1;
     };

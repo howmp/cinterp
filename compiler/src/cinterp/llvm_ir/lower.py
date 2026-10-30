@@ -185,6 +185,57 @@ def parse_llvm_cstring(body: str) -> bytes:
     return bytes(out)
 
 
+def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]]) -> bytes:
+    size, _ = type_size_align(ty, structs)
+    out = bytearray(size)
+    init = init.strip()
+    if init.startswith("{") and init.endswith("}"):
+        fields = struct_fields(ty, structs)
+        if fields is not None:
+            offsets, _, _ = struct_layout(fields, structs)
+            parts = split_top(init[1:-1]) if init[1:-1].strip() else []
+            for i, part in enumerate(parts):
+                if i >= len(fields):
+                    break
+                tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)\s+(.+)$", part.strip())
+                if not tm:
+                    continue
+                chunk = parse_constant_bytes(tm.group(1), tm.group(2), structs)
+                off = offsets[i]
+                n = min(len(chunk), max(0, size - off))
+                out[off : off + n] = chunk[:n]
+            return bytes(out)
+    if init.startswith("[") and init.endswith("]"):
+        elem = array_element(ty)
+        if elem is not None:
+            es, ea = type_size_align(elem, structs)
+            stride = align_up(es, ea)
+            parts = split_top(init[1:-1]) if init[1:-1].strip() else []
+            for i, part in enumerate(parts):
+                tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)\s+(.+)$", part.strip())
+                if not tm:
+                    continue
+                chunk = parse_constant_bytes(tm.group(1), tm.group(2), structs)
+                off = i * stride
+                n = min(len(chunk), max(0, size - off))
+                out[off : off + n] = chunk[:n]
+            return bytes(out)
+    if init.startswith('c"') and init.endswith('"'):
+        raw = parse_llvm_cstring(init[2:-1])
+        out[: min(len(raw), size)] = raw[:size]
+        return bytes(out)
+    if init in ("zeroinitializer", "null"):
+        return bytes(out)
+    if re.match(r"^-?\d+$", init):
+        value = int(init)
+        for i in range(size):
+            out[i] = (value >> (8 * i)) & 0xFF
+        return bytes(out)
+    if init in ("true", "false"):
+        out[0] = 1 if init == "true" else 0
+    return bytes(out)
+
+
 def parse_globals(text: str, structs: dict[str, list[str]]) -> tuple[dict[str, int], bytes]:
     globals_map: dict[str, int] = {}
     data = bytearray()
@@ -209,19 +260,7 @@ def parse_globals(text: str, structs: dict[str, list[str]]) -> tuple[dict[str, i
         off = align_up(len(data), max(align, 1))
         if off > len(data):
             data.extend(b"\x00" * (off - len(data)))
-        raw = bytearray(size)
-        if init.startswith('c"') and init.endswith('"'):
-            raw_bytes = parse_llvm_cstring(init[2:-1])
-            raw[: min(len(raw_bytes), size)] = raw_bytes[:size]
-        elif init == "zeroinitializer" or init == "null":
-            pass
-        elif re.match(r"^-?\d+$", init):
-            v = int(init)
-            for i in range(size):
-                raw[i] = (v >> (8 * i)) & 0xFF
-        elif init in ("true", "false"):
-            raw[0] = 1 if init == "true" else 0
-        data.extend(raw)
+        data.extend(parse_constant_bytes(ty, init, structs))
         globals_map[name] = off
     if len(data) % 8:
         data.extend(b"\x00" * (8 - len(data) % 8))
@@ -324,17 +363,17 @@ class Lowerer:
         self.emit_u16(slot)
 
     def emit_operand(self, text: str) -> None:
-        m = re.search(r"@[\w.$]+", text)
-        if m:
-            name = m.group(0)
+        globals_found = re.findall(r"@[\w.$]+", text)
+        if globals_found:
+            name = globals_found[-1]
             if name not in self.globals:
                 raise ValueError(f"unknown global {name}")
             self.emit_u8(OP_ADDR_CONST)
             self.emit_u32(self.globals[name])
             return
-        m = re.search(r"%[\w.$]+", text)
-        if m:
-            self.load_slot(self.slot_for(m.group(0)[1:]))
+        locals_found = re.findall(r"%[\w.$]+", text)
+        if locals_found:
+            self.load_slot(self.slot_for(locals_found[-1][1:]))
             return
         if re.search(r"\btrue\b", text):
             self.emit_const(1)
@@ -711,15 +750,34 @@ class Lowerer:
 
             if fname not in self.func_indices:
                 decl = self.decls.get(fname)
-                plan_ret = decl[0] if decl else ret_type
                 is_varargs = decl[2] if decl else ("..." in rhs)
-                plan = build_sysv_plan(fname, plan_ret, arg_types, is_varargs)
+                sret_idx: int | None = None
+                sret_size = 0
+                byval_sizes = [0] * len(args)
+                for idx, arg in enumerate(args):
+                    sm = re.search(r"\bsret\(([^)]+)\)", arg)
+                    if sm:
+                        sret_idx = idx
+                        sret_size = self.type_size(sm.group(1))
+                    bm = re.search(r"\bbyval\(([^)]+)\)", arg)
+                    if bm:
+                        byval_sizes[idx] = self.type_size(bm.group(1))
+                plan_ret = "void" if sret_idx is not None else ret_type
+                plan = build_sysv_plan(
+                    fname,
+                    plan_ret,
+                    arg_types,
+                    is_varargs,
+                    sret_idx,
+                    sret_size,
+                    byval_sizes,
+                )
                 plan_index = self.plans.add(plan)
                 for value in arg_values:
                     self.emit_operand(value)
                 self.emit_u8(OP_CALL_VARARG if is_varargs else OP_CALL_NATIVE)
                 self.emit_u16(plan_index)
-                if plan_ret != "void":
+                if ret_type != "void":
                     if result is None:
                         raise ValueError(f"call without result: {line}")
                     self.store_slot(self.slot_for(result))

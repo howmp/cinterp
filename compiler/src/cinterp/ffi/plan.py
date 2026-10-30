@@ -61,20 +61,40 @@ def _type_info(ty: str) -> tuple[str, int]:
     )
 
 
+def _align8(n: int) -> int:
+    return (n + 7) // 8 * 8
+
+
 def build_sysv_plan(
     name: str,
     ret_type: str,
     arg_types: list[str],
     is_varargs: bool = False,
+    sret_idx: int | None = None,
+    sret_size: int = 0,
+    byval_sizes: list[int] | None = None,
 ) -> CallPlan:
-    gpr = 0
+    gpr = 1 if sret_idx is not None else 0
     xmm = 0
     stack_size = 0
     arg_offset = 0
     args: list[ArgPlan] = []
     sse_count = 0
 
-    for ty in arg_types:
+    for i, ty in enumerate(arg_types):
+        if sret_idx == i:
+            args.append(ArgPlan([Loc("sret", 0, 8, arg_offset)], 8, 8, False))
+            arg_offset += 8
+            continue
+        if byval_sizes and byval_sizes[i] > 0:
+            size = byval_sizes[i]
+            arg_offset = _align8(arg_offset)
+            stack_size = _align8(stack_size)
+            loc = Loc("stack", stack_size, size, arg_offset)
+            args.append(ArgPlan([loc], size, 8, True))
+            stack_size += _align8(size)
+            arg_offset += size
+            continue
         kind, size = _type_info(ty)
         if kind == "void":
             raise UnsupportedFfi("void argument")
@@ -83,6 +103,7 @@ def build_sysv_plan(
                 loc = Loc("gpr", gpr, size, arg_offset)
                 gpr += 1
             else:
+                stack_size = _align8(stack_size)
                 loc = Loc("stack", stack_size, size, arg_offset)
                 stack_size += 8
         else:
@@ -91,28 +112,33 @@ def build_sysv_plan(
                 xmm += 1
                 sse_count += 1
             else:
+                stack_size = _align8(stack_size)
                 loc = Loc("stack", stack_size, size, arg_offset)
                 stack_size += 8
                 sse_count += 1
         args.append(ArgPlan([loc], size, max(1, size), False))
         arg_offset += 8
 
-    ret_kind, ret_size = _type_info(ret_type)
-    if ret_kind == "void":
+    if sret_idx is not None:
         ret_locs: list[Loc] = []
-    elif ret_kind == "gpr":
-        ret_locs = [Loc("rax", 0, ret_size, 0)]
-    elif ret_kind == "xmm":
-        ret_locs = [Loc("xmm0", 0, ret_size, 0)]
+        ret_size = sret_size
     else:
-        raise UnsupportedFfi(f"unsupported return type {ret_type!r}")
+        ret_kind, ret_size = _type_info(ret_type)
+        if ret_kind == "void":
+            ret_locs = []
+        elif ret_kind == "gpr":
+            ret_locs = [Loc("rax", 0, ret_size, 0)]
+        elif ret_kind == "xmm":
+            ret_locs = [Loc("xmm0", 0, ret_size, 0)]
+        else:
+            raise UnsupportedFfi(f"unsupported return type {ret_type!r}")
 
     return CallPlan(
         name=name,
         args=args,
         ret_locs=ret_locs,
-        stack_size=stack_size,
-        sret=False,
+        stack_size=_align8(stack_size),
+        sret=sret_idx is not None,
         sse_count=sse_count,
         ret_size=ret_size,
     )

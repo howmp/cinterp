@@ -52,4 +52,11 @@ printf '%s\n' "$printf_out" | grep -Fq "7 2.5"
 printf '%s\n' "$printf_out" | grep -Fq "result: 0"
 echo "OK ffi_printf"
 
+echo "== struct FFI (byval + sret)"
+cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o "$OUT/libstruct_helpers.so"
+python3 -m cinterp compile examples/ffi_structs.c -o "$OUT/ffi_structs.cib" >/dev/null
+struct_out="$("$RUNTIME" --lib "$OUT/libstruct_helpers.so" "$OUT/ffi_structs.cib" 2>&1)"
+printf '%s\n' "$struct_out" | grep -Fq "result: 28"
+echo "OK ffi_structs -> 28"
+
 echo "all tests passed"
