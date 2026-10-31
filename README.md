@@ -98,6 +98,8 @@ The compiler currently supports:
   `examples/float_math.c`, `examples/ffi_float.c`)
 - bitfields via clang's integer shift/mask lowering (see
   `examples/bitfields.c`)
+- `long double` storage/arithmetic (16-byte memory, 64-bit precision; no
+  long-double FFI/printf yet; see `examples/longdouble.c`)
 
 Not yet in the compiler (the runtime engines and spikes validate the ABI):
 aggregates larger than two eightbytes outside MEMORY/sret, `long double`.

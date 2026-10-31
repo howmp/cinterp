@@ -157,7 +157,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - `runtime/`：Zig VM、线性内存、`ci_vm_*` C ABI、SysV 固定汇编 FFI 引擎、`dlsym`/`libc` 解析、CIPKG 加载。
 - `examples/`：hello、arrays、structs、puts、printf、snprintf、malloc/free、MEMORY/register/mixed struct FFI、qsort callback、float32/double math/FFI、bitfields。
 - `make test`：runtime 3 单测 + compiler 11 单测 + 15 个端到端用例通过；`ffi_structs=28`、`ffi_regstruct=102`、`ffi_mixedstruct=11`、`ffi_qsort=1`、`math=8`、`float_math=8`、`ffi_float=5`、`bitfields=12`。
-- 后续：long double、c-testsuite、fuzz/外部 CI。
+- 后续：c-testsuite、fuzz/外部 CI。
 
 ## 4. Spike 计划
 
@@ -355,7 +355,8 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - [x] Win64/Win32/ARM64 计划生成与运行时选择（`scripts/test_cross.sh` 33/33）
 - [x] float32/double 算术/比较（fadd/fsub/fmul/fdiv、fcmp、fpext/fptrunc、sitofp/fptosi）
 - [x] bitfield（clang shift/mask lowering）
-- [ ] long double/c-testsuite
+- [x] long double（16B 存储、64-bit 精度、内部算术/转换；FFI/printf 未覆盖）
+- [ ] c-testsuite
 - [x] M11 基础加固：plan/package 边界校验、错误路径、CLI version/help
 - [x] M11 体积检查：`make size`（runtime 40K、qsort.cib 460B）；README 沙箱说明
 - [x] M11 本地发布检查：`make release-check`、package 截断 smoke
@@ -409,4 +410,5 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - **2026-10-31（周六）**：M11 基础加固——plan 数量/ABI 位置/offset/size 校验，错误路径测试（缺失输入、坏 package、未知符号），`--version`/`--help`。
 - **2026-10-31（周六）**：`make size`/`make release-check`；ReleaseSmall runtime 40K、hello.cib 78B、qsort.cib 460B。
 - **2026-10-31（周六）**：package 截断 smoke（0/4/5/14/15/30/100 字节）全部干净失败，无崩溃。
+- **2026-10-31（周六）**：long double 支持（16B 存储、64-bit 精度）；`longdouble=8`。
 - **2026-10-31（周六）**：多 ABI 落地——compiler `--target`、Win64/Win32/AAPCS64 plan builder、runtime `ffi/platform.zig`/`ffi/native.zig`、Win64/Win32/ARM64 frame/engine；交叉测试 33/33（Win64 11、Win32 11、ARM64 11）。

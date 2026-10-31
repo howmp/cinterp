@@ -38,6 +38,7 @@ run_case ffi_malloc 42
 run_case arrays 10
 run_case structs 34
 run_case ffi_snprintf 55
+run_case longdouble 8
 
 echo "== bitfields"
 python3 -m cinterp compile examples/bitfields.c -o "$OUT/bitfields.cib" >/dev/null
