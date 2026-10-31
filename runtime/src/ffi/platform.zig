@@ -75,6 +75,8 @@ pub const Arm64Frame = extern struct {
     _pad: u64,
     ret_v0: [2]u64,
     ret_v1: [2]u64,
+    ret_v2: [2]u64,
+    ret_v3: [2]u64,
 };
 
 pub const Frame = switch (abi_kind) {
@@ -169,11 +171,11 @@ extern fn ci_arm64_call(frame: *Arm64Frame, target: *const anyopaque) callconv(.
 
 extern const ci_cb_sysv_table: [256]*const anyopaque;
 
-fn readU64(args: *const [256]u8, off: usize) u64 {
+fn readU64(args: *const [4096]u8, off: usize) u64 {
     return @as(*align(1) const u64, @ptrCast(&args[off])).*;
 }
 
-fn configureSysV(frame: *SysVFrame, plan: abi.CallPlan, ret_buf: *[256]u8, stack_buf: *[256]u8, sret_ptr: ?*anyopaque) void {
+fn configureSysV(frame: *SysVFrame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
     frame.sse_count = plan.sse_count;
@@ -184,19 +186,19 @@ fn configureSysV(frame: *SysVFrame, plan: abi.CallPlan, ret_buf: *[256]u8, stack
     if (plan.sret) frame.sret = sret_ptr orelse @ptrCast(ret_buf);
 }
 
-fn configureWin64(frame: *Win64Frame, plan: abi.CallPlan, ret_buf: *[256]u8, stack_buf: *[256]u8, sret_ptr: ?*anyopaque) void {
+fn configureWin64(frame: *Win64Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
     frame.sse_count = plan.sse_count;
     if (plan.sret) frame.sret = sret_ptr orelse @ptrCast(ret_buf);
 }
 
-fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[256]u8, stack_buf: *[256]u8, sret_ptr: ?*anyopaque) void {
+fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     _ = ret_buf;
     _ = sret_ptr;
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
-    frame.conv = 0;
+    frame.conv = plan.conv;
     frame.ret_x87 = 0;
     for (plan.ret_locs) |loc| {
         if (loc.kind == .xmm0) frame.ret_x87 = 1;
@@ -204,13 +206,13 @@ fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[256]u8, sta
     }
 }
 
-fn configureArm64(frame: *Arm64Frame, plan: abi.CallPlan, ret_buf: *[256]u8, stack_buf: *[256]u8, sret_ptr: ?*anyopaque) void {
+fn configureArm64(frame: *Arm64Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
     if (plan.sret) frame.sret = if (sret_ptr) |p| @intFromPtr(p) else @intFromPtr(ret_buf);
 }
 
-pub fn configure(frame: *Frame, plan: abi.CallPlan, ret_buf: *[256]u8, stack_buf: *[256]u8, sret_ptr: ?*anyopaque) void {
+pub fn configure(frame: *Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     switch (abi_kind) {
         .sysv => configureSysV(@ptrCast(frame), plan, ret_buf, stack_buf, sret_ptr),
         .win64 => configureWin64(@ptrCast(frame), plan, ret_buf, stack_buf, sret_ptr),
@@ -219,7 +221,7 @@ pub fn configure(frame: *Frame, plan: abi.CallPlan, ret_buf: *[256]u8, stack_buf
     }
 }
 
-fn marshalSysV(frame: *SysVFrame, plan: abi.CallPlan, args: *const [256]u8, stack_buf: *[256]u8) void {
+fn marshalSysV(frame: *SysVFrame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
     for (plan.args) |arg| {
         for (arg.locs) |loc| {
             const off: usize = @intCast(loc.offset);
@@ -241,7 +243,7 @@ fn marshalSysV(frame: *SysVFrame, plan: abi.CallPlan, args: *const [256]u8, stac
     }
 }
 
-fn marshalWin64(frame: *Win64Frame, plan: abi.CallPlan, args: *const [256]u8, stack_buf: *[256]u8) void {
+fn marshalWin64(frame: *Win64Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
     for (plan.args) |arg| {
         for (arg.locs) |loc| {
             const off: usize = @intCast(loc.offset);
@@ -265,7 +267,7 @@ fn marshalWin64(frame: *Win64Frame, plan: abi.CallPlan, args: *const [256]u8, st
     }
 }
 
-fn marshalWin32(frame: *Win32Frame, plan: abi.CallPlan, args: *const [256]u8, stack_buf: *[256]u8) void {
+fn marshalWin32(frame: *Win32Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
     _ = frame;
     for (plan.args) |arg| {
         for (arg.locs) |loc| {
@@ -287,7 +289,7 @@ fn marshalWin32(frame: *Win32Frame, plan: abi.CallPlan, args: *const [256]u8, st
     }
 }
 
-fn marshalArm64(frame: *Arm64Frame, plan: abi.CallPlan, args: *const [256]u8, stack_buf: *[256]u8) void {
+fn marshalArm64(frame: *Arm64Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
     for (plan.args) |arg| {
         for (arg.locs) |loc| {
             const off: usize = @intCast(loc.offset);
@@ -309,7 +311,7 @@ fn marshalArm64(frame: *Arm64Frame, plan: abi.CallPlan, args: *const [256]u8, st
     }
 }
 
-pub fn marshal(frame: *Frame, plan: abi.CallPlan, args: *const [256]u8, stack_buf: *[256]u8) void {
+pub fn marshal(frame: *Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
     switch (abi_kind) {
         .sysv => marshalSysV(@ptrCast(frame), plan, args, stack_buf),
         .win64 => marshalWin64(@ptrCast(frame), plan, args, stack_buf),
@@ -318,7 +320,7 @@ pub fn marshal(frame: *Frame, plan: abi.CallPlan, args: *const [256]u8, stack_bu
     }
 }
 
-fn readRetSysV(frame: *const SysVFrame, plan: abi.CallPlan, ret: *[256]u8) void {
+fn readRetSysV(frame: *const SysVFrame, plan: abi.CallPlan, ret: *[4096]u8) void {
     for (plan.ret_locs) |loc| {
         const off: usize = @intCast(loc.offset);
         const n: usize = @intCast(loc.size);
@@ -333,7 +335,7 @@ fn readRetSysV(frame: *const SysVFrame, plan: abi.CallPlan, ret: *[256]u8) void 
     }
 }
 
-fn readRetWin64(frame: *const Win64Frame, plan: abi.CallPlan, ret: *[256]u8) void {
+fn readRetWin64(frame: *const Win64Frame, plan: abi.CallPlan, ret: *[4096]u8) void {
     for (plan.ret_locs) |loc| {
         const off: usize = @intCast(loc.offset);
         const n: usize = @intCast(loc.size);
@@ -347,7 +349,7 @@ fn readRetWin64(frame: *const Win64Frame, plan: abi.CallPlan, ret: *[256]u8) voi
     }
 }
 
-fn readRetWin32(frame: *const Win32Frame, plan: abi.CallPlan, ret: *[256]u8) void {
+fn readRetWin32(frame: *const Win32Frame, plan: abi.CallPlan, ret: *[4096]u8) void {
     for (plan.ret_locs) |loc| {
         const off: usize = @intCast(loc.offset);
         const n: usize = @intCast(loc.size);
@@ -375,7 +377,7 @@ fn readRetWin32(frame: *const Win32Frame, plan: abi.CallPlan, ret: *[256]u8) voi
     }
 }
 
-fn readRetArm64(frame: *const Arm64Frame, plan: abi.CallPlan, ret: *[256]u8) void {
+fn readRetArm64(frame: *const Arm64Frame, plan: abi.CallPlan, ret: *[4096]u8) void {
     for (plan.ret_locs) |loc| {
         const off: usize = @intCast(loc.offset);
         const n: usize = @intCast(loc.size);
@@ -384,12 +386,14 @@ fn readRetArm64(frame: *const Arm64Frame, plan: abi.CallPlan, ret: *[256]u8) voi
             .rdx => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_x1)[0..n]),
             .xmm0 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_v0)[0..n]),
             .xmm1 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_v1)[0..n]),
+            .xmm2 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_v2)[0..n]),
+            .xmm3 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_v3)[0..n]),
             else => unreachable,
         }
     }
 }
 
-pub fn readRet(frame: *const Frame, plan: abi.CallPlan, ret: *[256]u8) void {
+pub fn readRet(frame: *const Frame, plan: abi.CallPlan, ret: *[4096]u8) void {
     switch (abi_kind) {
         .sysv => readRetSysV(@ptrCast(frame), plan, ret),
         .win64 => readRetWin64(@ptrCast(frame), plan, ret),
@@ -407,7 +411,7 @@ fn invokeWin64(frame: *Win64Frame, target: *const anyopaque) void {
 }
 
 fn invokeWin32(frame: *Win32Frame, target: *const anyopaque) void {
-    ci_win32_call(frame, target, 0);
+    ci_win32_call(frame, target, frame.conv);
 }
 
 fn invokeArm64(frame: *Arm64Frame, target: *const anyopaque) void {
@@ -426,17 +430,17 @@ pub fn invoke(frame: *Frame, target: *const anyopaque) void {
 fn validateCommon(plan: abi.CallPlan, gpr_max: u16, xmm_max: u16, stack_only: bool) !void {
     if (plan.args.len > 16) return error.BadPlan;
     if (plan.ret_locs.len > 8) return error.BadPlan;
-    if (plan.stack_size > 256) return error.BadPlan;
-    if (plan.ret_size > 256) return error.BadPlan;
+    if (plan.stack_size > 4096) return error.BadPlan;
+    if (plan.ret_size > 4096) return error.BadPlan;
     if (plan.sse_count > 8) return error.BadPlan;
 
     for (plan.args) |arg| {
         if (arg.locs.len == 0) return error.BadPlan;
-        if (arg.size > 256) return error.BadPlan;
+        if (arg.size > 4096) return error.BadPlan;
         for (arg.locs) |loc| {
             const off: usize = loc.offset;
             const n: usize = loc.size;
-            if (off + n > 256) return error.BadPlan;
+            if (off + n > 4096) return error.BadPlan;
             switch (loc.kind) {
                 .gpr => {
                     if (stack_only or loc.index >= gpr_max or n > 8 or off + 8 > 256) return error.BadPlan;
@@ -446,7 +450,7 @@ fn validateCommon(plan: abi.CallPlan, gpr_max: u16, xmm_max: u16, stack_only: bo
                 },
                 .stack => {
                     const idx: usize = loc.index;
-                    if (idx + n > 256) return error.BadPlan;
+                    if (idx + n > 4096) return error.BadPlan;
                 },
                 .sret => {},
                 else => return error.BadPlan,
@@ -457,12 +461,12 @@ fn validateCommon(plan: abi.CallPlan, gpr_max: u16, xmm_max: u16, stack_only: bo
     for (plan.ret_locs) |loc| {
         const off: usize = loc.offset;
         const n: usize = loc.size;
-        if (off + n > 256) return error.BadPlan;
+        if (off + n > 4096) return error.BadPlan;
         switch (loc.kind) {
             .rax, .rdx => {
                 if (n > 8) return error.BadPlan;
             },
-            .xmm0, .xmm1, .st0 => {
+            .xmm0, .xmm1, .xmm2, .xmm3, .st0 => {
                 if (n > 16) return error.BadPlan;
             },
             else => return error.BadPlan,

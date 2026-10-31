@@ -40,6 +40,7 @@ ci_arm64_call:
 
     stp x0, x1, [x20, #216]
     stp q0, q1, [x20, #240]
+    stp q2, q3, [x20, #272]
 
     mov sp, x29
     ldp x21, x22, [sp, #-32]

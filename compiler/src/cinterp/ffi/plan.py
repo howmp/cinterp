@@ -38,6 +38,7 @@ class CallPlan:
     sret: bool = False
     sse_count: int = 0
     ret_size: int = 0
+    conv: int = 0
 
 
 def _type_info(ty: str) -> tuple[str, int]:
@@ -93,7 +94,10 @@ def _split_top(s: str) -> list[str]:
 def _aggregate_fields(ty: str, structs: dict[str, list[str]]) -> list[str] | None:
     ty = ty.strip()
     if ty.startswith("%"):
-        return structs.get(ty)
+        fields = structs.get(ty)
+        if fields is not None and fields and fields[0] == "__packed__":
+            return fields[1:]
+        return fields
     if ty.startswith("["):
         import re
 
@@ -107,10 +111,17 @@ def _aggregate_fields(ty: str, structs: dict[str, list[str]]) -> list[str] | Non
     return None
 
 
+def _packed_type(ty: str, structs: dict[str, list[str]]) -> bool:
+    fields = structs.get(ty.strip())
+    return bool(fields and fields[0] == "__packed__")
+
+
 def _type_align(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -> int:
     fields = _aggregate_fields(ty, structs)
     if fields is not None:
         if not fields:
+            return 1
+        if _packed_type(ty, structs):
             return 1
         return max(_type_align(f, structs, ptr_size) for f in fields)
     ty = ty.strip()
@@ -132,14 +143,17 @@ def _type_align(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -> in
 def _type_size(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -> int:
     fields = _aggregate_fields(ty, structs)
     if fields is not None:
+        packed = _packed_type(ty, structs)
         off = 0
         align = 1
         for field in fields:
             fa = _type_align(field, structs, ptr_size)
-            off = _align_up(off, fa)
+            if not packed:
+                off = _align_up(off, fa)
             off += _type_size(field, structs, ptr_size)
-            align = max(align, fa)
-        return _align_up(off, align)
+            if not packed:
+                align = max(align, fa)
+        return off if packed else _align_up(off, align)
     ty = ty.strip()
     if ty == "ptr":
         return ptr_size
@@ -164,6 +178,8 @@ def _is_aggregate(ty: str, structs: dict[str, list[str]]) -> bool:
 def _hfa_info(ty: str, structs: dict[str, list[str]], ptr_size: int = 8):
     fields = _aggregate_fields(ty, structs)
     if fields is None:
+        return None
+    if _packed_type(ty, structs):
         return None
     if len(fields) == 0 or len(fields) > 4:
         return None
@@ -473,6 +489,7 @@ def build_win32_plan(
     structs: dict[str, list[str]] | None = None,
     ptr_size: int = 4,
     named_count: int | None = None,
+    conv: int = 0,
 ) -> CallPlan:
     _ = is_varargs, named_count
     structs = structs or {}
@@ -540,6 +557,7 @@ def build_win32_plan(
         sret=has_sret,
         sse_count=0,
         ret_size=ret_size,
+        conv=conv,
     )
 
 
@@ -550,9 +568,9 @@ def _aapcs64_ret(ret_type: str, structs: dict[str, list[str]], ptr_size: int) ->
     hfa = _hfa_info(ty, structs, ptr_size)
     if hfa is not None:
         count, elem_size, size = hfa
-        if count > 2:
-            raise UnsupportedFfi("AAPCS64 HFA return with more than 2 vectors")
-        locs = [Loc("xmm0" if i == 0 else "xmm1", 0, elem_size, i * elem_size) for i in range(count)]
+        if count > 4:
+            raise UnsupportedFfi("AAPCS64 HFA return with more than 4 vectors")
+        locs = [Loc(("xmm0", "xmm1", "xmm2", "xmm3")[i], 0, elem_size, i * elem_size) for i in range(count)]
         return locs, size
     if _is_aggregate(ty, structs):
         size = _type_size(ty, structs, ptr_size)
@@ -690,7 +708,10 @@ def build_plan(
     structs: dict[str, list[str]] | None = None,
     ptr_size: int = 8,
     named_count: int | None = None,
+    conv: int = 0,
 ) -> CallPlan:
+    if conv != 0 and abi != "win32":
+        raise UnsupportedFfi("stdcall is only supported for win32")
     if abi == "sysv":
         return build_sysv_plan(
             name, ret_type, arg_types, is_varargs, sret_idx, sret_size, byval_sizes
@@ -703,7 +724,7 @@ def build_plan(
     if abi == "win32":
         return build_win32_plan(
             name, ret_type, arg_types, is_varargs, sret_idx, sret_size,
-            byval_sizes, structs, ptr_size, named_count,
+            byval_sizes, structs, ptr_size, named_count, conv,
         )
     if abi == "aapcs64":
         return build_aapcs64_plan(
@@ -744,6 +765,8 @@ _KINDS = {
     "xmm0": 6,
     "xmm1": 7,
     "st0": 8,
+    "xmm2": 9,
+    "xmm3": 10,
 }
 
 
@@ -760,7 +783,7 @@ def serialize_plans(plans: list[CallPlan], abi_id: int = 1) -> bytes:
 
     out = bytearray()
     out += b"CIPL"
-    out += bytes([2, abi_id & 0xFF])
+    out += bytes([3, abi_id & 0xFF])
     out += struct.pack("<HH", len(plans), 0)
     for plan in plans:
         name = plan.name.encode("utf-8")
@@ -769,12 +792,13 @@ def serialize_plans(plans: list[CallPlan], abi_id: int = 1) -> bytes:
         out += bytes([len(name)])
         out += name
         out += struct.pack(
-            "<HHHBBH",
+            "<HHHBBBH",
             len(plan.args),
             len(plan.ret_locs),
             plan.stack_size,
             1 if plan.sret else 0,
             plan.sse_count,
+            plan.conv,
             plan.ret_size,
         )
         for arg in plan.args:

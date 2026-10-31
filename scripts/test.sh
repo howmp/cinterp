@@ -99,6 +99,28 @@ ffloat_out="$("$RUNTIME" --lib "$OUT/libfloat_helpers.so" "$OUT/ffi_float.cib" 2
 printf '%s\n' "$ffloat_out" | grep -Fq "result: 5"
 echo "OK ffi_float -> 5"
 
+echo "== ABI edges / HFA / packed"
+cc -shared -fPIC -O0 examples/ffi_edges_helper.c -o "$OUT/libffi_edges_helper.so"
+python3 -m cinterp compile examples/ffi_edges.c -o "$OUT/ffi_edges.cib" >/dev/null
+edge_out="$("$RUNTIME" --lib "$OUT/libffi_edges_helper.so" "$OUT/ffi_edges.cib" 2>&1)"
+printf '%s\n' "$edge_out" | grep -Fq "result: 55"
+echo "OK ffi_edges -> 55"
+cc -shared -fPIC -O0 examples/ffi_hfa_helper.c -o "$OUT/libffi_hfa_helper.so"
+python3 -m cinterp compile examples/ffi_hfa.c -o "$OUT/ffi_hfa.cib" >/dev/null
+hfa_out="$("$RUNTIME" --lib "$OUT/libffi_hfa_helper.so" "$OUT/ffi_hfa.cib" 2>&1)"
+printf '%s\n' "$hfa_out" | grep -Fq "result: 120"
+echo "OK ffi_hfa -> 120"
+cc -shared -fPIC -O0 examples/ffi_hfa_stack_helper.c -o "$OUT/libffi_hfa_stack_helper.so"
+python3 -m cinterp compile examples/ffi_hfa_stack.c -o "$OUT/ffi_hfa_stack.cib" >/dev/null
+hfas_out="$("$RUNTIME" --lib "$OUT/libffi_hfa_stack_helper.so" "$OUT/ffi_hfa_stack.cib" 2>&1)"
+printf '%s\n' "$hfas_out" | grep -Fq "result: 45"
+echo "OK ffi_hfa_stack -> 45"
+cc -shared -fPIC -O0 examples/packed_helper.c -o "$OUT/libpacked_helper.so"
+python3 -m cinterp compile examples/packed.c -o "$OUT/packed.cib" >/dev/null
+packed_out="$("$RUNTIME" --lib "$OUT/libpacked_helper.so" "$OUT/packed.cib" 2>&1)"
+printf '%s\n' "$packed_out" | grep -Fq "result: 7"
+echo "OK packed -> 7"
+
 echo "== long double FFI"
 cc -shared -fPIC -O0 examples/ffi_longdouble_helper.c -o "$OUT/libffi_longdouble_helper.so"
 python3 -m cinterp compile examples/ffi_longdouble.c -o "$OUT/ffi_longdouble.cib" >/dev/null

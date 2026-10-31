@@ -1,7 +1,7 @@
 const std = @import("std");
 const abi = @import("abi.zig");
 
-pub const MAX_PLANS: usize = 32;
+pub const MAX_PLANS: usize = 256;
 pub const MAX_ARGS: usize = 16;
 pub const MAX_LOCS: usize = 8;
 pub const MAX_NAME: usize = 32;
@@ -26,6 +26,7 @@ pub const StoredPlan = struct {
     sret: bool = false,
     sse_count: u8 = 0,
     ret_size: u16 = 0,
+    conv: u8 = 0,
 };
 
 pub const Store = struct {
@@ -72,6 +73,7 @@ pub const Store = struct {
             .sret = p.sret,
             .sse_count = p.sse_count,
             .ret_size = p.ret_size,
+            .conv = p.conv,
         };
     }
 
@@ -115,6 +117,8 @@ fn readLoc(r: *Reader) !abi.Loc {
         6 => .xmm0,
         7 => .xmm1,
         8 => .st0,
+        9 => .xmm2,
+        10 => .xmm3,
         else => return error.BadLocKind,
     };
     const index = try r.readU16();
@@ -129,7 +133,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
     const magic = try r.take(4);
     if (!std.mem.eql(u8, magic, "CIPL")) return error.BadMagic;
     const version = try r.readU8();
-    if (version != 2) return error.BadVersion;
+    if (version != 2 and version != 3) return error.BadVersion;
     const abi_id = try r.readU8();
     if (abi_id < 1 or abi_id > 4) return error.BadAbi;
     const count = try r.readU16();
@@ -158,6 +162,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
         const stack_size = try r.readU16();
         const sret = try r.readU8();
         const sse_count = try r.readU8();
+        const conv: u8 = if (version >= 3) try r.readU8() else 0;
         const ret_size = try r.readU16();
 
         const ac: usize = args_count;
@@ -170,6 +175,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
         plan.sret = sret != 0;
         plan.sse_count = sse_count;
         plan.ret_size = ret_size;
+        plan.conv = conv;
 
         var ai: usize = 0;
         while (ai < ac) : (ai += 1) {

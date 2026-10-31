@@ -12,10 +12,54 @@ jobs:
       - run: make test
       - run: make c-testsuite
       - run: make size
-      - run: python3 scripts/fuzz.py --iterations 50
+      - run: make fuzz
+      - run: make fuzz-exec
+      - run: make differential
+      - run: make size-cross
+      - run: git clone --depth 1 https://github.com/c-testsuite/c-testsuite.git /tmp/c-testsuite
+      - run: python3 scripts/c_testsuite_upstream.py --dir /tmp/c-testsuite/tests/single-exec --jobs 4
       - name: cross-compile runtime
         run: |
           cd runtime
           zig build -Dtarget=x86_64-windows-gnu
           zig build -Dtarget=x86-windows-gnu
           zig build -Dtarget=aarch64-linux-gnu
+      - run: make release-artifacts
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: choco install llvm --no-progress -y
+      - shell: pwsh
+        run: |
+          $env:PATH = "C:\Program Files\LLVM\bin;$env:PATH"
+          cd runtime
+          zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSmall
+          cd ..
+          $env:PYTHONPATH = "compiler/src"
+          python -m cinterp compile examples/hello.c --target x86_64-windows -o build/hello-win64.cib
+          $out = & runtime/zig-out/bin/cinterp-run.exe build/hello-win64.cib 2>&1
+          $out
+          if (-not ($out -match 'result: 42')) { exit 1 }
+
+  arm64-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: sudo apt-get update && sudo apt-get install -y clang python3 make qemu-user gcc-aarch64-linux-gnu
+      - run: |
+          cd runtime
+          zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSmall
+          cd ..
+          PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c --target aarch64-linux -o build/hello-arm64.cib
+          qemu-aarch64 -L /usr/aarch64-linux-gnu runtime/zig-out/bin/cinterp-run build/hello-arm64.cib | grep 'result: 42'

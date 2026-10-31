@@ -9,7 +9,7 @@ pub const MAX_FUNCS: usize = 8;
 pub const MAX_NAME: usize = 32;
 pub const MAX_STACK: usize = 1024;
 pub const MAX_FRAMES: usize = 64;
-pub const MAX_MODULE: usize = 4096;
+pub const MAX_MODULE: usize = 262144;
 
 pub const OP_RET: u8 = 0x01;
 pub const OP_RET_VOID: u8 = 0x02;
@@ -55,6 +55,8 @@ pub const OP_JNZ: u8 = 0x32;
 pub const OP_CMP_EQ: u8 = 0x33;
 pub const OP_CMP_LT: u8 = 0x34;
 pub const OP_CALL: u8 = 0x40;
+pub const OP_FUNC_ADDR: u8 = 0x41;
+pub const OP_CALL_INDIRECT: u8 = 0x42;
 pub const OP_ALLOCA: u8 = 0x60;
 pub const OP_LOAD_MEM: u8 = 0x61;
 pub const OP_STORE_MEM: u8 = 0x62;
@@ -91,6 +93,7 @@ pub const OP_F128_FROM_I64: u8 = 0x89;
 pub const OP_F128_TO_I64: u8 = 0x8A;
 pub const OP_F128_FROM_F32: u8 = 0x8B;
 pub const OP_F128_TO_F32: u8 = 0x8C;
+pub const OP_ALLOCA_DYN: u8 = 0x8D;
 
 pub const Value = extern union {
     i: i64,
@@ -108,6 +111,7 @@ pub const Frame = struct {
     return_ip: usize,
     base: usize,
     func: usize,
+    mem_mark: usize,
 };
 
 const CallbackEntry = struct {
@@ -175,17 +179,18 @@ pub const VM = struct {
     func_count: usize = 0,
     values: [MAX_STACK]Value = undefined,
     sp: usize = 0,
-    mem: [65536]u8 = undefined,
+    mem: [1024 * 1024]u8 = undefined,
     mem_top: usize = 0,
     plan_store: ?*plan_loader.Store = null,
     libc_handle: ?*anyopaque = null,
     libraries: [8]?*anyopaque = [_]?*anyopaque{null} ** 8,
     library_count: usize = 0,
     symbol_buf: [256]u8 = undefined,
-    ret_buf: [256]u8 = undefined,
+    ret_buf: [4096]u8 = undefined,
     frames: [MAX_FRAMES]Frame = undefined,
     frame_count: usize = 0,
     result: i64 = 0,
+    safe: bool = false,
     last_error: [128]u8 = undefined,
 
     pub fn setError(self: *VM, msg: []const u8) void {
@@ -259,6 +264,14 @@ pub const VM = struct {
         return null;
     }
 
+    fn tryName(self: *VM, name: []const u8) ?*const anyopaque {
+        if (name.len >= self.symbol_buf.len) return null;
+        @memcpy(self.symbol_buf[0..name.len], name);
+        self.symbol_buf[name.len] = 0;
+        const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+        return self.searchSymbol(cname);
+    }
+
     fn resolveNative(self: *VM, name: []const u8) !*const anyopaque {
         if (name.len >= self.symbol_buf.len) return error.SymbolTooLong;
         @memcpy(self.symbol_buf[0..name.len], name);
@@ -274,12 +287,20 @@ pub const VM = struct {
                 if (self.searchSymbol(acname)) |sym| return sym;
             }
         }
+        if (name.len > 1 and name[0] == '_') {
+            if (self.tryName(name[1..])) |sym| return sym;
+        }
+        if (std.mem.indexOfScalar(u8, name, '@')) |at| {
+            if (at > 0) {
+                if (self.tryName(name[0..at])) |sym| return sym;
+            }
+        }
         return error.SymbolNotFound;
     }
 
     fn invokeFfi(self: *VM, plan: abi.CallPlan, target: *const anyopaque) !void {
         try platform.validate(plan);
-        var arg_block: [256]u8 = [_]u8{0} ** 256;
+        var arg_block: [4096]u8 = [_]u8{0} ** 4096;
         var sret_ptr: ?*anyopaque = null;
 
         var i: usize = plan.args.len;
@@ -307,7 +328,7 @@ pub const VM = struct {
             }
         }
 
-        var stack_buf: [256]u8 align(16) = [_]u8{0} ** 256;
+        var stack_buf: [4096]u8 align(16) = [_]u8{0} ** 4096;
         var frame: platform.Frame = std.mem.zeroes(platform.Frame);
         if (plan.sret and sret_ptr == null) {
             const rs: usize = @intCast(plan.ret_size);
@@ -317,7 +338,7 @@ pub const VM = struct {
         platform.marshal(&frame, plan, &arg_block, &stack_buf);
         platform.invoke(&frame, target);
 
-        var ret_block: [256]u8 = [_]u8{0} ** 256;
+        var ret_block: [4096]u8 = [_]u8{0} ** 4096;
         platform.readRet(&frame, plan, &ret_block);
 
         if (plan.sret) {
@@ -419,6 +440,7 @@ pub const VM = struct {
         const saved_sp = self.sp;
         const saved_frames = self.frame_count;
         const saved_result = self.result;
+        const saved_mem_top = self.mem_top;
         const base = saved_sp;
         const locals: usize = f.local_count;
         if (base + locals > MAX_STACK) return error.StackOverflow;
@@ -430,11 +452,13 @@ pub const VM = struct {
             self.sp = saved_sp;
             self.frame_count = saved_frames;
             self.result = saved_result;
+            self.mem_top = saved_mem_top;
             return err;
         };
         self.sp = saved_sp;
         self.frame_count = saved_frames;
         self.result = saved_result;
+        self.mem_top = saved_mem_top;
         return result;
     }
 
@@ -459,6 +483,7 @@ pub const VM = struct {
                     }
                     const fr = self.frames[self.frame_count - 1];
                     self.frame_count -= 1;
+                    self.mem_top = fr.mem_mark;
                     self.sp = base;
                     try self.push(v);
                     base = fr.base;
@@ -853,6 +878,7 @@ pub const VM = struct {
                     try self.push(.{ .i = @bitCast(addr64) });
                 },
                 OP_CALL_NATIVE, OP_CALL_VARARG => {
+                    if (self.safe) return error.SafeMode;
                     const idx = try readU16(code, &ip);
                     const store = self.plan_store orelse return error.NoPlans;
                     const i: usize = idx;
@@ -885,45 +911,52 @@ pub const VM = struct {
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
                     try self.push(.{ .i = @bitCast(addr) });
                 },
+                OP_ALLOCA_DYN => {
+                    const sv = try self.pop();
+                    if (sv.i < 0) return error.BadMemorySize;
+                    const n: usize = @intCast(sv.i);
+                    const start = (self.mem_top + 7) & ~@as(usize, 7);
+                    if (start + n > self.mem.len) return error.OutOfMemory;
+                    @memset(self.mem[start .. start + n], 0);
+                    self.mem_top = start + n;
+                    const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
+                    try self.push(.{ .i = @bitCast(addr) });
+                },
                 OP_LOAD_MEM => {
                     const size = try readU8(code, &ip);
+                    const n: usize = size;
+                    if (n == 0 or n > 8) return error.BadMemorySize;
                     const v = try self.pop();
                     const addr: usize = addressFromBits(v.i);
-                    switch (size) {
-                        1 => {
-                            const p: *align(1) const u8 = @ptrFromInt(addr);
-                            const x: i8 = @bitCast(p.*);
-                            try self.push(.{ .i = x });
-                        },
-                        2 => {
-                            const p: *align(1) const u16 = @ptrFromInt(addr);
-                            const x: i16 = @bitCast(p.*);
-                            try self.push(.{ .i = x });
-                        },
-                        4 => {
-                            const p: *align(1) const u32 = @ptrFromInt(addr);
-                            const x: i32 = @bitCast(p.*);
-                            try self.push(.{ .i = x });
-                        },
-                        8 => {
-                            const p: *align(1) const i64 = @ptrFromInt(addr);
-                            try self.push(.{ .i = p.* });
-                        },
-                        else => return error.BadMemorySize,
+                    if (self.safe and !memRange(self, @intCast(addr), n)) return error.BadAddress;
+                    var bits: u64 = 0;
+                    var i: usize = 0;
+                    while (i < n) : (i += 1) {
+                        const p: *align(1) const u8 = @ptrFromInt(addr + i);
+                        bits |= @as(u64, p.*) << @intCast(8 * i);
                     }
+                    if (n < 8) {
+                        const sign_bit: u64 = @as(u64, 1) << @intCast(8 * n - 1);
+                        if ((bits & sign_bit) != 0) {
+                            const mask: u64 = ~((@as(u64, 1) << @intCast(8 * n)) - 1);
+                            bits |= mask;
+                        }
+                    }
+                    try self.push(.{ .i = @bitCast(bits) });
                 },
                 OP_STORE_MEM => {
                     const size = try readU8(code, &ip);
+                    const n: usize = size;
+                    if (n == 0 or n > 8) return error.BadMemorySize;
                     const av = try self.pop();
                     const vv = try self.pop();
                     const addr: usize = addressFromBits(av.i);
+                    if (self.safe and !memRange(self, @intCast(addr), n)) return error.BadAddress;
                     const bits: u64 = @bitCast(vv.i);
-                    switch (size) {
-                        1 => @as(*align(1) u8, @ptrFromInt(addr)).* = @truncate(bits),
-                        2 => @as(*align(1) u16, @ptrFromInt(addr)).* = @truncate(bits),
-                        4 => @as(*align(1) u32, @ptrFromInt(addr)).* = @truncate(bits),
-                        8 => @as(*align(1) u64, @ptrFromInt(addr)).* = bits,
-                        else => return error.BadMemorySize,
+                    var i: usize = 0;
+                    while (i < n) : (i += 1) {
+                        const p: *align(1) u8 = @ptrFromInt(addr + i);
+                        p.* = @truncate(bits >> @intCast(8 * i));
                     }
                 },
                 OP_MEMCPY => {
@@ -934,7 +967,12 @@ pub const VM = struct {
                     const len: usize = @intCast(len_v.i);
                     const dst: [*]u8 = @ptrFromInt(addressFromBits(dst_v.i));
                     const src: [*]const u8 = @ptrFromInt(addressFromBits(src_v.i));
-                    @memcpy(dst[0..len], src[0..len]);
+                    if (self.safe and (!memRange(self, @intCast(addressFromBits(dst_v.i)), len) or !memRange(self, @intCast(addressFromBits(src_v.i)), len))) return error.BadAddress;
+                    if (@intFromPtr(dst) < @intFromPtr(src)) {
+                        std.mem.copyForwards(u8, dst[0..len], src[0..len]);
+                    } else if (@intFromPtr(dst) > @intFromPtr(src)) {
+                        std.mem.copyBackwards(u8, dst[0..len], src[0..len]);
+                    }
                 },
                 OP_MEMSET => {
                     const len_v = try self.pop();
@@ -944,6 +982,7 @@ pub const VM = struct {
                     const len: usize = @intCast(len_v.i);
                     const dst: [*]u8 = @ptrFromInt(addressFromBits(dst_v.i));
                     const byte: u8 = @truncate(@as(u64, @bitCast(val_v.i)));
+                    if (self.safe and !memRange(self, @intCast(addressFromBits(dst_v.i)), len)) return error.BadAddress;
                     @memset(dst[0..len], byte);
                 },
                 OP_CALL => {
@@ -960,6 +999,41 @@ pub const VM = struct {
                         .return_ip = ip,
                         .base = base,
                         .func = current,
+                        .mem_mark = self.mem_top,
+                    };
+                    self.frame_count += 1;
+                    base = callee_base;
+                    current = fidx;
+                    self.sp = callee_base + locals;
+                    if (self.sp > MAX_STACK) return error.StackOverflow;
+                    var li: usize = params;
+                    while (li < locals) : (li += 1) {
+                        self.values[callee_base + li] = .{ .i = 0 };
+                    }
+                    ip = 0;
+                },
+                OP_FUNC_ADDR => {
+                    const fn_idx = try readU16(code, &ip);
+                    const fidx: usize = fn_idx;
+                    if (fidx >= self.func_count) return error.BadFunction;
+                    try self.push(.{ .i = @intCast(fidx + 1) });
+                },
+                OP_CALL_INDIRECT => {
+                    const tag = try self.pop();
+                    if (tag.i <= 0) return error.BadFunction;
+                    const fidx: usize = @intCast(tag.i - 1);
+                    if (fidx >= self.func_count) return error.BadFunction;
+                    const callee = self.functions[fidx];
+                    const params: usize = callee.param_count;
+                    const locals: usize = callee.local_count;
+                    if (self.sp < params) return error.StackUnderflow;
+                    if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
+                    const callee_base = self.sp - params;
+                    self.frames[self.frame_count] = .{
+                        .return_ip = ip,
+                        .base = base,
+                        .func = current,
+                        .mem_mark = self.mem_top,
                     };
                     self.frame_count += 1;
                     base = callee_base;
@@ -1001,6 +1075,7 @@ pub const VM = struct {
     fn popF80(self: *VM) !f80 {
         const v = try self.pop();
         const addr = addressFromBits(v.i);
+        if (self.safe and !memRange(self, @intCast(addr), 16)) return error.BadAddress;
         return @as(*align(1) const f80, @ptrFromInt(addr)).*;
     }
 
@@ -1017,6 +1092,7 @@ pub const VM = struct {
     fn popF128(self: *VM) !f128 {
         const v = try self.pop();
         const addr = addressFromBits(v.i);
+        if (self.safe and !memRange(self, @intCast(addr), 16)) return error.BadAddress;
         return @as(*align(1) const f128, @ptrFromInt(addr)).*;
     }
 
@@ -1037,6 +1113,15 @@ fn pointerFromU64(v: u64) *anyopaque {
 
 fn addressFromBits(v: i64) usize {
     return @intCast(@as(u64, @bitCast(v)));
+}
+
+fn memRange(self: *VM, addr: u64, len: usize) bool {
+    const base: usize = @intCast(@intFromPtr(&self.mem[0]));
+    const a: usize = @intCast(addr);
+    if (a < base) return false;
+    const end = a + len;
+    if (end < a) return false;
+    return end <= base + self.mem.len;
 }
 
 fn readU64Ptr(ptr: [*]const u8) u64 {
@@ -1186,7 +1271,13 @@ pub export fn ci_vm_run(machine: ?*VM, entry: [*:0]const u8) c_int {
         return -1;
     };
     m.result = result;
-    return @intCast(result);
+    return @truncate(result);
+}
+
+pub export fn ci_vm_set_safe(machine: ?*VM, enabled: c_int) c_int {
+    const m = machine orelse return -1;
+    m.safe = enabled != 0;
+    return 0;
 }
 
 pub export fn ci_vm_last_error(machine: ?*VM) [*:0]const u8 {

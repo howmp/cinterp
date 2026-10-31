@@ -1,4 +1,4 @@
-pub const LocKind = enum { gpr, xmm, stack, sret, rax, rdx, xmm0, xmm1, st0 };
+pub const LocKind = enum { gpr, xmm, stack, sret, rax, rdx, xmm0, xmm1, st0, xmm2, xmm3 };
 
 pub const Loc = struct {
     kind: LocKind,
@@ -22,4 +22,5 @@ pub const CallPlan = struct {
     sret: bool = false,
     sse_count: u8 = 0,
     ret_size: u16 = 0,
+    conv: u8 = 0,
 };

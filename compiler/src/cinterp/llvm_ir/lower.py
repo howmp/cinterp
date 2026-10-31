@@ -59,6 +59,8 @@ OP_CMP_EQ = 0x33
 OP_CMP_LT = 0x34
 OP_CMP_LT_U = 0x35
 OP_CALL = 0x40
+OP_FUNC_ADDR = 0x41
+OP_CALL_INDIRECT = 0x42
 OP_ALLOCA = 0x60
 OP_LOAD_MEM = 0x61
 OP_STORE_MEM = 0x62
@@ -95,6 +97,7 @@ OP_F128_FROM_I64 = 0x89
 OP_F128_TO_I64 = 0x8A
 OP_F128_FROM_F32 = 0x8B
 OP_F128_TO_F32 = 0x8C
+OP_ALLOCA_DYN = 0x8D
 
 
 def split_top(s: str, sep: str = ",") -> list[str]:
@@ -136,24 +139,32 @@ def align_up(n: int, a: int) -> int:
 def parse_structs(text: str) -> dict[str, list[str]]:
     structs: dict[str, list[str]] = {}
     for line in text.splitlines():
-        m = re.match(r"^(%[\w.$-]+)\s*=\s*type\s+\{(.*)\}\s*$", line.strip())
+        m = re.match(r"^(%[\w.$-]+)\s*=\s*type\s+(<)?\{(.*)\}\s*(>)?\s*$", line.strip())
         if m:
-            inner = m.group(2).strip()
-            structs[m.group(1)] = split_top(inner) if inner else []
+            inner = m.group(3).strip()
+            fields = split_top(inner) if inner else []
+            if m.group(2):
+                fields = ["__packed__"] + fields
+            structs[m.group(1)] = fields
     return structs
 
 
 def struct_layout(fields: list[str], structs: dict[str, list[str]], ptr_size: int = 8) -> tuple[list[int], int, int]:
+    packed = bool(fields) and fields[0] == "__packed__"
+    if packed:
+        fields = fields[1:]
     offsets: list[int] = []
     off = 0
     max_align = 1
     for field in fields:
         size, alignment = type_size_align(field, structs, ptr_size)
-        off = align_up(off, alignment)
+        if not packed:
+            off = align_up(off, alignment)
         offsets.append(off)
         off += size
-        max_align = max(max_align, alignment)
-    return offsets, align_up(off, max_align), max_align
+        if not packed:
+            max_align = max(max_align, alignment)
+    return offsets, off if packed else align_up(off, max_align), max_align
 
 
 def type_size_align(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -> tuple[int, int]:
@@ -204,7 +215,10 @@ def array_element(ty: str) -> str | None:
 def struct_fields(ty: str, structs: dict[str, list[str]]) -> list[str] | None:
     ty = ty.strip()
     if ty.startswith("%"):
-        return structs.get(ty)
+        fields = structs.get(ty)
+        if fields is not None and fields and fields[0] == "__packed__":
+            return fields[1:]
+        return fields
     if ty.startswith("{"):
         inner = ty[1:-1].strip()
         return split_top(inner) if inner else []
@@ -341,6 +355,13 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_
         raw = parse_fp128_bytes(init)
         out[: min(len(raw), size)] = raw[:size]
         return bytes(out)
+    if ty in ("double", "float") and init.strip().startswith("0x"):
+        bits = hex_fp_bits(init.strip()[2:], ty)
+        if ty == "double":
+            out[:8] = bits.to_bytes(8, "little")
+        else:
+            out[:4] = bits.to_bytes(4, "little")
+        return bytes(out)
     if ty in ("double", "float"):
         try:
             value = float(init)
@@ -362,9 +383,79 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_
     return bytes(out)
 
 
-def parse_globals(text: str, structs: dict[str, list[str]], ptr_size: int = 8) -> tuple[dict[str, int], bytes]:
-    globals_map: dict[str, int] = {}
-    data = bytearray()
+def collect_global_relocs(
+    ty: str,
+    init: str,
+    base: int,
+    globals_map: dict[str, int],
+    structs: dict[str, list[str]],
+    ptr_size: int = 8,
+) -> list[tuple[int, str]]:
+    init = init.strip()
+    out: list[tuple[int, str]] = []
+    if ty.strip().startswith("ptr"):
+        m = re.search(r"@([\w.$-]+)", init)
+        if m:
+            out.append((base, "@" + m.group(1)))
+        return out
+    if init.startswith("{") and init.endswith("}"):
+        fields = struct_fields(ty, structs)
+        if fields is None:
+            return out
+        offsets, _, _ = struct_layout(fields, structs, ptr_size)
+        parts = split_top(init[1:-1]) if init[1:-1].strip() else []
+        for i, part in enumerate(parts):
+            if i >= len(fields):
+                break
+            tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", part.strip())
+            if tm:
+                out.extend(collect_global_relocs(
+                    tm.group(1), tm.group(2), base + offsets[i], globals_map, structs, ptr_size
+                ))
+        return out
+    if init.startswith("[") and init.endswith("]"):
+        elem = array_element(ty)
+        if elem is not None:
+            es, ea = type_size_align(elem, structs, ptr_size)
+            stride = align_up(es, ea)
+            parts = split_top(init[1:-1]) if init[1:-1].strip() else []
+            for i, part in enumerate(parts):
+                tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", part.strip())
+                if tm:
+                    out.extend(collect_global_relocs(
+                        tm.group(1), tm.group(2), base + i * stride, globals_map, structs, ptr_size
+                    ))
+        return out
+    return out
+
+
+def split_type_init(text: str) -> tuple[str, str] | None:
+    text = text.strip()
+    if not text:
+        return None
+    if text[0] in "[{":
+        stack = []
+        pairs = {"[": "]", "{": "}"}
+        for i, ch in enumerate(text):
+            if ch in "[{":
+                stack.append(pairs[ch])
+            elif ch in "]}":
+                if not stack or stack[-1] != ch:
+                    return None
+                stack.pop()
+                if not stack:
+                    ty = text[: i + 1]
+                    rest = text[i + 1 :].strip()
+                    return (ty, rest) if rest else None
+        return None
+    m = re.match(r"(%[\w.$-]+|\S+)\s+(.+)$", text)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def parse_globals_ex(
+    text: str, structs: dict[str, list[str]], ptr_size: int = 8
+) -> tuple[dict[str, int], bytes, list[tuple[int, str]]]:
+    specs: list[tuple[str, str, str]] = []
     for line in text.splitlines():
         line = strip_meta(line.strip())
         m = re.match(r"^(@[A-Za-z0-9_.$]+)\s*=\s*(.+)$", line)
@@ -375,33 +466,86 @@ def parse_globals(text: str, structs: dict[str, list[str]], ptr_size: int = 8) -
         if not km:
             continue
         tail = re.sub(r",\s*align\s+\d+\s*$", "", rest[km.end():].strip()).strip()
-        tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", tail)
+        tm = split_type_init(tail)
         if not tm:
             continue
-        ty, init = tm.group(1).strip(), tm.group(2).strip()
+        specs.append((name, tm[0].strip(), tm[1].strip()))
+
+    globals_map: dict[str, int] = {}
+    offsets: list[int] = []
+    data = bytearray()
+    for name, ty, _init in specs:
         try:
             size, align = type_size_align(ty, structs, ptr_size)
         except ValueError:
+            offsets.append(-1)
             continue
         off = align_up(len(data), max(align, 1))
         if off > len(data):
             data.extend(b"\x00" * (off - len(data)))
-        data.extend(parse_constant_bytes(ty, init, structs, ptr_size))
+        data.extend(b"\x00" * size)
         globals_map[name] = off
+        offsets.append(off)
+
+    relocs: list[tuple[int, int]] = []
+    for (name, ty, init), off in zip(specs, offsets):
+        if off < 0:
+            continue
+        try:
+            size, _ = type_size_align(ty, structs, ptr_size)
+            data[off : off + size] = parse_constant_bytes(ty, init, structs, ptr_size)
+        except ValueError:
+            continue
+        relocs.extend(collect_global_relocs(ty, init, off, globals_map, structs, ptr_size))
     if len(data) % 8:
         data.extend(b"\x00" * (8 - len(data) % 8))
-    return globals_map, bytes(data)
+    return globals_map, bytes(data), relocs
+
+
+def parse_globals(text: str, structs: dict[str, list[str]], ptr_size: int = 8) -> tuple[dict[str, int], bytes]:
+    globals_map, data, _relocs = parse_globals_ex(text, structs, ptr_size)
+    return globals_map, data
+
+def hex_fp_bits(hex_text: str, ty: str) -> int:
+    raw = int(hex_text, 16)
+    if ty == "float":
+        if len(hex_text) > 8:
+            value = struct.unpack("<d", raw.to_bytes(8, "little"))[0]
+            return struct.unpack("<I", struct.pack("<f", value))[0]
+        return raw & 0xFFFFFFFF
+    return raw & 0xFFFFFFFFFFFFFFFF
+
+
+def type_token(text: str) -> str:
+    m = re.search(
+        r"(\[[^\]]*\]|\{[^}]*\}|%[\w.$-]+|x86_fp80\b|fp128\b|double\b|float\b|void\b|ptr\b|i\d+\b)",
+        text,
+    )
+    return m.group(1) if m else text.strip()
+
+
+def normalize_llvm_name(raw: str) -> str:
+    import codecs
+    try:
+        text = codecs.decode(raw, "unicode_escape")
+    except Exception:
+        text = raw
+    if text.startswith("\x01"):
+        text = text[1:]
+    return text
 
 
 def parse_decls(text: str) -> dict[str, tuple[str, list[str], bool]]:
     decls: dict[str, tuple[str, list[str], bool]] = {}
     for line in text.splitlines():
         line = line.strip()
-        m = re.match(r"declare\s+(.+?)\s+@([\w.$-]+)\((.*)\)", line)
+        m = re.match(r"declare\s+(.+?)\s+(?:@([\w.$-]+)|@\"((?:\\.|[^\"])*)\")\s*\((.*)\)", line)
         if not m:
             continue
         pre = re.sub(r"\s*\([^()]*\)\s*$", "", m.group(1).strip()).strip()
-        ret, name, params_text = pre.split()[-1], m.group(2), m.group(3)
+        name = normalize_llvm_name(m.group(2) if m.group(2) is not None else m.group(3))
+        params_text = m.group(4)
+        ret = type_token(pre)
         is_varargs = False
         types: list[str] = []
         for p in split_top(params_text):
@@ -424,6 +568,7 @@ class Function:
     body: list[str]
     index: int = 0
     param_attrs: list[str] = field(default_factory=list)
+    is_varargs: bool = False
     code: bytes = b""
     local_count: int = 0
 
@@ -479,6 +624,7 @@ class Lowerer:
         structs: dict[str, list[str]],
         globals_map: dict[str, int],
         global_data: bytes,
+        global_relocs: list[tuple[int, int]],
         decls: dict[str, tuple[str, list[str], bool]],
         plans: PlanTable,
         functions_by_name: dict[str, Function],
@@ -491,6 +637,7 @@ class Lowerer:
         self.structs = structs
         self.globals = globals_map
         self.global_data = global_data
+        self.global_relocs = global_relocs
         self.decls = decls
         self.plans = plans
         self.functions_by_name = functions_by_name
@@ -504,6 +651,15 @@ class Lowerer:
         self.label_pos: dict[str, int] = {}
         self.patches: list[tuple[int, str]] = []
         self.select_id = 0
+        self.current_block = "entry"
+        self.phi_assignments: dict[str, list[tuple[str, str]]] = {}
+        for raw_line in fn.body:
+            pline = strip_meta(raw_line)
+            pm = re.match(r"%([\w.$-]+)\s*=\s*phi\s+\S+\s+(.*)$", pline)
+            if not pm:
+                continue
+            for value, label in re.findall(r"\[\s*(.+?)\s*,\s*%([\w.$-]+)\s*\]", pm.group(2)):
+                self.phi_assignments.setdefault(label, []).append((pm.group(1), value))
 
         for _ptype, pname in fn.params:
             self.slots[pname] = self.alloc_slot()
@@ -543,14 +699,23 @@ class Lowerer:
         self.emit_u16(slot)
 
     def emit_operand(self, text: str) -> None:
+        stripped_text = text.strip()
+        if stripped_text.startswith("getelementptr "):
+            self.emit_gep_address(stripped_text)
+            return
         globals_found = re.findall(r"@[\w.$-]+", text)
         if globals_found:
             name = globals_found[-1]
-            if name not in self.globals:
-                raise ValueError(f"unknown global {name}")
-            self.emit_u8(OP_ADDR_CONST)
-            self.emit_u32(self.globals[name])
-            return
+            if name in self.globals:
+                self.emit_u8(OP_ADDR_CONST)
+                self.emit_u32(self.globals[name])
+                return
+            key = name[1:]
+            if key in self.func_indices:
+                self.emit_u8(OP_FUNC_ADDR)
+                self.emit_u16(self.func_indices[key])
+                return
+            raise ValueError(f"unknown global {name}")
         locals_found = re.findall(r"%[\w.$-]+", text)
         if locals_found:
             self.load_slot(self.slot_for(locals_found[-1][1:]))
@@ -573,8 +738,15 @@ class Lowerer:
         if re.search(r"\btrue\b", text):
             self.emit_const(1)
             return
+        if re.search(r"\bnull\b|\bzeroinitializer\b", text):
+            self.emit_const(0)
+            return
         if re.search(r"\bfalse\b", text):
             self.emit_const(0)
+            return
+        hm = re.search(r"\b(double|float)\b.*?0x([0-9A-Fa-f]+)", text)
+        if hm:
+            self.emit_const(hex_fp_bits(hm.group(2), hm.group(1)))
             return
         if re.search(r"\b(double|float)\b", text):
             fnums = re.findall(r"[-+]?\d+(?:\.\d*)?(?:[eE][-+]?\d+)?", text)
@@ -599,6 +771,10 @@ class Lowerer:
         stripped = text.strip()
         if ty in ("x86_fp80", "fp128"):
             self.emit_operand(text)
+            return
+        hm = re.search(r"0x([0-9A-Fa-f]+)", stripped)
+        if hm and not re.search(r"[%@]", stripped):
+            self.emit_const(hex_fp_bits(hm.group(1), ty))
             return
         if not re.search(r"[%@]", stripped) and re.fullmatch(
             r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?", stripped
@@ -633,6 +809,9 @@ class Lowerer:
         text = text.strip()
         if text.startswith("ptr "):
             text = text[4:].strip()
+        if text.startswith("getelementptr "):
+            self.emit_gep_address(text)
+            return
         if text.startswith("@"):
             self.emit_operand(text)
             return
@@ -657,10 +836,11 @@ class Lowerer:
         self.emit_u8(OP_MUL)
         self.emit_u8(OP_ADD)
 
-    def lower_gep(self, rhs: str, result: str | None) -> None:
-        if result is None:
-            raise ValueError("getelementptr without result")
+    def emit_gep_address(self, rhs: str) -> None:
         rest = re.sub(r"^(?:inbounds\s+|nuw\s+)*", "", rhs[len("getelementptr"):].strip())
+        rest = re.sub(r",\s*align\s+\d+\s*$", "", rest).strip()
+        if rest.startswith("(") and rest.endswith(")"):
+            rest = rest[1:-1]
         parts = split_top(rest)
         if len(parts) < 2:
             raise ValueError(f"bad getelementptr: {rhs}")
@@ -694,7 +874,17 @@ class Lowerer:
                 current = fields[field_idx]
             else:
                 raise ValueError(f"too many gep indices for {current}")
+
+    def lower_gep(self, rhs: str, result: str | None) -> None:
+        if result is None:
+            raise ValueError("getelementptr without result")
+        self.emit_gep_address(rhs)
         self.store_slot(self.slot_for(result))
+
+    def emit_phi_assignments(self, block: str) -> None:
+        for result, value in self.phi_assignments.get(block, []):
+            self.emit_operand(value)
+            self.store_slot(self.slot_for(result))
 
     def jump(self, op: int, label: str) -> None:
         self.emit_u8(op)
@@ -713,6 +903,20 @@ class Lowerer:
                 self.emit_u32(off)
                 self.emit_u8(OP_STORE_MEM)
                 self.emit_u8(min(8, len(data) - off))
+            for field_off, target_name in self.global_relocs:
+                if target_name in self.globals:
+                    self.emit_u8(OP_ADDR_CONST)
+                    self.emit_u32(self.globals[target_name])
+                else:
+                    key = target_name[1:]
+                    if key not in self.func_indices:
+                        continue
+                    self.emit_u8(OP_FUNC_ADDR)
+                    self.emit_u16(self.func_indices[key])
+                self.emit_u8(OP_ADDR_CONST)
+                self.emit_u32(field_off)
+                self.emit_u8(OP_STORE_MEM)
+                self.emit_u8(self.ptr_size)
 
         i = 0
         while i < len(self.fn.body):
@@ -722,9 +926,12 @@ class Lowerer:
                 continue
             m = re.match(r"^([\w.$-]+):$", line)
             if m:
+                self.current_block = m.group(1)
                 self.label_pos[m.group(1)] = len(self.code)
                 i += 1
                 continue
+            if line.startswith(("br ", "switch ", "ret ", "unreachable")):
+                self.emit_phi_assignments(self.current_block)
             if line.startswith("switch "):
                 header = line
                 cases: list[str] = []
@@ -783,8 +990,17 @@ class Lowerer:
             if result is None:
                 raise ValueError("alloca without result")
             ty = re.sub(r",\s*align\s+\d+\s*$", "", rhs[len("alloca "):]).strip()
-            if re.search(r",\s*i\d+\s+%", ty):
-                raise ValueError("VLA alloca unsupported")
+            parts = split_top(ty, ",")
+            ty = parts[0].strip()
+            if len(parts) > 1:
+                size = self.type_size(ty)
+                self.emit_operand(parts[1].strip())
+                if size != 1:
+                    self.emit_const(size)
+                    self.emit_u8(OP_MUL)
+                self.emit_u8(OP_ALLOCA_DYN)
+                self.store_slot(self.slot_for(result))
+                return
             size = self.type_size(ty)
             if size <= 0 or size > 0xFFFF:
                 raise ValueError(f"bad alloca size {size} for {ty}")
@@ -793,11 +1009,34 @@ class Lowerer:
             self.store_slot(self.slot_for(result))
             return
 
+        if rhs.startswith("phi "):
+            if result is None:
+                raise ValueError("phi without result")
+            self.slot_for(result)
+            return
+
         if rhs.startswith("store "):
-            m = re.match(r"store\s+(\[[^\]]*\]|\{[^}]*\}|[^,]+?)\s+([^,]+),\s*ptr\s+(.+)$", rhs)
-            if not m:
+            rhs = re.sub(r"^store\s+(?:volatile|atomic)\s+", "store ", rhs)
+            st = split_type_init(rhs[len("store "):])
+            if st is None:
                 raise ValueError(f"bad store: {line}")
-            ty, value, ptr = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+            ty, tail = st
+            depth = 0
+            value = ""
+            ptr = ""
+            for pos, ch in enumerate(tail):
+                if ch in "([{":
+                    depth += 1
+                elif ch in ")]}":
+                    depth -= 1
+                elif ch == "," and depth == 0:
+                    rest = tail[pos + 1 :].lstrip()
+                    if rest.startswith("ptr "):
+                        value = tail[:pos].strip()
+                        ptr = re.sub(r",\s*align\s+\d+\s*$", "", rest[4:].strip())
+                        break
+            if not value or not ptr:
+                raise ValueError(f"bad store: {line}")
             size = self.type_size(ty)
             if size <= 0:
                 raise ValueError(f"aggregate store unsupported: {ty}")
@@ -827,6 +1066,7 @@ class Lowerer:
         if rhs.startswith("load "):
             if result is None:
                 raise ValueError("load without result")
+            rhs = re.sub(r"^load\s+(?:volatile|atomic)\s+", "load ", rhs)
             m = re.match(r"load\s+(\[[^\]]*\]|\{[^}]*\}|[^,]+?)\s*,\s*ptr\s+(.+)$", rhs)
             if not m:
                 raise ValueError(f"bad load: {line}")
@@ -1023,7 +1263,7 @@ class Lowerer:
             return
 
         m = re.match(
-            r"(trunc|zext|sext|fptosi|sitofp|fpext|fptrunc)\s+(\S+)\s+(.+?)\s+to\s+(\S+)$",
+            r"(trunc|zext|sext|fptosi|sitofp|fpext|fptrunc|inttoptr|ptrtoint|bitcast)\s+(\S+)\s+(.+?)\s+to\s+(\S+)$",
             rhs,
         )
         if m:
@@ -1036,7 +1276,15 @@ class Lowerer:
                 self.emit_float_operand(value, src_ty)
             else:
                 self.emit_operand(value)
-            if op == "fptosi":
+            if op in ("inttoptr", "ptrtoint"):
+                if op == "ptrtoint" and dst_ty.startswith("i"):
+                    bits = int(dst_ty[1:])
+                    if bits < 64:
+                        self.emit_const((1 << bits) - 1)
+                        self.emit_u8(OP_AND)
+            elif op == "bitcast":
+                pass
+            elif op == "fptosi":
                 if src_ty == "x86_fp80":
                     self.emit_u8(OP_F80_TO_I64)
                 elif src_ty == "fp128":
@@ -1149,6 +1397,10 @@ class Lowerer:
             return
 
         if rhs.startswith("br "):
+            cm = re.match(r"br\s+i1\s+(true|false),\s*label\s+%([\w.$-]+),\s*label\s+%([\w.$-]+)", rhs)
+            if cm:
+                self.jump(OP_JMP, cm.group(2) if cm.group(1) == "true" else cm.group(3))
+                return
             m = re.match(r"br\s+i1\s+(%[\w.$-]+),\s*label\s+%([\w.$-]+),\s*label\s+%([\w.$-]+)", rhs)
             if m:
                 self.emit_operand(m.group(1))
@@ -1173,6 +1425,15 @@ class Lowerer:
             self.emit_u8(OP_RET)
             return
 
+        if re.match(r"(?:tail\s+)?call\s+void\s+null\(\)$", rhs):
+            return
+
+        if re.match(r"(?:tail\s+)?call\s+(?:ptr|void)\s+@llvm\.stack(save|restore)", rhs):
+            if result is not None:
+                self.emit_const(0)
+                self.store_slot(self.slot_for(result))
+            return
+
         if re.match(r"(?:tail\s+)?call\s+void\s+@llvm\.(lifetime|dbg)\.", rhs):
             return
 
@@ -1193,18 +1454,42 @@ class Lowerer:
                 self.emit_u8(OP_MEMSET)
             return
 
-        m = re.match(r"(?:tail\s+)?call\s+(.*?)\s+@([\w.$-]+)\((.*)\)$", rhs)
+        im = re.match(r"(?:tail\s+)?call\s+(.*?)\s+%([\w.$-]+)\s*\((.*)\)$", rhs)
+        if im:
+            ret_expr = im.group(1).strip()
+            ret_expr = re.sub(r"^(?:x86_stdcallcc|x86_fastcallcc|x86_thiscallcc)\s+", "", ret_expr)
+            ret_type = type_token(ret_expr)
+            args_text = im.group(3)
+            args = split_top(args_text) if args_text.strip() else []
+            for arg in args:
+                self.emit_operand(arg.strip())
+            self.emit_operand("%" + im.group(2))
+            self.emit_u8(OP_CALL_INDIRECT)
+            if ret_type != "void":
+                if result is None:
+                    raise ValueError(f"call without result: {line}")
+                self.store_slot(self.slot_for(result))
+            return
+
+        m = re.match(r"(?:tail\s+)?call\s+(.*?)\s+(?:@([\w.$-]+)|@\"((?:\\.|[^\"])*)\")\s*\((.*)\)$", rhs)
         if m:
             ret_expr = re.sub(r"\s*\([^()]*\)\s*$", "", m.group(1).strip()).strip()
-            ret_type, fname, args_text = ret_expr, m.group(2), m.group(3)
+            ret_expr = re.sub(r"^(?:x86_stdcallcc|x86_fastcallcc|x86_thiscallcc)\s+", "", ret_expr)
+            ret_type = type_token(ret_expr)
+            fname = normalize_llvm_name(m.group(2) if m.group(2) is not None else m.group(3))
+            args_text = m.group(4)
+            conv = 1 if "x86_stdcallcc" in rhs else 0
             args = split_top(args_text) if args_text.strip() else []
             arg_types: list[str] = []
             arg_values: list[str] = []
             for arg in args:
-                tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", arg.strip())
-                if not tm:
+                type_match = re.search(
+                    r"(\[[^\]]*\]|\{[^}]*\}|%[\w.$-]+|x86_fp80\b|fp128\b|double\b|float\b|ptr\b|i\d+\b)",
+                    arg,
+                )
+                if not type_match:
                     raise ValueError(f"bad call argument: {arg!r}")
-                arg_types.append(tm.group(1).strip())
+                arg_types.append(type_match.group(1))
                 arg_values.append(arg.strip())
 
             if fname not in self.func_indices:
@@ -1235,6 +1520,7 @@ class Lowerer:
                     self.structs,
                     self.ptr_size,
                     named_count,
+                    conv,
                 )
                 plan_index = self.plans.add(plan)
                 for value in arg_values:
@@ -1244,10 +1530,25 @@ class Lowerer:
                 if ret_type != "void":
                     if result is None:
                         raise ValueError(f"call without result: {line}")
-                    self.store_slot(self.slot_for(result))
+                    slot = self.slot_for(result)
+                    self.store_slot(slot)
+                    if ret_type.startswith("i") and ret_type not in ("i64", "i128"):
+                        bits = int(ret_type[1:])
+                        if bits < 64:
+                            shift = 64 - bits
+                            self.load_slot(slot)
+                            self.emit_const(shift)
+                            self.emit_u8(OP_SHL)
+                            self.emit_const(shift)
+                            self.emit_u8(OP_SHR_S)
+                            self.store_slot(slot)
                 return
 
-            for value in arg_values:
+            callee = self.functions_by_name.get(fname)
+            emitted = arg_values
+            if callee is not None and callee.is_varargs:
+                emitted = arg_values[: len(callee.params)]
+            for value in emitted:
                 self.emit_operand(value)
             self.emit_u8(OP_CALL)
             self.emit_u16(self.func_indices[fname])
@@ -1271,15 +1572,21 @@ def parse_functions(text: str) -> list[Function]:
     while i < len(lines):
         line = lines[i].strip()
         line = re.sub(r"\s*!dbg\s*!\d+", "", line).strip()
-        m = re.search(r"define\s+(.+?)\s+@([\w.$-]+)\((.*)\)\s*(?:#\d+)?\s*\{", line)
+        m = re.search(r"define\s+(.+?)\s+(?:@([\w.$-]+)|@\"((?:\\.|[^\"])*)\")\s*\((.*)\)\s*(?:#\d+)?\s*\{", line)
         if not m:
             i += 1
             continue
-        pre, name, params_text = m.group(1), m.group(2), m.group(3)
-        ret = pre.split()[-1]
+        pre = m.group(1)
+        name = normalize_llvm_name(m.group(2) if m.group(2) is not None else m.group(3))
+        params_text = m.group(4)
+        ret = type_token(pre)
         params: list[tuple[str, str]] = []
         raw_params = split_top(params_text) if params_text.strip() else []
+        is_varargs = False
         for p in raw_params:
+            if p.strip() == "...":
+                is_varargs = True
+                continue
             pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80|fp128)\s+.*%([\w.$-]+)", p)
             if not pm:
                 raise ValueError(f"bad parameter: {p!r}")
@@ -1290,7 +1597,7 @@ def parse_functions(text: str) -> list[Function]:
         while i < len(lines) and lines[i].strip() != "}":
             body.append(lines[i])
             i += 1
-        functions.append(Function(name=name, ret=ret, params=params, body=body, param_attrs=raw_params))
+        functions.append(Function(name=name, ret=ret, params=params, body=body, param_attrs=raw_params, is_varargs=is_varargs))
         i += 1
     return functions
 
@@ -1316,7 +1623,7 @@ def serialize(functions: list[Function]) -> bytes:
 
 def compile_text(text: str, source_name: str = "<input>", abi: str = "sysv", ptr_size: int = 8):
     structs = parse_structs(text)
-    globals_map, global_data = parse_globals(text, structs, ptr_size)
+    globals_map, global_data, global_relocs = parse_globals_ex(text, structs, ptr_size)
     decls = parse_decls(text)
     functions = parse_functions(text)
     indices = {fn.name: idx for idx, fn in enumerate(functions)}
@@ -1331,6 +1638,7 @@ def compile_text(text: str, source_name: str = "<input>", abi: str = "sysv", ptr
             structs,
             globals_map,
             global_data,
+            global_relocs,
             decls,
             plans,
             functions_by_name,

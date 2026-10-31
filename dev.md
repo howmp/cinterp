@@ -715,43 +715,48 @@ class CallPlan:
 当前测试入口：
 
 ```bash
-make test            # runtime/compiler 单测 + 15 个端到端用例 + 错误路径
-make c-testsuite     # 本地 C 子集（9/9）；C_TESTSUITE_DIR 可指向外部目录
-make fuzz            # 200 次 package/plan 变异（--load-only），0 crash
-make size            # ReleaseSmall 体积；runtime 40K
-make release-check   # test + size
-HOST=user@windows ./scripts/test_cross.sh   # Win64/Win32/ARM64，33/33
+make test            # runtime/compiler 单测 + 20 个端到端用例 + 错误路径
+make c-testsuite     # 本地 C 子集（10/10）
+python3 scripts/c_testsuite_upstream.py  # 上游支持集 217/217，3 skip
+make fuzz            # load-only package/plan 变异
+make fuzz-exec       # --safe 字节码执行 fuzz（300 变异 0 crash）
+make differential    # clang 原生 vs cinterp 返回值差分
+make bench           # 每用例平均运行时间
+make size-cross      # 四个目标 ReleaseSmall 体积
+make release-artifacts
+HOST=user@windows ./scripts/test_cross.sh   # 58 个跨 ABI 用例
 ```
 
 测试分层：
 
 - 前端单测：LLVM IR 解析、降级、ABI 计划、二进制 round-trip。
-- 运行时单测：CIVM 模块、栈/帧、内存/计划校验、错误路径。
-- 端到端：hello/arrays/structs/malloc/puts/printf/snprintf/math/float/struct FFI/qsort callback。
-- 交叉矩阵：Win64 11 用例、Win32 11 用例、ARM64 11 用例（真实 Windows SSH + qemu）。
-- c-testsuite：本地 9 用例；上游/外部目录还没有完整通过率基线。
-- fuzz：当前只覆盖 package/plan load-only；VM bytecode 执行 fuzz、差分测试、sanitizer 尚未纳入。
+- 运行时单测：CIVM、栈/帧、内存/计划校验、错误路径、safe 模式。
+- 端到端：hello/arrays/structs/malloc/puts/printf/snprintf、float/double/long double、struct FFI、HFA、packed、qsort/callback、ABI 边界。
+- 交叉矩阵：Win64 19、Win32 20（含 stdcall）、ARM64 19；真实 Windows SSH + qemu。
+- c-testsuite：本地 10/10；上游 217/217，skip 3（外部数据符号、向量、复杂聚合全局初始化）。
+- fuzz：load-only package/plan + safe bytecode 执行；差分测试覆盖无外部依赖用例。
 
 ## 15. 当前边界与明确不支持
 
 - **平台**：Linux x64、Windows x64、Windows x86、Linux ARM64 已支持；Linux i386/ARM32、macOS、Windows ARM64 不在目标。
-- **C11**：`_Atomic`、`_Thread_local`、`_Complex`、VLA、`setjmp`/`longjmp`、内联汇编、向量类型、`indirectbr` 不支持；仅保证 clang `-O0` IR。
-- **long double**：16B 存储、64-bit 精度；内部算术/比较/转换可用；FFI/varargs `%Lf`、精确 80-bit x87 语义尚未完成。
-- **变长参数**：支持调用外部 varargs 函数；定义 varargs 函数（`va_start`/`va_arg`）不支持；varargs 中 struct/long double 受限。
-- **callback**：静态 trampoline/dispatcher 仅 SysV x86-64；Win64/Win32/ARM64 callback 会返回 `UnsupportedCallback`。
-- **Win32**：编译器只生成 cdecl 计划；stdcall 计划/名称修饰未接入。
-- **AAPCS64**：HFA 返回/参数当前最多 2 个向量；3/4 成员 HFA、栈上 HFA、大结构体按值未完成。
-- **SysV**：>2 eightbyte 聚合、packed/未对齐、i128、复杂 mixed aggregate 未系统覆盖。
-- **工具链/信任**：clang `-O0`；VM 指针就是宿主指针，恶意 package 必须在 OS 沙箱中运行。
+- **C11**：`_Atomic`、`_Thread_local`、`_Complex`、`setjmp`/`longjmp`、内联汇编、向量类型、`indirectbr` 不支持；仅保证 clang `-O0` IR（已支持 phi/VLA/内部函数指针）。
+- **long double**：x86 使用精确 f80，AArch64 使用 IEEE f128；FFI/varargs 已接入；Windows CRT `%Lf` 与原生 MinGW 输出一致（原生本身不支持该格式）。
+- **变长参数**：支持调用外部 varargs 和忽略额外参数的 varargs 定义；`va_start`/`va_arg` 尚不支持；varargs 中 struct/`long double` 受限。
+- **callback**：SysV/Win64/Win32/AArch64 静态 trampoline 已接入；HFA callback >2 向量、long double callback 未覆盖。
+- **Win32**：cdecl/stdcall 计划与符号解析已接入；`fastcall`/`thiscall` 不支持。
+- **AAPCS64**：HFA 3/4、栈 HFA 已覆盖；HFA callback >2 向量、部分大结构体组合未覆盖。
+- **SysV**：packed/未对齐、MEMORY/sret、mixed aggregate 已覆盖；>2 eightbyte 非 MEMORY 聚合、i128、向量类型未纳入。
+- **外部数据符号**：`stdout`/`errno` 等 external global 未解析；c-testsuite 对应测试 skip。
+- **工具链/信任**：clang `-O0`；VM 指针就是宿主指针，恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
 
-## 16. 风险与待解决设计
+## 16. 剩余风险与后续方向
 
-- **跨 ABI callback**：每 ABI 独立 trampoline 池会增大固定代码；需要确认是否按目标只链接一份、以及回调栈参数/sret/HFA 的 dispatcher 设计。
-- **long double 精度决策**：精确 x87 f80 会引入独立值表示/opcode；保留 64-bit 精度则必须明确不支持其 FFI/printf。
-- **ABI 边界正确性**：Win64 varargs/home space、Win32 stdcall/名称修饰、AAPCS64 HFA>2/栈混合、SysV >2 eightbyte 都需要 clang helper 差分测试。
-- **c-testsuite 通过率**：上游测试大量依赖未实现 C 特性；需要先确定支持子集和 skip 分类，避免“全部通过”目标不可执行。
-- **fuzz 信任边界**：VM 执行变异字节码可能调用任意原生符号；需要隔离/白名单/超时策略，不能简单与 load-only fuzz 混在一起。
-- **CI 外部环境**：Windows SSH 测试机和 qemu-aarch64 不在 GitHub 托管 runner 默认环境；需要自托管 runner 或仅做交叉编译 smoke。
+- **外部数据符号**：需要 native data symbol 地址槽/重定位，才能支持 `stdout`、`errno` 等。
+- **向量/复杂 ABI**：Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV i128/vector、HFA callback >2 向量仍是明确范围外。
+- **long double**：Windows CRT 限制是宿主运行时问题；如需精确 `%Lf`，需提供自有格式化 shim。
+- **跨 ABI 执行 fuzz**：当前 safe bytecode fuzz 在 native 运行时；其他 ABI 需要对应运行时/Windows/qemu 上的 fuzz 流程。
+- **CI 外部环境**：Windows/ARM64 CI 使用托管 runner 的 smoke；完整 Windows SSH/qemu 矩阵仍需自托管环境。
+- **发布**：已生成四目标 tarball；许可证/正式发布渠道仍需项目方确认。
 
 ## 17. 验证结论（关键发现，历史 spike 记录）
 
@@ -828,28 +833,33 @@ HOST=user@windows ./scripts/test_cross.sh   # Win64/Win32/ARM64，33/33
 ### 19.4 数值与 C 子集
 
 - float32/double：`fadd/fsub/fmul/fdiv`、`fcmp`、`fpext/fptrunc`、`sitofp/fptosi`，含 FFI float 参数/返回。
-- `long double`：当前按 16B 对象存储，运算使用 f64 精度；常量 `0xK...` 解析；不支持其 FFI/varargs printf。
-- bitfield：clang 已降为整数 shift/mask，现有整数 opcode 覆盖。
-- `select`：降级为条件分支，支持 ternary。
-- c-testsuite 本地子集覆盖算术、控制流、结构体/union、指针、float、bitfield、long double、递归、qsort callback。
+- long double：x86 `f80`/AArch64 `f128` 指针值表示，VM 精确算术/比较/转换；`st0` loc、SysV/Win32 x87 捕获；FFI/varargs printf 已接入。
+- bitfield、`select`、phi、VLA、内部函数指针/间接调用、packed struct、global pointer/function reloc 已接入。
+- 本地 c-testsuite 10/10；上游支持集 217/217，3 skip。
 
 ### 19.5 验证矩阵与命令
 
 | 目标 | 运行环境 | 用例数 | 结果 |
 | --- | --- | --- | --- |
-| SysV x86-64 | native Linux | 15 端到端 + 3 runtime + 15 compiler 单测 | 通过 |
-| Win64 | Windows SSH（真实） | 11 | 通过 |
-| Win32 | Windows SSH（WoW64） | 11 | 通过 |
-| ARM64 | qemu-aarch64 + aarch64 sysroot | 11 | 通过 |
-| c-testsuite 子集 | native Linux | 9 | 通过 |
-| fuzz | native Linux，load-only | 200 变异 | 0 crash |
+| SysV x86-64 | native Linux | 20 端到端 + 3 runtime + 15 compiler 单测 | 通过 |
+| Win64 | Windows SSH（真实） | 19 | 通过 |
+| Win32 | Windows SSH（WoW64） | 20 | 通过 |
+| ARM64 | qemu-aarch64 + aarch64 sysroot | 19 | 通过 |
+| c-testsuite 上游支持集 | native Linux | 217（3 skip） | 通过 |
+| fuzz load-only | native Linux | 200 变异 | 0 crash |
+| fuzz-exec safe | native Linux | 300 变异 | 0 crash |
+| 差分测试 | native Linux | 7 | 通过 |
 
 ```bash
 make test
 make c-testsuite
 make fuzz
-make size                 # runtime 40K、hello.cib 78B、qsort.cib 460B
-make release-check
+make fuzz-exec
+make differential
+make bench
+make size                 # native runtime 72,568B；qsort.cib 460B
+make size-cross           # sysv 72,568 / win64 78,848 / win32 95,744 / arm64 84,520
+make release-artifacts
 HOST=admin@192.168.153.132 ./scripts/test_cross.sh
 ```
 
@@ -862,11 +872,10 @@ zig build -Dtarget=x86-windows-gnu
 zig build -Dtarget=aarch64-linux-gnu
 ```
 
-### 19.6 当前剩余边界
+### 19.6 当前边界
 
-- callback 仅 SysV；Win64/Win32/ARM64 返回 `UnsupportedCallback`。
-- long double 64-bit 精度、无 FFI/printf。
-- AAPCS64 HFA ≤2 返回向量；Win32 stdcall 未接入编译器。
-- c-testsuite 是本地子集，不是完整上游通过率。
-- fuzz 只覆盖 load-only，不含 VM bytecode/差分/sanitizer。
-- 具体剩余任务、优先级和完成定义见 [plan.md](./plan.md)。
+- 外部数据符号、向量类型、复杂聚合全局初始化：c-testsuite 3 个 skip。
+- HFA callback >2 向量、long double callback、Win64 vectorcall/COM、Win32 fastcall/thiscall、SysV i128/vector：明确范围外。
+- Windows CRT `%Lf` 与原生 MinGW 一致，不额外提供格式化 shim。
+- safe 字节码 fuzz 目前只在 native 运行时执行；其他 ABI 的完整执行 fuzz 依赖对应 runner。
+- 具体已完成/验证项见第 19 节；本文件不再维护实施 checklist。

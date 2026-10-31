@@ -12,8 +12,9 @@ pub fn main() !void {
     };
     defer vm.ci_vm_destroy(machine);
 
-    const usage = "usage: cinterp-run [--lib path]... [--load-only] <package.cib> [entry]\n";
+    const usage = "usage: cinterp-run [--lib path]... [--load-only] [--safe] <package.cib> [entry]\n";
     var load_only = false;
+    var safe_mode = false;
     var i: usize = 1;
     while (i < args.len) {
         if (std.mem.eql(u8, args[i], "--version")) {
@@ -26,6 +27,11 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, args[i], "--load-only")) {
             load_only = true;
+            i += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, args[i], "--safe")) {
+            safe_mode = true;
             i += 1;
             continue;
         }
@@ -61,6 +67,7 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
+    if (safe_mode) _ = vm.ci_vm_set_safe(machine, 1);
     if (load_only) return;
 
     const result = vm.ci_vm_run(machine, entry);

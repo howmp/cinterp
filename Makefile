@@ -1,4 +1,4 @@
-.PHONY: all test runtime compiler-test integration size release-check cross-test c-testsuite fuzz clean
+.PHONY: all test runtime compiler-test integration size release-check cross-test c-testsuite fuzz fuzz-exec differential bench size-cross clean
 
 all: test
 
@@ -34,6 +34,21 @@ c-testsuite: runtime
 
 fuzz: runtime
 	python3 scripts/fuzz.py --iterations 200
+
+fuzz-exec: runtime
+	python3 scripts/fuzz_exec.py --iterations 200
+
+differential: runtime
+	./scripts/differential.sh
+
+bench: runtime
+	python3 scripts/benchmark.py
+
+release-artifacts:
+	./scripts/package_release.sh
+
+size-cross:
+	./scripts/size_cross.sh
 
 clean:
 	rm -rf build compiler/src/cinterp/__pycache__ compiler/tests/__pycache__
