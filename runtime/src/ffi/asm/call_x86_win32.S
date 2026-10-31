@@ -46,6 +46,7 @@ no_x87:
     mov ecx, [ebx + STACK_SIZE]
     add esp, ecx
 no_clean:
+    add esp, 8
     pop edi
     pop esi
     pop ebx
