@@ -36,7 +36,7 @@ def case_csmith(seed: int, csmith: Path, work: Path) -> dict:
     gen.mkdir(parents=True)
     test_c = gen / "test.c"
     out = run([str(csmith), "--seed", str(seed), "--no-argc", "--concise", "-o", str(test_c)], work, 60)
-    result = {"seed": seed, "status": "harness", "reason": ""}
+    result = {"seed": seed, "status": "harness", "reason": "", "artifact_source": str(gen)}
     if out is None or out.returncode != 0 or not test_c.is_file():
         result["reason"] = "csmith generation failed"
         return result
@@ -91,7 +91,7 @@ def case(seed: int, yarpgen: Path, work: Path, max_source_bytes: int = 8_000_000
         str(yarpgen), "--std=c", f"--seed={seed}", f"--out-dir={gen}",
         "--max-array-dims=2", "--allow-dead-data=false",
     ], work, 30)
-    result = {"seed": seed, "status": "harness", "reason": ""}
+    result = {"seed": seed, "status": "harness", "reason": "", "artifact_source": str(gen)}
     if out is None or out.returncode != 0 or not (gen / "driver.c").is_file() or not (gen / "func.c").is_file():
         result.update(status="harness", reason="yarpgen generation failed")
         return result
@@ -152,6 +152,7 @@ def main() -> int:
     ap.add_argument("--report", default=str(ROOT / "build/generate-diff-report.json"))
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--max-source-bytes", type=int, default=8_000_000)
+    ap.add_argument("--failures-dir", default=str(ROOT / "build/generate-failures"))
     args = ap.parse_args()
     generator = Path(args.yarpgen if args.generator == "yarpgen" else args.csmith)
     if not generator.is_file():
@@ -186,6 +187,21 @@ def main() -> int:
                 print(f"  actual: {item['actual']}", file=sys.stderr)
             if item.get("expected") is not None:
                 print(f"  expected: {item['expected']}", file=sys.stderr)
+    fail_root = Path(args.failures_dir)
+    if fail_root:
+        fail_root.mkdir(parents=True, exist_ok=True)
+        for item in results:
+            src = item.pop("artifact_source", None)
+            if item["status"] in ("failure", "skip") and src and Path(src).is_dir():
+                dst = fail_root / args.generator / f"seed-{item['seed']}"
+                if dst.exists():
+                    import shutil
+
+                    shutil.rmtree(dst)
+                import shutil
+
+                shutil.copytree(src, dst)
+                (dst / "failure.json").write_text(json.dumps(item, indent=2) + "\n")
     report = {"generator": args.generator, "iterations": args.iterations, "counts": counts, "results": results}
     path = Path(args.report)
     path.parent.mkdir(parents=True, exist_ok=True)

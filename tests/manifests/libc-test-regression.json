@@ -1,0 +1,22 @@
+{
+  "suite": "libc-test-regression",
+  "description": "musl libc-test regression subset",
+  "root": "{SUITES}/libc-test",
+  "upstream": "https://github.com/kraj/libc-test",
+  "commit": "b7ec467969a53756258778fa7d9b045f912d1c93",
+  "license": "MIT",
+  "tiers": [
+    "full",
+    "nightly"
+  ],
+  "source_glob": "src/regression/*.c",
+  "cpath": [
+    "src/common",
+    "src/regression"
+  ],
+  "support_lib": "src/common/libtest.so",
+  "expected_exit": 0,
+  "timeout": 30,
+  "skip": {},
+  "repo_skip_file": "tests/manifests/libc-test-regression.skip"
+}

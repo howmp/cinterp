@@ -76,10 +76,10 @@ generate-diff-csmith: runtime
 	python3 scripts/generate_diff.py --generator csmith --iterations 3 --report build/generate-diff-csmith.json
 
 fuzz: runtime
-	python3 scripts/fuzz.py --iterations 200
+	python3 scripts/fuzz.py --iterations 1000
 
 fuzz-exec: runtime
-	python3 scripts/fuzz_exec.py --iterations 200
+	python3 scripts/fuzz_exec.py --iterations 500
 
 differential: runtime
 	./scripts/differential.sh
