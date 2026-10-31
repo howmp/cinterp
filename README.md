@@ -149,6 +149,8 @@ Windows CRT `long double` printf output matches the native MinGW runtime
   stack/sret/sse/ret_size).
 - `CIPKG`: package = `CIPKG` v1 + module length + plan length + module + plans.
 
+Detailed byte layout, opcode table, CIPL v3 fields and an annotated `hello.cib` are in [docs/cib.md](./docs/cib.md).
+
 ## Runtime
 
 ```bash
@@ -179,6 +181,7 @@ compiler/              Python package (build-time compiler)
     ffi/plan.py        CallPlan model, per-ABI plan builders, CIPL serializer
     codegen/           CIPKG writer
     cli.py             cinterp compile
+docs/cib.md            binary package format reference
 runtime/               Zig VM/runtime (shipped)
   src/vm.zig           VM, linear memory, C ABI, callback dispatcher
   src/ffi/platform.zig compile-time ABI/frame/marshal/invoke selection

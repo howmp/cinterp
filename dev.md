@@ -371,6 +371,7 @@ ci_abi_call_sysv64:
 - 汇编只做固定 ABI 的寄存器/栈装载和返回值捕获，不解析复杂签名。
 - 计划解析、结构体分类、varargs 位置已在 Zig/前端完成。
 - 实际引擎符号：SysV `ci_abi_call_sysv64`、Win64 `ci_win64_call`、Win32 `ci_win32_call`（asm 标签 `_ci_win32_call`）、ARM64 `ci_arm64_call`。
+- 二进制 `.cib`（CIPKG/CIVM/CIPL v3）的逐字段布局、opcode 表和示例见 [`docs/cib.md`](./docs/cib.md)。
 - Win32 引擎处理 cdecl 栈参数、调用者清理、`eax/edx/st0` 返回值；stdcall 计划尚未从编译器暴露。
 - ARM64 引擎处理 x0–x7/v0–v7/栈参数，捕获 x0/x1/v0/v1 和 x8 sret；当前只捕获 v0/v1 两个返回向量。
 - Win64 引擎处理 32B shadow space、位置相关的 XMM 编号、sret 对 GPR/XMM 的移位和 varargs 浮点副本；保存 RSI/RDI 等 callee-saved 寄存器。
@@ -793,7 +794,7 @@ HOST=user@windows ./scripts/test_cross.sh   # 58 个跨 ABI 用例
   - `x86_64-windows` → `x86_64-pc-windows-gnu`，ABI `win64`，指针 8B。
   - `i686-windows` → `i686-pc-windows-gnu`，ABI `win32`，指针 4B。
   - `aarch64-linux` → `aarch64-linux-gnu`，ABI `aapcs64`，指针 8B。
-- `ffi/plan.py` 的 `build_plan()` 按 ABI 分派到 `build_sysv_plan` / `build_win64_plan` / `build_win32_plan` / `build_aapcs64_plan`；CIPL v2 头部的 ABI id 分别为 1/2/3/4，运行时加载时校验。
+- `ffi/plan.py` 的 `build_plan()` 按 ABI 分派到 `build_sysv_plan` / `build_win64_plan` / `build_win32_plan` / `build_aapcs64_plan`；CIPL v3 头部的 ABI id 分别为 1/2/3/4，运行时加载时校验。
 - 目标指针大小贯穿 `type_size_align`、`struct_layout`、globals、GEP、alloca/load/store；Win32 结构体布局按 4B 指针计算。
 - 聚合值表示：>8B 的 load 结果保存“指向源字节的指针”；聚合 store 用 `MEMCPY`；ARM64 `[2 x i64]`/`%struct.D2` 返回值经 `extractvalue`/指针读取。
 - 新增 `select` 降级为分支；bitfield 依赖 clang 的 shift/mask lowering；`long double` 走 16B 存储/64-bit 精度路径。
