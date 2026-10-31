@@ -146,7 +146,7 @@ overview: 根据当前 4041/5447 通过、1406 skip 的结果，按“先修真�
 
 ## 7. P1：跨 ABI 与自动链接
 
-- 目前只有 csuite 在 Win64/Win32/ARM64 各 12/12；上游测试集 native-only。
+- csuite 和 c-testsuite 上游 smoke 已在 Win64/Win32/ARM64 各 12/12；更大上游子集仍 native-only。
 - 为 TCC/chibicc/GCC/CompCert 建立 per-target manifest 子集；
 - 增加 target-specific expected 和 skip，不允许 compile 失败被 native 通过结果掩盖；
 - 自动链接断言：
@@ -226,7 +226,7 @@ overview: 根据当前 4041/5447 通过、1406 skip 的结果，按“先修真�
 | `fcmp une` skip | ~75 | 0（标准 C） |
 | `fptoui/uitofp` skip | ~20+ | 0（标准 C） |
 | `unknown global` skip | ~100 | 代表性 external data 用例通过 |
-| 跨 ABI 上游套件 | csuite 12/12 × 3 | 四目标各有 TCC/GCC/CompCert 子集 |
+| 跨 ABI 上游套件 | csuite + c-testsuite smoke 12/12 × 3 | 四目标各有 TCC/GCC/CompCert 子集 |
 | YARPGen 100 未分类 failure | 0（已分类 39 skip） | 保持 0；known 失败有最小复现 |
 | CI nightly 生成式 seeds | 20 | 100 |
 

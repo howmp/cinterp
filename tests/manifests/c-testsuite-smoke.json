@@ -1,0 +1,75 @@
+{
+  "suite": "c-testsuite-smoke",
+  "description": "c-testsuite single-exec portable smoke for cross-ABI runs",
+  "root": "{SUITES}/c-testsuite",
+  "upstream": "https://github.com/c-testsuite/c-testsuite",
+  "commit": "5c7275656d751de0e68b2d340a95b5681858ed07",
+  "license": "MIT (individual test cases: see .otag)",
+  "tiers": [
+    "nightly"
+  ],
+  "expected_exit": 0,
+  "timeout": 30,
+  "cases": [
+    {
+      "id": "00001",
+      "source": "tests/single-exec/00001.c",
+      "expected_stdout": "tests/single-exec/00001.c.expected"
+    },
+    {
+      "id": "00002",
+      "source": "tests/single-exec/00002.c",
+      "expected_stdout": "tests/single-exec/00002.c.expected"
+    },
+    {
+      "id": "00003",
+      "source": "tests/single-exec/00003.c",
+      "expected_stdout": "tests/single-exec/00003.c.expected"
+    },
+    {
+      "id": "00004",
+      "source": "tests/single-exec/00004.c",
+      "expected_stdout": "tests/single-exec/00004.c.expected"
+    },
+    {
+      "id": "00005",
+      "source": "tests/single-exec/00005.c",
+      "expected_stdout": "tests/single-exec/00005.c.expected"
+    },
+    {
+      "id": "00006",
+      "source": "tests/single-exec/00006.c",
+      "expected_stdout": "tests/single-exec/00006.c.expected"
+    },
+    {
+      "id": "00007",
+      "source": "tests/single-exec/00007.c",
+      "expected_stdout": "tests/single-exec/00007.c.expected"
+    },
+    {
+      "id": "00008",
+      "source": "tests/single-exec/00008.c",
+      "expected_stdout": "tests/single-exec/00008.c.expected"
+    },
+    {
+      "id": "00009",
+      "source": "tests/single-exec/00009.c",
+      "expected_stdout": "tests/single-exec/00009.c.expected"
+    },
+    {
+      "id": "00010",
+      "source": "tests/single-exec/00010.c",
+      "expected_stdout": "tests/single-exec/00010.c.expected"
+    },
+    {
+      "id": "00011",
+      "source": "tests/single-exec/00011.c",
+      "expected_stdout": "tests/single-exec/00011.c.expected"
+    },
+    {
+      "id": "00012",
+      "source": "tests/single-exec/00012.c",
+      "expected_stdout": "tests/single-exec/00012.c.expected"
+    }
+  ]
+}
