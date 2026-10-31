@@ -1,0 +1,20 @@
+{
+  "suite": "chibicc",
+  "description": "chibicc C11 subset tests with common assert harness",
+  "root": "{SUITES}/chibicc",
+  "upstream": "https://github.com/rui314/chibicc",
+  "commit": "90d1f7f199cc55b13c7fdb5839d1409806633fdb",
+  "license": "MIT",
+  "tiers": [
+    "standard",
+    "full",
+    "nightly"
+  ],
+  "source_glob": "test/*.c",
+  "compare_stdout": false,
+  "expected_exit": 0,
+  "timeout": 30,
+  "skip": {},
+  "support_lib": "test/libchibicc_test.so",
+  "repo_skip_file": "tests/manifests/chibicc.skip"
+}

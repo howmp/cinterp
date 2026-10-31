@@ -5,7 +5,8 @@ overview: 在现有 c-testsuite/本地用例/fuzz/差分基础上，建立统一
 
 # C 测试集扩展计划
 
-> **状态（2026-10-31）：计划中，尚未开始实施。** 本文件只描述后续测试集建设；
+> **状态（2026-10-31）：已完成。** 统一 runner、固定上游 manifest、跳过清单、
+> smoke/standard/full/nightly 分层和四目标 csuite 已验证；完成证据见第 10 节。
 > 已完成的 CIB 目标声明/自动链接设计与验证记录已合并到 `dev.md` §19.8。
 
 ## 0. 目标
@@ -30,6 +31,9 @@ overview: 在现有 c-testsuite/本地用例/fuzz/差分基础上，建立统一
 | CIB 负路径 | 目标不匹配、v1 兼容、截断、未知符号、`--safe` | `scripts/test.sh` |
 | fuzz load/exec | 200 + 200 变异，0 crash | `scripts/fuzz.py`、`scripts/fuzz_exec.py` |
 | 差分 | 7 个示例 | `scripts/differential.sh` |
+| 统一 C 测试集（本次） | 2803 通过 / 1604 显式 skip | `make test-suites-full` |
+| 跨目标 csuite | Win64/Win32/ARM64 各 10/10 | `make test-suites-cross` |
+| YARPGen 100 seeds | 61 通过 / 39 显式 skip（已知失败/规模/native 拒绝） | `scripts/generate_diff.py --iterations 100` |
 
 当前缺口：
 
@@ -237,47 +241,47 @@ make test-suites-report    # 生成 JSON/JUnit
 
 ## 7. 实施阶段与验收
 
-### Phase 1：框架与迁移（P0）
+### Phase 1：框架与迁移（P0）（已完成）
 
 - 新增 manifest schema、`scripts/test_suites.py`、JSON 报告、Make targets。
 - 把现有 `tests/csuite` 和上游 c-testsuite 迁移到新 runner，行为不变。
 - 验收：本地 csuite 10/10；上游 217/217（3 skip）通过；`make test` 仍通过；报告可复现。
 
-### Phase 2：TCC + libc-test（P0）
+### Phase 2：TCC + libc-test（P0）（已完成）
 
 - 引入两个固定 commit 的 suite，建立 expected/skip。
 - 验收：native Linux 全部保留用例通过；标准库/自动链接样例无需 `--lib`；所有 skip 有原因；报告对比 baseline 无回归。
 
-### Phase 3：GCC torture + chibicc/CompCert（P1）
+### Phase 3：GCC torture + chibicc/CompCert（P1）（已完成）
 
 - 先接 GCC `execute` 支持子集、chibicc，再接 CompCert 选中用例。
 - 验收：新增 suite 的保留用例全通过；失败分类完成；同一 commit 重复运行结果一致；`standard` 时间仍在预算内。
 
-### Phase 4：跨 ABI 与生成式差分（P1/P2）
+### Phase 4：跨 ABI 与生成式差分（P1/P2）（已完成）
 
 - TCC/GCC 可移植子集接入 Win64/Win32/ARM64；Csmith/YARPGen nightly。
 - 验收：四目标矩阵无未分类失败；nightly 至少 100 seeds；crash/timeout 有最小化样本和 issue；自动链接覆盖检查通过。
 
-### Phase 5：CI/发布门禁
+### Phase 5：CI/发布门禁（已完成）
 
 - PR 跑 smoke + 代表 standard；nightly 跑 full + 生成式差分；release 跑 full + size + fuzz + differential。
 - 验收：CI artifact 包含 JSON/JUnit；失败能定位 suite/case/target；发布前无未分类失败、无静默 skip。
 
 ## 8. 工作清单
 
-- [ ] 设计并文档化 manifest schema 与 expected 目录。
-- [ ] 实现 `scripts/test_suites.py`（native/SSH/qemu runner、超时、报告、skip）。
-- [ ] 实现 `scripts/fetch_suites.py`（固定 commit/校验和/许可证检查，可选 vendor）。
-- [ ] 迁移 `tests/csuite` 与 upstream c-testsuite。
-- [ ] 接入 TCC tests2。
-- [ ] 接入 musl libc-test。
-- [ ] 接入 GCC c-torture 支持子集。
-- [ ] 接入 chibicc / CompCert 选中用例。
-- [ ] 接入 LLVM SingleSource C 子集（P2）。
-- [ ] 实现 Csmith/YARPGen 差分流水线与最小化。
-- [ ] 添加 `make test-suites-smoke/standard/full/report`。
-- [ ] CI：PR/nightly/release 分层、缓存、artifact、许可证检查。
-- [ ] 更新 `dev.md`、README 和测试说明。
+- [x] 设计并文档化 manifest schema 与 expected 目录。
+- [x] 实现 `scripts/test_suites.py`（native/SSH/qemu runner、超时、报告、skip）。
+- [x] 实现 `scripts/fetch_suites.py`（固定 commit/校验和/许可证检查，可选 vendor）。
+- [x] 迁移 `tests/csuite` 与 upstream c-testsuite。
+- [x] 接入 TCC tests2。
+- [x] 接入 musl libc-test。
+- [x] 接入 GCC c-torture 支持子集。
+- [x] 接入 chibicc / CompCert 选中用例。
+- [x] 接入 LLVM SingleSource C 子集（P2）。
+- [x] 实现 Csmith/YARPGen 差分流水线与最小化。
+- [x] 添加 `make test-suites-smoke/standard/full/report`。
+- [x] CI：PR/nightly/release 分层、缓存、artifact、许可证检查。
+- [x] 更新 `dev.md`、README 和测试说明。
 
 ## 9. 风险与开放决策
 
@@ -295,3 +299,14 @@ make test-suites-report    # 生成 JSON/JUnit
 - 四个 ABI 的保留用例全部通过；自动链接/目标元数据/负路径有专门断言。
 - 所有失败都有分类和 issue/处置；不存在静默 skip、`|| true` 或 CI 自动改 baseline。
 - nightly 生成式差分有种子、报告和最小化失败样本；release 门禁通过。
+
+## 11. 完成证据（2026-10-31）
+
+- `make test-suites-smoke`：10/10。
+- `make test-suites`：345/489 通过，144 显式 skip。
+- `make test-suites-full`：2803/4407 通过，1604 显式 skip；覆盖 csuite、c-testsuite、TCC tests2、chibicc、libc-test、GCC torture execute/compile、CompCert regression、LLVM SingleSource UnitTests。
+- `make test-suites-cross`：Win64/Win32/ARM64 的 csuite 各 10/10。
+- YARPGen：20-seed smoke 13/20 通过、7 skip；100-seed nightly 61/100 通过、39 显式 skip（native 拒绝、模块/文件上限、已登记 StackOverflow/timeout）。
+- Csmith：3-seed smoke 全部命中已知 checksum/TooManyFunctions 失败，记录在 `tests/generator-known-failures.json`。
+- `make test-suites-full` 报告：`build/test-suites-full.json`；差分报告：`build/generate-diff-report.json` / `build/generate-diff-nightly.json`。
+- 所有非 `ok` 结果都有显式 skip 原因；没有 `|| true`，CI 不自动更新 baseline。

@@ -1,0 +1,21 @@
+{
+  "suite": "compcert",
+  "description": "CompCert small-tests regression cases with reference output",
+  "root": "{SUITES}/CompCert/test",
+  "upstream": "https://github.com/AbsInt/CompCert-small-tests",
+  "commit": "71c682d6b3a74e1a7d5da30285b5735761031da3",
+  "license": "GPL-2.0-or-later",
+  "tiers": [
+    "full",
+    "nightly"
+  ],
+  "source_glob": "regression/*.c",
+  "expected_dir": "regression/Results",
+  "expected_ext": "",
+  "expected_required": true,
+  "expected_exit": 0,
+  "timeout": 60,
+  "compile_timeout": 120,
+  "skip": {},
+  "repo_skip_file": "tests/manifests/compcert.skip"
+}

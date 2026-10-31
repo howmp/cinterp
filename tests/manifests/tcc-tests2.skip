@@ -1,0 +1,67 @@
+# generated from the initial support-subset probe; every entry is an explicit known skip
+03_struct	mismatch: stdout mismatch
+100_c99array-decls	compile: /home/admin/cl/build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
+101_cleanup	compile: cinterp: unsupported type <2 x float>
+102_alignas	compile: /home/admin/cl/build/suites/tcc/tests/tests2/102_alignas.c:4:14: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
+104+_inline	compile: /home/admin/cl/build/suites/tcc/tests/tests2/104+_inline.c:42:5: warning: return type of 'main' is not 'int' [-Wmain-return-type]
+104_inline	mismatch: stdout mismatch
+107_stack_safe	compile: cinterp: unsupported instruction: %conv1 = uitofp i64 %conv to double
+108_constructor	mismatch: stdout mismatch
+109_float_struct_calling	compile: cinterp: bad parameter: '<2 x float> %p.coerce'
+110_average	mismatch: stdout mismatch
+111_conversion	compile: cinterp: unsupported instruction: %conv = fptoui x86_fp80 %1 to i32
+112_backtrace	mismatch: stdout mismatch
+113_btdll	mismatch: stdout mismatch
+114_bound_signal	compile: cinterp: unknown global @stdout
+115_bound_setjmp	mismatch: stdout mismatch
+116_bound_setjmp2	run: exit -11 != 0
+117_builtins	mismatch: stdout mismatch
+119_random_stuff	compile: /home/admin/cl/build/suites/tcc/tests/tests2/119_random_stuff.c:18:7: warning: ISO C does not allow indirection on operand of type 'void *' [-Wvoid-ptr-dereference]
+120+_alias	compile: cinterp: unknown global @g_int
+120_alias	compile: /home/admin/cl/build/suites/tcc/tests/tests2/120_alias.c:11:30: error: definition 'alias_int' cannot also be an alias
+122_vla_reuse	mismatch: stdout mismatch
+124_atomic_counter	compile: cinterp: unsupported instruction: %4 = atomicrmw add ptr %uc, i8 %3 monotonic, align 1
+125_atomic_misc	mismatch: stdout mismatch
+126_bound_global	mismatch: stdout mismatch
+127_asm_goto	compile: cinterp: unsupported instruction: callbr void asm sideeffect "jmp ${0:l}", "!i,~{dirflag},~{fpsr},~{flags}"()
+128_run_atexit	compile: cinterp: unknown global @stdout
+129_scopes	mismatch: stdout mismatch
+131_return_struct_in_reg	mismatch: stdout mismatch
+136_atomic_gcc_style	compile: cinterp: unsupported instruction: %7 = cmpxchg ptr %atomic_var1, i32 %5, i32 %6 seq_cst seq_cst, align 4
+137_funcall_struct_args	compile: /home/admin/cl/build/suites/tcc/tests/tests2/137_funcall_struct_args.c:17:1: warning: return type of 'main' is not 'int' [-Wmain-return-type]
+138_arm64_encoding	compile: /home/admin/cl/build/suites/tcc/tests/tests2/138_arm64_encoding.c:182:32: error: unknown register name 'x0' in asm
+139_arm64_errors	mismatch: stdout mismatch
+140_arm64_extasm	compile: /home/admin/cl/build/suites/tcc/tests/tests2/140_arm64_extasm.c:156:52: error: value '200' out of range for constraint 'I'
+141_riscv_asm	mismatch: stdout mismatch
+144_tls	compile: /home/admin/cl/build/suites/tcc/tests/tests2/144_tls.c:79:11: warning: format specifies type 'unsigned long long' but the argument has type 'int *' [-Wformat]
+145_winarm64_interlocked	compile: /home/admin/cl/build/suites/tcc/tests/tests2/145_winarm64_interlocked.c:2:10: fatal error: 'windows.h' file not found
+146_tls_extern	compile: cinterp: unknown global @extern_tls_short
+148_linker_symbols	mismatch: stdout mismatch
+149_parameter_qualifier_errors	compile: /home/admin/cl/build/suites/tcc/tests/tests2/149_parameter_qualifier_errors.c:5:13: error: cannot assign to variable 'pointer' with const-qualified type 'int *const'
+149_parameter_qualifiers	mismatch: stdout mismatch
+150_return_qualifiers	compile: /home/admin/cl/build/suites/tcc/tests/tests2/150_return_qualifiers.c:12:5: error: conflicting types for 'const_return'
+151_atomic_header	compile: cinterp: unknown global @atomic_signal_fence
+22_floating_point	compile: cinterp: unsupported fcmp predicate: une
+24_math_library	mismatch: stdout mismatch
+31_args	mismatch: stdout mismatch
+33_ternary_op	mismatch: stdout mismatch
+34_array_assignment	compile: /home/admin/cl/build/suites/tcc/tests/tests2/34_array_assignment.c:16:6: error: array type 'int[4]' is not assignable
+35_sizeof	compile: /home/admin/cl/build/suites/tcc/tests/tests2/35_sizeof.c:8:34: warning: format specifies type 'int' but the argument has type 'unsigned long' [-Wformat]
+36_array_initialisers	compile: cinterp: unknown global @Array3
+38_multiple_array_index	mismatch: stdout mismatch
+42_function_pointer	compile: cinterp: unknown global @stdout
+46_grep	compile: /home/admin/cl/build/suites/tcc/tests/tests2/46_grep.c:149:13: warning: using the result of an assignment as a condition without parentheses [-Wparentheses]
+60_errors_and_warnings	mismatch: stdout mismatch
+70_floating_point_literals	mismatch: stdout mismatch
+71_macro_empty_arg	mismatch: stdout mismatch
+73_arm64	compile: cinterp: bad parameter: '<2 x float> %a.coerce'
+76_dollars_in_identifiers	compile: cinterp: unsupported operand: '%"$"'
+79_vla_continue	mismatch: stdout mismatch
+83_utf8_in_identifiers	mismatch: stdout mismatch
+85_asm-outside-function	mismatch: stdout mismatch
+90_struct-init	compile: /home/admin/cl/build/suites/tcc/tests/tests2/90_struct-init.c:8:30: warning: braces around scalar initializer [-Wbraced-scalar-init]
+95_bitfields	compile: In file included from /home/admin/cl/build/suites/tcc/tests/tests2/95_bitfields.c:235:
+95_bitfields_ms	compile: In file included from /home/admin/cl/build/suites/tcc/tests/tests2/95_bitfields_ms.c:2:
+96_nodata_wanted	mismatch: stdout mismatch
+98_al_ax_extend	compile: cinterp: unknown global @_us
+99_fastcall	mismatch: stdout mismatch

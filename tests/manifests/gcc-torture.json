@@ -1,0 +1,19 @@
+{
+  "suite": "gcc-torture",
+  "description": "GCC gcc.c-torture execute support subset",
+  "root": "{SUITES}/gcc-torture",
+  "upstream": "https://github.com/gcc-mirror/gcc",
+  "commit": "f75e33b7c1ddc42ce9d6d455e0076dbe373b46b5",
+  "license": "GPL-3.0-or-later",
+  "tiers": [
+    "full",
+    "nightly"
+  ],
+  "source_glob": "gcc/testsuite/gcc.c-torture/execute/*.c",
+  "compare_stdout": false,
+  "expected_exit": 0,
+  "timeout": 20,
+  "compile_timeout": 120,
+  "skip": {},
+  "repo_skip_file": "tests/manifests/gcc-torture.skip"
+}

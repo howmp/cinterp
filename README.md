@@ -88,6 +88,26 @@ c-testsuite supported set currently passes 217/217 with 3 explicitly skipped
 tests (external data symbols, vector types, complex aggregate initializers);
 set `C_TESTSUITE_DIR` to point at an external directory.
 
+## C test suites
+
+Upstream suites are pinned by commit and fetched into `build/suites/` (not
+vendored). The unified runner reads `tests/manifests/*.json`, records explicit
+skips and writes `build/test-suites-*.json`.
+
+```bash
+python3 scripts/fetch_suites.py --all --support
+make test-suites-smoke      # fast local subset
+make test-suites            # c-testsuite + TCC + chibicc + libc-test
+make test-suites-full       # adds GCC torture, CompCert, LLVM UnitTests
+make test-suites-cross      # csuite on Win64/Win32/ARM64
+make generate-diff          # YARPGen differential smoke
+```
+
+Current native baseline: 2803 passed / 1604 explicitly skipped across csuite,
+c-testsuite, TCC tests2, chibicc, libc-test, GCC torture, CompCert and LLVM
+SingleSource. Skip files record unsupported features and known failures; they
+are never auto-updated by CI. See [`tests/manifests/README.md`](tests/manifests/README.md).
+
 ## Validation and trust
 
 The runtime validates package lengths, target metadata (arch/OS/ABI/pointer

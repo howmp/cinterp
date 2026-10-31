@@ -1,0 +1,19 @@
+{
+  "suite": "tcc-tests2",
+  "description": "TinyCC tests2 portable subset",
+  "root": "{SUITES}/tcc",
+  "upstream": "https://github.com/TinyCC/tinycc",
+  "commit": "e23dabed154a8495f3ac1ff3cc9d04fa1c207893",
+  "license": "LGPL-2.1 (tests2/LICENSE also covers picoc tests)",
+  "tiers": [
+    "standard",
+    "full",
+    "nightly"
+  ],
+  "source_glob": "tests/tests2/*.c",
+  "expected_ext": ".expect",
+  "expected_exit": 0,
+  "timeout": 30,
+  "skip": {},
+  "repo_skip_file": "tests/manifests/tcc-tests2.skip"
+}

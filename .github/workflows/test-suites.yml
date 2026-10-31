@@ -1,0 +1,52 @@
+name: test-suites
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  standard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: sudo apt-get update && sudo apt-get install -y clang python3 make cmake m4
+      - name: fetch standard suites
+        run: |
+          python3 scripts/fetch_suites.py \
+            --suite c-testsuite --suite tcc --suite chibicc --suite libc-test \
+            --suite yarpgen --support
+      - run: make test-suites
+      - run: make generate-diff
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-suites-standard
+          path: |
+            build/test-suites.json
+            build/generate-diff-report.json
+
+  nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: sudo apt-get update && sudo apt-get install -y clang python3 make cmake m4
+      - run: python3 scripts/fetch_suites.py --all --support
+      - run: make test-suites-full
+      - run: make generate-diff
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-suites-nightly
+          path: |
+            build/test-suites-full.json
+            build/generate-diff-report.json

@@ -1,0 +1,20 @@
+{
+  "suite": "llvm-singlesource",
+  "description": "LLVM SingleSource UnitTests C compile subset",
+  "root": "{SUITES}/llvm-test-suite",
+  "upstream": "https://github.com/llvm/llvm-test-suite",
+  "commit": "28644d9795d11dcc30f5bdeb398a76a52ca53869",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "tiers": [
+    "full",
+    "nightly"
+  ],
+  "source_glob": "SingleSource/UnitTests/*.c",
+  "mode": "compile",
+  "compare_stdout": false,
+  "expected_exit": null,
+  "timeout": 30,
+  "compile_timeout": 120,
+  "skip": {},
+  "repo_skip_file": "tests/manifests/llvm-singlesource.skip"
+}

@@ -1,0 +1,22 @@
+{
+  "suite": "c-testsuite",
+  "description": "c-testsuite single-exec supported set",
+  "root": "{SUITES}/c-testsuite",
+  "upstream": "https://github.com/c-testsuite/c-testsuite",
+  "commit": "5c7275656d751de0e68b2d340a95b5681858ed07",
+  "license": "MIT (individual test cases: see .otag)",
+  "tiers": [
+    "standard",
+    "full",
+    "nightly"
+  ],
+  "source_glob": "tests/single-exec/*.c",
+  "expected_ext": ".c.expected",
+  "expected_exit": 0,
+  "timeout": 300,
+  "skip": {
+    "00189": "requires external data symbols",
+    "00204": "requires vector types",
+    "00216": "requires complex aggregate global initializers"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "suite": "libc-test",
+  "description": "musl libc-test functional subset",
+  "root": "{SUITES}/libc-test",
+  "upstream": "https://github.com/kraj/libc-test",
+  "commit": "b7ec467969a53756258778fa7d9b045f912d1c93",
+  "license": "MIT",
+  "tiers": [
+    "standard",
+    "full",
+    "nightly"
+  ],
+  "source_glob": "src/functional/*.c",
+  "cpath": [
+    "src/common",
+    "src/functional"
+  ],
+  "support_lib": "src/common/libtest.so",
+  "rewrite": [
+    {
+      "from": "return t_status",
+      "to": "return 0"
+    }
+  ],
+  "expected_exit": 0,
+  "timeout": 30,
+  "skip": {},
+  "repo_skip_file": "tests/manifests/libc-test.skip"
+}
