@@ -890,7 +890,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **明确范围外**：外部数据符号（`stdout`/`errno`）、向量类型、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV `i128`/向量参数、HFA callback >2 向量、long double callback；这些不是当前 C/ABI 子集的计划项。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
 - **信任模型**：恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
-- 交付物与验证数字见 19.5；旧 CIB 目标/自动链接计划已合并到 §19.8，`plan.md` 现在只保留测试集扩展计划。
+- 交付物与验证数字见 19.5；旧 CIB 目标/自动链接计划已合并到 §19.8，`plan.md` 现在只保留测试结果提升计划。
 
 ### 19.8 目标声明与外部符号自动链接（2026-10-31）
 
