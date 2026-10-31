@@ -63,10 +63,13 @@ The compiler currently supports:
   `malloc`, `free`, `snprintf`
 - external MEMORY structs by value (`byval`) and struct returns through `sret`
   (see `examples/ffi_structs.c` + `--lib`)
+- register-class small structs: coerced 8-byte (S8) and 16-byte double-HFA
+  aggregate returns (D16), including `extractvalue` and `fptosi` (see
+  `examples/ffi_regstruct.c`)
 
 Not yet in the compiler (the runtime engines and spikes validate the ABI):
-callbacks, register-class struct FFI, bitfields, float arithmetic,
-`long double`.
+callbacks, mixed-class register aggregates beyond the two-eightbyte return
+cases, bitfields, float arithmetic, `long double`.
 
 ## Binary formats
 
@@ -108,7 +111,7 @@ runtime/               Zig VM/runtime (shipped)
   src/ffi/             plan loader, ABI loc types, asm engines
   src/main.zig         cinterp-run CLI
 examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
-                       struct byval/sret FFI helper library
+                       MEMORY struct byval/sret and register-class S8/D16 FFI
 scripts/test.sh        integration suite
 spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
 plan.md, dev.md        implementation plan and architecture/decisions

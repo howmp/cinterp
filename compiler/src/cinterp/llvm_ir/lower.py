@@ -34,6 +34,8 @@ OP_OR = 0x1D
 OP_SHL = 0x1E
 OP_SHR_S = 0x1F
 OP_SHR_U = 0x24
+OP_FPTOSI = 0x25
+OP_SITOFP = 0x26
 OP_LOAD_LOCAL = 0x20
 OP_STORE_LOCAL = 0x21
 OP_JMP = 0x30
@@ -225,6 +227,17 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]]) -> b
         out[: min(len(raw), size)] = raw[:size]
         return bytes(out)
     if init in ("zeroinitializer", "null"):
+        return bytes(out)
+    if ty in ("double", "float"):
+        try:
+            value = float(init)
+        except ValueError:
+            return bytes(out)
+        if ty == "double":
+            raw = struct.pack("<d", value)
+        else:
+            raw = struct.pack("<f", value)
+        out[: min(len(raw), size)] = raw[:size]
         return bytes(out)
     if re.match(r"^-?\d+$", init):
         value = int(init)
@@ -665,27 +678,58 @@ class Lowerer:
             self.store_slot(self.slot_for(result))
             return
 
-        m = re.match(r"(trunc|zext|sext)\s+(i\d+)\s+(.+?)\s+to\s+(i\d+)$", rhs)
+        m = re.match(r"(trunc|zext|sext|fptosi|sitofp)\s+(\S+)\s+(.+?)\s+to\s+(\S+)$", rhs)
         if m:
             if result is None:
                 raise ValueError(f"cast without result: {line}")
             op, src_ty, value, dst_ty = m.group(1), m.group(2), m.group(3), m.group(4)
-            src_bits = int(src_ty[1:])
-            dst_bits = int(dst_ty[1:])
             self.emit_operand(value)
-            if op == "trunc":
-                self.emit_const((1 << dst_bits) - 1)
-                self.emit_u8(OP_AND)
-            elif op == "zext":
-                self.emit_const((1 << src_bits) - 1)
-                self.emit_u8(OP_AND)
+            if op == "fptosi":
+                self.emit_u8(OP_FPTOSI)
+            elif op == "sitofp":
+                self.emit_u8(OP_SITOFP)
+            elif not src_ty.startswith("i") or not dst_ty.startswith("i"):
+                raise ValueError(f"unsupported cast {op} {src_ty} -> {dst_ty}")
             else:
-                shift = 64 - src_bits
-                if shift > 0:
-                    self.emit_const(shift)
-                    self.emit_u8(OP_SHL)
-                    self.emit_const(shift)
-                    self.emit_u8(OP_SHR_S)
+                src_bits = int(src_ty[1:])
+                dst_bits = int(dst_ty[1:])
+                if op == "trunc":
+                    self.emit_const((1 << dst_bits) - 1)
+                    self.emit_u8(OP_AND)
+                elif op == "zext":
+                    self.emit_const((1 << src_bits) - 1)
+                    self.emit_u8(OP_AND)
+                else:
+                    shift = 64 - src_bits
+                    if shift > 0:
+                        self.emit_const(shift)
+                        self.emit_u8(OP_SHL)
+                        self.emit_const(shift)
+                        self.emit_u8(OP_SHR_S)
+            self.store_slot(self.slot_for(result))
+            return
+
+        if rhs.startswith("extractvalue "):
+            if result is None:
+                raise ValueError("extractvalue without result")
+            em = re.match(r"extractvalue\s+(.+?)\s+(%[\w.$]+),\s*(\d+)$", rhs)
+            if not em:
+                raise ValueError(f"bad extractvalue: {line}")
+            agg_ty, value, index_text = em.group(1).strip(), em.group(2), em.group(3)
+            fields = struct_fields(agg_ty, self.structs)
+            if fields is None:
+                raise ValueError(f"bad extractvalue type {agg_ty}")
+            offsets, _, _ = struct_layout(fields, self.structs)
+            index = int(index_text)
+            if index < 0 or index >= len(fields):
+                raise ValueError(f"bad extractvalue index {index}")
+            field_ty = fields[index]
+            self.emit_pointer(value)
+            if offsets[index]:
+                self.emit_const(offsets[index])
+                self.emit_u8(OP_ADD)
+            self.emit_u8(OP_LOAD_MEM)
+            self.emit_u8(self.type_size(field_ty))
             self.store_slot(self.slot_for(result))
             return
 
@@ -735,9 +779,10 @@ class Lowerer:
                 self.emit_u8(OP_MEMSET)
             return
 
-        m = re.match(r"(?:tail\s+)?call\s+(\S+)(?:\s+\([^)]*\))?\s+@([\w.$]+)\((.*)\)$", rhs)
+        m = re.match(r"(?:tail\s+)?call\s+(.*?)\s+@([\w.$]+)\((.*)\)$", rhs)
         if m:
-            ret_type, fname, args_text = m.group(1), m.group(2), m.group(3)
+            ret_expr = re.sub(r"\s*\([^()]*\)\s*$", "", m.group(1).strip()).strip()
+            ret_type, fname, args_text = ret_expr, m.group(2), m.group(3)
             args = split_top(args_text) if args_text.strip() else []
             arg_types: list[str] = []
             arg_values: list[str] = []

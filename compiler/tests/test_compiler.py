@@ -35,6 +35,14 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(sret.args[1].locs[0].index, 1)
         self.assertEqual(sret.ret_size, 24)
 
+    def test_aggregate_return_plan(self):
+        plan = build_sysv_plan(
+            "c_make_d16", "{ double, double }", ["double", "double"]
+        )
+        self.assertEqual([loc.kind for loc in plan.ret_locs], ["xmm0", "xmm1"])
+        self.assertEqual(plan.ret_size, 16)
+        self.assertEqual(plan.sse_count, 2)
+
     def test_plan_serialization_and_package(self):
         table = PlanTable()
         table.add(build_sysv_plan("puts", "i32", ["ptr"]))

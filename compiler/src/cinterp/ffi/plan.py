@@ -65,6 +65,51 @@ def _align8(n: int) -> int:
     return (n + 7) // 8 * 8
 
 
+def _return_locs(ret_type: str) -> tuple[list[Loc], int]:
+    ty = ret_type.strip()
+    if ty.startswith("{") and ty.endswith("}"):
+        fields = [f.strip() for f in ty[1:-1].split(",") if f.strip()]
+        classes: list[str | None] = [None, None]
+        offset = 0
+        max_align = 1
+        for field in fields:
+            kind, size = _type_info(field)
+            if kind == "void":
+                raise UnsupportedFfi("void aggregate field")
+            idx = offset // 8
+            if idx > 1:
+                raise UnsupportedFfi(f"return aggregate with >2 eightbytes: {ty}")
+            if classes[idx] is not None and classes[idx] != kind:
+                classes[idx] = "gpr"
+            else:
+                classes[idx] = kind
+            offset += size
+            max_align = max(max_align, min(size, 8))
+        total = (offset + max_align - 1) // max_align * max_align
+        gpr = 0
+        xmm = 0
+        locs: list[Loc] = []
+        for idx, cls in enumerate(classes):
+            if cls is None:
+                continue
+            size = min(8, total - idx * 8)
+            if cls == "gpr":
+                locs.append(Loc("rax" if gpr == 0 else "rdx", 0, size, idx * 8))
+                gpr += 1
+            else:
+                locs.append(Loc("xmm0" if xmm == 0 else "xmm1", 0, size, idx * 8))
+                xmm += 1
+        return locs, total
+    kind, size = _type_info(ty)
+    if kind == "void":
+        return [], 0
+    if kind == "gpr":
+        return [Loc("rax", 0, size, 0)], size
+    if kind == "xmm":
+        return [Loc("xmm0", 0, size, 0)], size
+    raise UnsupportedFfi(f"unsupported return type {ret_type!r}")
+
+
 def build_sysv_plan(
     name: str,
     ret_type: str,
@@ -123,15 +168,7 @@ def build_sysv_plan(
         ret_locs: list[Loc] = []
         ret_size = sret_size
     else:
-        ret_kind, ret_size = _type_info(ret_type)
-        if ret_kind == "void":
-            ret_locs = []
-        elif ret_kind == "gpr":
-            ret_locs = [Loc("rax", 0, ret_size, 0)]
-        elif ret_kind == "xmm":
-            ret_locs = [Loc("xmm0", 0, ret_size, 0)]
-        else:
-            raise UnsupportedFfi(f"unsupported return type {ret_type!r}")
+        ret_locs, ret_size = _return_locs(ret_type)
 
     return CallPlan(
         name=name,

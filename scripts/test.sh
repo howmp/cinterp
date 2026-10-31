@@ -59,4 +59,11 @@ struct_out="$("$RUNTIME" --lib "$OUT/libstruct_helpers.so" "$OUT/ffi_structs.cib
 printf '%s\n' "$struct_out" | grep -Fq "result: 28"
 echo "OK ffi_structs -> 28"
 
+echo "== register-class struct FFI (S8 + D16)"
+cc -shared -fPIC -O0 examples/ffi_regstruct_helper.c -o "$OUT/libregstruct_helpers.so"
+python3 -m cinterp compile examples/ffi_regstruct.c -o "$OUT/ffi_regstruct.cib" >/dev/null
+reg_out="$("$RUNTIME" --lib "$OUT/libregstruct_helpers.so" "$OUT/ffi_regstruct.cib" 2>&1)"
+printf '%s\n' "$reg_out" | grep -Fq "result: 102"
+echo "OK ffi_regstruct -> 102"
+
 echo "all tests passed"

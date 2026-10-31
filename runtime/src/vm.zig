@@ -27,6 +27,8 @@ pub const OP_OR: u8 = 0x1D;
 pub const OP_SHL: u8 = 0x1E;
 pub const OP_SHR_S: u8 = 0x1F;
 pub const OP_SHR_U: u8 = 0x24;
+pub const OP_FPTOSI: u8 = 0x25;
+pub const OP_SITOFP: u8 = 0x26;
 pub const OP_CMP_LT_U: u8 = 0x35;
 pub const OP_LOAD_LOCAL: u8 = 0x20;
 pub const OP_STORE_LOCAL: u8 = 0x21;
@@ -422,6 +424,16 @@ pub const VM = struct {
                     const a = try self.pop();
                     const sh: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
                     try self.push(.{ .i = @bitCast(@as(u64, @bitCast(a.i)) >> sh) });
+                },
+                OP_FPTOSI => {
+                    const v = try self.pop();
+                    const fval: f64 = @bitCast(v.i);
+                    try self.push(.{ .i = @intFromFloat(fval) });
+                },
+                OP_SITOFP => {
+                    const v = try self.pop();
+                    const fval: f64 = @floatFromInt(v.i);
+                    try self.push(.{ .i = @bitCast(fval) });
                 },
                 OP_LOAD_LOCAL => {
                     const idx = try readU16(code, &ip);
