@@ -49,7 +49,7 @@ make release-check
 ```
 
 `make test` runs runtime/compiler unit tests, all end-to-end examples, and
-negative paths (missing input, corrupt package, unknown symbol).
+negative paths (missing input, corrupt/truncated packages, unknown symbol).
 
 ## Validation and trust
 

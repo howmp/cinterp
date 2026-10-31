@@ -116,6 +116,18 @@ if "$RUNTIME" "$OUT/bad.cib" >/dev/null 2>&1; then
     exit 1
 fi
 echo "OK bad package"
+for n in 0 4 5 14 15 30 100; do
+    head -c "$n" "$OUT/ffi_qsort.cib" > "$OUT/trunc.cib"
+    set +e
+    "$RUNTIME" "$OUT/trunc.cib" >/dev/null 2>&1
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] || [ "$rc" -ge 128 ]; then
+        echo "FAIL truncated package ($n bytes) exited $rc" >&2
+        exit 1
+    fi
+done
+echo "OK truncated packages"
 cat > "$OUT/missing_symbol.c" <<'EOF'
 void definitely_not_a_real_symbol(void);
 int main(void) { definitely_not_a_real_symbol(); return 0; }
