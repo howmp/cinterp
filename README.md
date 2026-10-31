@@ -43,6 +43,9 @@ PYTHONPATH=compiler/src python3 -m cinterp --version
 
 # full test suite
 make test
+
+# release-size check (runtime < 128K, qsort package < 4K)
+make release-check
 ```
 
 `make test` runs runtime/compiler unit tests, all end-to-end examples, and

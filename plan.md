@@ -357,7 +357,8 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - [x] bitfield（clang shift/mask lowering）
 - [ ] long double/c-testsuite
 - [x] M11 基础加固：plan/package 边界校验、错误路径、CLI version/help
-- [ ] M11 发布检查（CI、体积、fuzz/沙箱说明）
+- [x] M11 体积检查：`make size`（runtime 40K、qsort.cib 460B）；README 沙箱说明
+- [ ] M11 CI/fuzz
 
 ## 6. 风险与阻塞
 
@@ -405,3 +406,4 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - **2026-10-31（周六）**：float32 算术/FCmp/fpext/fptrunc/fptosi/sitofp + float FFI；`float_math=8`、`ffi_float=5`。
 - **2026-10-31（周六）**：bitfield（clang shift/mask lowering）；`bitfields=12`；`make test` runtime 3 / compiler 11 / 端到端 15。
 - **2026-10-31（周六）**：M11 基础加固——plan 数量/ABI 位置/offset/size 校验，错误路径测试（缺失输入、坏 package、未知符号），`--version`/`--help`。
+- **2026-10-31（周六）**：`make size`/`make release-check`；ReleaseSmall runtime 40K、hello.cib 78B、qsort.cib 460B。

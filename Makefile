@@ -1,4 +1,4 @@
-.PHONY: all test runtime compiler-test integration clean
+.PHONY: all test runtime compiler-test integration size release-check clean
 
 all: test
 
@@ -13,6 +13,18 @@ integration:
 
 test:
 	./scripts/test.sh
+
+size: runtime
+	mkdir -p build
+	@printf 'runtime ReleaseSmall: '; du -h runtime/zig-out/bin/cinterp-run | cut -f1
+	@PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c -o build/hello.cib >/dev/null
+	@printf 'hello.cib: '; wc -c < build/hello.cib
+	@PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_qsort.c -o build/ffi_qsort.cib >/dev/null
+	@printf 'ffi_qsort.cib: '; wc -c < build/ffi_qsort.cib
+	@test "$$(stat -c%s runtime/zig-out/bin/cinterp-run)" -lt 131072
+	@test "$$(stat -c%s build/ffi_qsort.cib)" -lt 4096
+
+release-check: test size
 
 clean:
 	rm -rf build compiler/src/cinterp/__pycache__ compiler/tests/__pycache__
