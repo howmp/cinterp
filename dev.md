@@ -890,7 +890,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **明确范围外**：外部数据符号（`stdout`/`errno`）、向量类型、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV `i128`/向量参数、HFA callback >2 向量、long double callback；这些不是当前 C/ABI 子集的计划项。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
 - **信任模型**：恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
-- 交付物与验证数字见 19.5；本轮 `plan.md` 保留为已完成的目标声明/自动链接计划记录。
+- 交付物与验证数字见 19.5；旧 CIB 目标/自动链接计划已合并到 §19.8，`plan.md` 现在只保留测试集扩展计划。
 
 ### 19.8 目标声明与外部符号自动链接（2026-10-31）
 
@@ -901,3 +901,14 @@ zig build -Dtarget=aarch64-linux-gnu
 - **Phase 2 winmd**：`tools/gen_winmd.py` 生成 `winmd.generated.json.gz`（132KB，18,083 API，upstream `9b80278`）；name→DLL/callconv/min_os/arch_mask，按 DLL 自动加载。
 - **对齐修复**：新增 VM 字段导致 Zig 重排 `mem`/`ret_buf`，Win64 struct FFI 的 byval 指针未对齐触发 trap；已给 `mem`/`ret_buf`/FFI 缓冲显式 `align(16)`。这是本轮唯一影响既有 ABI 的回归。
 - **验证**：`make test`（21 compiler + 4 runtime + 端到端/负路径）、`scripts/test_cross.sh`（Win64 20、Win32 21、ARM64 19）、真实 Windows `winapi`（GetTickCount64/GetSystemMetrics/GetModuleHandleA/wsprintfA）均通过。
+
+#### 19.8.1 旧 CIB 计划迁移的设计决策
+
+- **CIPKG v2**：固定 25B 头（magic/version/flags/header_size + module/plan/meta/import 四个 u32 长度），随后严格按 `CIVM`、`CIPL`、`CIPM`、`CIPI` 顺序排列；不使用 TLV，`header_size` 仅用于未来扩展；v1 旧包继续可读。
+- **CIPM**：arch/os/abi/ptr_bits/endian/flags、`features`（f80/f128/callback/varargs/auto-link/stdcall）、`min_runtime`、target triple、`link_db`、producer。加载器在解析模块前校验 arch/os/abi/pointer/endian/features/min_runtime。
+- **CIPI**：每条 entry 绑定一个 CIPL 计划索引；携带 function/data kind、required/lazy/allow_fallback/allow_override flags、callconv、arch_mask、min_os、逻辑名和有序 provider 列表。provider 包含库名、真实符号/别名、ordinal、预留 version。
+- **解析策略**：显式 `--lib` 覆盖优先；随后按 CIB provider 顺序加载并缓存 handle；仅当 flags 允许 fallback 时回退旧搜索。自动 provider 只接受系统库名（拒绝 `/`、`\`、`:`）；绝对路径只允许显式 `--lib`。
+- **兼容/版本**：CIPKG v2 默认、v1 兼容；CIPM/CIPI v1；CIPL 保持 v3（v2 可读），CIVM 的 `arch=1` 表示 VM 字节码架构、保持不变；未知版本在加载阶段失败。`--cib-version 1` 可生成旧包，`--no-auto-link` 不生成 import，`--link-db DIR` 可替换生成数据库。
+- **自动链接数据**：cstdapi 表用于 C 标准库符号→Linux libc/libm 或 Windows UCRT/MSVCRT/NTDLL/别名；winmd 表用于 Windows API→DLL/callconv/min_os/arch_mask。两表都固定 upstream commit，只有实际使用符号进入 CIB。
+- **工具/诊断**：`--dump-imports`（编译器和运行时）、`--dump-target`、`--load-only`；运行时错误名区分 `TargetMismatch`、`UnsupportedFeature`、`BadImportPlan`、`ImportArchMismatch`、`ImportUnavailable`。
+- **边界**：外部 data 符号、向量、复杂聚合全局初始化、Win64 vectorcall/COM、Win32 fastcall/thiscall 等仍不在自动链接范围；cstdapi/winmd 只是链接元数据，不替代 C 头文件或 ABI 计划。

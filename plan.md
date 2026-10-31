@@ -1,318 +1,297 @@
 ---
-name: cib-target-and-auto-link
-overview: 扩展 CIB：声明目标架构/平台，内嵌外部符号链接元数据；第一阶段用 cstdapi 自动链接 C 标准库，第二阶段用 winmd 自动链接 Windows API。
+name: c-test-suite-expansion
+overview: 在现有 c-testsuite/本地用例/fuzz/差分基础上，建立统一、可复现、分层的 C 测试集，覆盖四个 ABI、C 标准库自动链接、Windows API 与负路径。
 ---
 
-# CIB 架构声明与外部符号自动链接
+# C 测试集扩展计划
 
-> **状态（2026-10-31）：已完成。** CIPKG v2/CIPM/CIPI 已实现；Phase 1
-> cstdapi 和 Phase 2 winmd 自动链接已在真实 Win64/Win32、Linux x64 和
-> qemu AArch64 上验证。完成细节和验证命令同步到 `dev.md` §19.8 与
-> `docs/cib.md`。
+> **状态（2026-10-31）：计划中，尚未开始实施。** 本文件只描述后续测试集建设；
+> 已完成的 CIB 目标声明/自动链接设计与验证记录已合并到 `dev.md` §19.8。
 
 ## 0. 目标
 
-在 `.cib` 中加入两类新数据：
+1. 把 C 语言正确性、C 标准库/ABI、跨平台、负路径和差分测试统一到一个可重复运行的框架。
+2. 在现有 c-testsuite 之上增加更有区分度的测试集，优先覆盖解释器最容易回归的区域：
+   - 结构体/byval/sret、HFA、varargs、callback、long double；
+   - Linux libc/libm 与 Windows UCRT/MSVCRT/Windows API 自动链接；
+   - Win64/Win32/ARM64 的 ABI 与目标元数据；
+   - 编译器/运行时的错误路径和 fuzz。
+3. 每个用例都有明确来源、固定 commit、预期结果、目标矩阵和跳过理由；不再用“跑完没崩”代替正确性。
+4. 让 PR、nightly、release 使用不同测试层，避免每次都跑完整上游套件。
 
-1. **目标声明**：架构、平台/OS、ABI、指针宽度、端序、目标 triple、最低运行时版本和特性位。运行时在加载模块/计划前先校验目标，错误直接报 `TargetMismatch`，不再只依赖 CIPL 的 ABI id。
-2. **外部符号链接信息**：每个外部调用不仅包含 ABI plan，还包含“从哪个库、用什么符号/别名、什么调用约定、最低 OS/架构”解析。运行时按 CIB 内的信息自动加载 provider 库并解析符号，不再把所有符号都丢进全局搜索。
+## 1. 现有基线
 
-分阶段：
+| 测试 | 现状 | 入口 |
+| --- | --- | --- |
+| 本地 C 子集 | 10/10 | `tests/csuite/`、`make c-testsuite` |
+| 上游 c-testsuite single-exec | 217/217，3 个显式 skip | `scripts/c_testsuite_upstream.py` |
+| examples + 跨 ABI | 60/60（Win64 20、Win32 21、ARM64 19） | `scripts/test_cross.sh` |
+| 编译器/runtime 单测 | 21 + 4 | `make test` |
+| CIB 负路径 | 目标不匹配、v1 兼容、截断、未知符号、`--safe` | `scripts/test.sh` |
+| fuzz load/exec | 200 + 200 变异，0 crash | `scripts/fuzz.py`、`scripts/fuzz_exec.py` |
+| 差分 | 7 个示例 | `scripts/differential.sh` |
 
-- **Phase 1**：C 标准库自动链接。参考 [cstdapi](https://github.com/howmp/cstdapi) 的 `cstdapi.txt`、`linuxgood.txt`、`wingood.txt`、`linuxbad.txt`、`winbad.txt`、`glibcabi.txt` 和 msvcrt/ucrtbase/ntdll spec，生成 C 标准库符号→provider/别名/可用性表。
-- **Phase 2**：Windows 全 API 自动链接。参考 [winmd](https://github.com/howmp/winmd) 的 `apis.json`（18k+ API；含 name/args/ret/callconv/dll/os/arch/ref），生成紧凑的 Windows API 链接索引，按 DLL 自动加载并解析。
+当前缺口：
 
-“自动链接”指编译器自动把被使用的外部符号及其 provider 写入 CIB，运行时按 CIB 元数据动态加载；**不是**把库静态链进字节码，也不是运行期把库路径写死。
+- c-testsuite 主要是小型单文件用例，不能充分覆盖 libc、真实程序和 ABI 边界。
+- 没有 GCC torture、TCC tests2、libc-test、CompCert、LLVM SingleSource 等独立来源。
+- 没有统一的 manifest、预期结果格式、按 target 的 skip 和 JSON/JUnit 报告。
+- 跨 ABI 测试主要是 examples；上游测试集还没有系统接入 Windows/ARM64。
+- Csmith/YARPGen 只做了很小的示例差分，没有生成式差分流水线。
 
-## 1. 现状
+## 2. 测试分层
 
-- `CIPKG` v1：`CIPKG` 头 + module + plans；无目标元数据、无 import 表。
-- `CIVM` v1：字节码模块；`arch` 字节是 VM 字节码架构，不是宿主目标。
-- `CIPL` v3：`CallPlan` 只含 name/ABI locs/stack/sret/sse/conv/ret_size；不含 provider、别名、最低 OS。
-- 运行时 `resolveNative` 每次调用按“进程默认 → `--lib` 句柄逆序 → CRT fallback → Windows 别名/修饰名回退”动态搜索；符号来源和版本不受 CIB 控制。
-- `--lib` 可加载用户库；没有自动 provider 元数据。
+| 层 | 内容 | 目标时间 | 运行时机 |
+| --- | --- | --- | --- |
+| `smoke` | 本地 csuite、hello/关键 examples、CIB 元数据/负路径 | < 1 分钟 | 每次提交/PR |
+| `standard` | c-testsuite、TCC 选中用例、libc smoke、跨 ABI 代表用例 | < 10 分钟 | PR / merge queue |
+| `full` | GCC torture 支持集、CompCert、libc-test 全量、全部跨 ABI | 10–60 分钟 | nightly / release |
+| `nightly` | full + Csmith/YARPGen 100+ seeds + 长超时用例 | 不设硬上限 | 每晚 |
 
-## 2. 总体设计
+测试层级只决定“跑哪些”，不改变用例本身的预期结果；skip 必须显式记录原因。
 
-### 2.1 CIB v2 外层
+## 3. 统一测试框架
 
-新增可选 section，同时保持 v1 兼容。建议：
+### 3.1 目录
 
-```
-CIPKG v2:
-offset size field
-0      5    "CIPKG"
-5      1    version = 2
-6      1    flags (bit0 = has_target, bit1 = has_imports)
-7      2    header_size (currently 25)
-9      4    module_len
-13     4    plan_len
-17     4    meta_len       # CIPM section
-21     4    import_len     # CIPI section
-25     module_len          CIVM
-...    plan_len            CIPL
-...    meta_len            CIPM
-...    import_len          CIPI
-```
-
-- 所有长度 u32 LE；section 顺序固定；`header_size` 允许未来扩展。
-- `meta_len` 必须存在（v2），`import_len` 可为 0（无外部符号）。
-- 运行时接受 CIPKG v1（无 CIPM/CIPI，沿用旧的推断式 ABI 校验和搜索）与 v2（严格使用目标/import 元数据）。
-- 编译器默认写 v2；可以加 `--cib-version=1` 用于回归测试兼容路径。
-
-### 2.2 CIPM：目标/平台声明（v1）
-
-```
-magic "CIPM" (4)
-version u8 = 1
-header_size u16
-arch u8          # 1=x86_64, 2=x86, 3=aarch64
-os u8            # 1=linux, 2=windows
-abi u8           # 1=sysv, 2=win64, 3=win32, 4=aapcs64
-ptr_bits u8      # 32/64
-endian u8        # 1=little
-flags u8
-features u64     # f80/f128, callbacks, varargs, auto-link, ...
-min_runtime u16  # 运行时最低 ABI/feature 版本
-triple_len u16
-triple bytes     # canonical target triple
-link_db_id_len u16
-link_db_id bytes # 例如 "cstdapi@<commit>;winmd@<commit>"
-producer_len u16
-producer bytes   # cinterp/clang version
+```text
+tests/
+  manifests/
+    csuite.json
+    tcc-tests2.json
+    libc-test.json
+    gcc-torture.json
+    compcert.json
+    llvm-singlesource.json
+    chibicc.json
+  expected/
+    <suite>/<case>.out
+    <suite>/<case>.exit
+  vendor/                 # 可选；只在许可证允许时提交
+  csuite/                 # 现有本地用例
+scripts/
+  test_suites.py          # 统一 runner
+  fetch_suites.py         # 拉取/校验固定 commit（仅 CI/本地显式执行）
 ```
 
-- `arch/os/abi/ptr_bits/endian` 用于快速校验；`triple` 用于诊断和未来平台扩展。
-- `features` 声明包依赖的 VM/运行时能力；加载时按位与运行时能力比较，缺失则 `UnsupportedFeature`。
-- `link_db_id` 记录生成 import 表所用的 cstdapi/winmd 版本，便于复现和排查链接差异。
-- CIVM 的 `arch=1` 保持不变（VM 字节码版本），宿主目标只在 CIPM 表达。
+### 3.2 Manifest 字段
 
-### 2.3 CIPI：外部符号链接表（v1）
-
-CIPI 是 plan→provider 的映射；不把完整 cstdapi/winmd 数据库塞进每个 CIB，只写实际用到的符号。
-
-```
-magic "CIPI" (4)
-version u8 = 1
-flags u8
-entry_count u16
-reserved u16
-
-entry:
-  plan_index u16       # CIPL 中该外部 CallPlan 的索引；0xFFFF = 无 plan 的数据符号
-  kind u8              # 0=function, 1=data (data 预留)
-  flags u8             # required/lazy/allow_fallback/allow_override
-  callconv u8          # 0=cdecl, 1=stdcall/winapi, 2=vectorcall(预留)
-  arch_mask u8         # bit0 x86_64, bit1 x86, bit2 aarch64
-  min_os u16           # 0=unknown; Windows 用 winmd os 映射
-  name_len u8
-  name bytes           # 逻辑符号名（规范化后的 IR/plan 名）
-  provider_count u8
-  provider[]:
-    kind u8            # 0=system library name, 1=SONAME/DLL name, 2=explicit path (禁止自动使用)
-    name_len u8
-    name bytes         # "libc.so.6"/"libm.so.6"/"ucrtbase.dll"/"user32.dll"...
-    symbol_len u8
-    symbol bytes       # provider 内真实符号名，例如 "_snprintf"，可与 name 不同
-    ordinal u16        # 0=按名；非 0=按 ordinal（Windows）
-    version_len u8     # 预留
-    version bytes      # 预留（GLIBC_2.x / API set version）
-```
-
-- `plan_index` 与 `CIPL` 的索引绑定；同一符号多次调用可共享 provider 信息，但每条 plan 仍可独立指向。
-- `name` 是逻辑名；`provider.symbol` 是实际符号（别名、Windows 修饰名、`_snprintf`）。
-- 每个 provider 按顺序尝试；成功后在 VM 内缓存 `(plan_index/provider)` 结果。
-- `kind=data` 为未来 `errno`/`stdout` 等 external data 预留；Phase 1/2 先支持函数。
-- `flags` 控制：require（失败即错误）/ optional（允许 fallback 或延迟到调用失败）/ allow_override（`--lib` 可覆盖）。
-- `arch_mask`/`min_os` 由生成器填充；运行时在加载/首次解析时校验。
-
-### 2.4 运行时解析顺序（v2）
-
-1. `--lib` 显式加载的库（用户覆盖优先，保持现有行为）。
-2. CIB `CIPI` 中该 plan 的 provider 列表（顺序尝试）：
-   - Linux：`dlopen(provider.name, RTLD_NOW|RTLD_GLOBAL)`，`dlsym`；
-   - Windows：`LoadLibraryA(provider.name)`，`GetProcAddress`（按名或 ordinal）；
-   - 成功后缓存 provider handle / symbol address。
-3. 若 `flags` 允许 fallback，则退回现有进程默认/CRT 搜索（兼容旧 CIB 和未收录符号）。
-4. 否则返回 `SymbolNotFound`/`ImportUnavailable`，错误中包含尝试过的 provider 列表。
-
-- CIB 中的 provider 只允许**系统库名/受控 allowlist**；自动链接不得从 CIB 读取任意绝对路径。绝对路径只允许用户显式 `--lib`。
-- Windows 缺失 API/OS 版本时优先尝试候选 provider（如 ucrtbase → msvcrt），再报 `ImportUnavailable`；不静默降级到不兼容的 DLL。
-- provider handle/符号缓存按 VM 生命周期保存；单线程，无需锁。
-
-## 3. Phase 1：C 标准库自动链接
-
-### 3.1 生成数据
-
-新增 `tools/gen_cstdapi.py`（build-time，非运行时依赖）：
-
-输入（固定 upstream commit）：
-
-- `cstdapi.txt`：C 标准库符号全集。
-- `linuxgood.txt` / `linuxbad.txt`：glibc 可用性。
-- `wingood.txt` / `winbad.txt`：Windows CRT 可用性。
-- `glibcabi.txt`、`abilists/`：glibc provider/版本信息。
-- `msvcrt.spec`、`ucrtbase.spec`、`ntdll.spec`：Windows provider 与符号别名。
-- 可选 `macgood/macbad`（当前目标不含 macOS，先生成但不用）。
-
-输出（check-in）：
-
-```
-compiler/src/cinterp/link/cstdapi.generated.json
+```json
 {
-  "upstream_commit": "...",
-  "targets": {
-    "x86_64-linux": {
-      "printf": {"providers":[{"lib":"libc.so.6","symbol":"printf"}],"available":true},
-      "sin": {"providers":[{"lib":"libm.so.6","symbol":"sin"}],"available":true},
-      "getrandom": {"providers":[{"lib":"libc.so.6","symbol":"getrandom"}],"min_glibc":"2.25"}
-    },
-    "x86_64-windows": {
-      "snprintf": {"providers":[
-        {"lib":"ucrtbase.dll","symbol":"snprintf"},
-        {"lib":"msvcrt.dll","symbol":"_snprintf"}
-      ],"available":true}
+  "suite": "tcc-tests2",
+  "upstream": "https://github.com/TinyCC/tinycc",
+  "commit": "<pinned>",
+  "license": "LGPL-2.1",
+  "mode": "exec",
+  "default_timeout": 10,
+  "cases": [
+    {
+      "id": "test01",
+      "source": "tests/tests2/01.c",
+      "targets": ["x86_64-linux", "x86_64-windows", "i686-windows", "aarch64-linux"],
+      "expected_exit": 0,
+      "expected_stdout": "expected/tcc-tests2/test01.out",
+      "skip": {
+        "x86_64-windows": "Windows CRT printf differs",
+        "aarch64-linux": "requires unsupported vector"
+      }
     }
-  }
+  ]
 }
 ```
 
-- 生成器按目标 triple 输出 provider 候选、别名、可用性、最低版本/OS；`winbad`/`linuxbad` 明确列入 `available:false`，编译期给出清晰错误。
-- 数据文件带 upstream commit/license/provenance 注释；不联网、不在编译期解析 upstream。
-- 标准库签名不作为数据源：参数/返回类型仍来自 clang LLVM IR；cstdapi 只负责“符号→provider/别名/可用性”。
+- `mode`：`exec` / `compile` / `load-only`。
+- 预期结果优先级：显式 `expected_stdout`/`expected_exit` → 源文件 `// expect:` 标记 → suite 默认退出码 0。
+- `targets` 与 `skip` 必须成对可解释；skip 不能是空原因。
+- 用例 ID 稳定，不随上游文件名/路径变化而漂移。
 
-### 3.2 编译器行为
+### 3.3 Runner
 
-- 新增 `compiler/src/cinterp/link/`：
-  - `cstdapi.py`：加载 generated 数据，按 target 查询。
-  - `imports.py`：把外部 `CallPlan` 匹配到 import entry；未匹配的符号保留旧的手动 `--lib` 路径。
-- 对外部调用：
-  - Phase 1 命中 C 标准库：生成 `CIPI` entry，自动选择 provider/别名；不需要用户写 `--lib`。
-  - 未命中：不自动猜测（避免加载错误 DLL）；保留现有 fallback/手动 `--lib`，并在 `--dump` 中标记 `unresolved`。
-  - `--no-auto-link`：完全关闭自动 import 生成。
-  - `--link-db path`：覆盖 generated 数据（测试/私有 CRT）。
-- Windows 目标优先使用 ucrtbase，其次 msvcrt/ntdll（按数据）；Linux 优先 `libc.so.6`，数学函数 `libm.so.6`；AArch64 同样按 glibc provider。
-- 编译期检查：`available:false`、目标架构不匹配、缺少 provider → 错误含 cstdapi 来源/原因；不生成不可加载的 import。
+```bash
+python3 scripts/test_suites.py \
+  --suite tcc-tests2 --target x86_64-linux \
+  --tier smoke --jobs 8 --report build/test-report.json
+```
 
-### 3.3 验收
+能力：
 
-- 四个目标（sysv/win64/win32/arm64）分别编译并运行不写 `--lib` 的示例：
-  `printf/snprintf/malloc/free/qsort/strcmp/strlen/memcpy/memset`，Linux 再加 `sin/cos`（libm）。
-- CIB `--dump-imports` 能列出 plan→provider/alias。
-- Windows `snprintf` 自动选 `_snprintf`；不再依赖 native.zig 的硬编码别名（硬编码可保留为 legacy fallback）。
-- 旧 CIB v1 仍可加载；新 CIB v2 在错误 OS/arch 上 `TargetMismatch`。
-- 体积：import 只包含使用符号；hello 无外部符号时 CIPI 为空。
+- `--suite` 可重复；`--target` 默认 native，支持 `x86_64-linux`、`x86_64-windows`、`i686-windows`、`aarch64-linux`。
+- `native` 直接运行；Windows 复用现有 SSH 传输；ARM64 复用 qemu/sysroot。
+- 每例记录：compile rc、run rc、stdout/stderr、超时、实际/预期、耗时。
+- 输出 JSON 报告（CI artifact）和人类摘要；可选 JUnit XML。
+- `--keep` 保留 CIB/中间文件；失败用例自动打印最小 stderr 尾部。
+- `--update-baseline` 只允许在本地把 native 参考输出写入 `tests/expected/`，CI 禁止自动更新。
+- `--tier smoke|standard|full` 过滤；默认不运行 `nightly` 级生成式测试。
 
-## 4. Phase 2：Windows 全 API 自动链接
+### 3.4 与 Makefile 集成
 
-### 4.1 生成数据
+```bash
+make test-suites-smoke     # 现有 test 的超集，保持快速
+make test-suites           # standard
+make test-suites-full      # nightly/full
+make test-suites-report    # 生成 JSON/JUnit
+```
 
-新增 `tools/gen_winmd.py`：
+现有 `make test`、`make c-testsuite`、`make cross-test` 在迁移期间保持可用；迁移完成后由统一 runner 调用，不删除旧脚本。
 
-- 输入 `winmd/apis.json`（或 `apis.txt`），固定 commit。
-- 对每条 API 提取：
-  - `name`、`dll`、`callconv`、`os`、`arch`（如数据未显式给出，按 winmd 元数据/Windows API contract 补全）。
-  - 重名 API：保留多个 provider，按 DLL/OS/arch 排序。
-  - `A/W` 变体、别名、ordinal（若 metadata 可提供）。
-- 生成紧凑索引：
-  ```
-  compiler/src/cinterp/link/winmd.generated.bin  # 或 .json.zst
-  name → [{dll, symbol, callconv, min_os, arch_mask, ordinal?}]
-  ```
-- 不把 10MB `apis.json` 放进 CIB；只有每个 CIB 实际使用的 API 进入 `CIPI`。
+## 4. 各测试集接入计划
 
-### 4.2 编译器行为
+### 4.1 P0：TCC `tests/tests2`
 
-- Windows 目标下，外部声明/调用名匹配 winmd 索引：
-  - 自动写 import entry：`dll`、真实符号、`callconv`（winapi→Win32 stdcall / Win64 等）、`min_os`、`arch_mask`。
-  - `A`/`W` 名称按 IR 名匹配；无匹配时保留手动 `--lib`/报未解析。
-  - 已有 CIPL plan 负责参数/返回 ABI；winmd 的 args/ret 可用于交叉校验（可选，Phase 2 后半）。
-- 调用约定：
-  - `winapi` 在 Win32 映射为 `stdcall`（CIPL conv=1），Win64/ARM64 按各自 ABI；
-  - `cdecl` 保持 cdecl；
-  - 不支持 `vectorcall`/COM 时编译期明确报错。
-- API 可用性：
-  - 目标 `min_os` 高于运行时/目标配置时给出 `ImportUnavailable` 或警告；
-  - `arch_mask` 不匹配（例如 x86-only API 在 x64）编译期错误。
-- `--no-auto-link`/`--link-db` 同样适用于 Windows。
+- 来源：TinyCC 仓库 `tests/tests2`，固定 commit。
+- 价值：体积小、C 子集覆盖面好，适合快速增加语言/表达式/结构体回归。
+- 做法：先选不依赖 TCC 私有 `test.h`/GNU 扩展的子集；输出由 native clang 生成并人工审核后固化。
+- 目标：native Linux 全通过；Windows/ARM64 先接可移植子集，平台差异显式 skip。
+- 风险：TCC 测试期望输出与 `printf`/浮点格式有关，需按目标分开 expected。
 
-### 4.3 运行时行为
+### 4.2 P0：musl `libc-test`
 
-- 首次调用时按 CIPI 的 DLL provider 自动 `LoadLibraryA`（只允许系统 DLL/API set 名；禁止 CIB 携带绝对路径）。
-- `GetProcAddress` 支持按名、别名和 ordinal；按 provider 顺序失败回退。
-- 缓存 DLL handle 和符号地址；卸载随 VM 销毁（或保持与 `--lib` 相同的生命周期）。
-- Windows API set（`api-ms-win-*`）通过系统 loader 转发；若目标机器缺少 API，报 `ImportUnavailable`，不要静默改用不兼容 DLL。
-- 与 `--lib` 的关系：显式 `--lib` 优先，允许用户覆盖系统 provider（测试/兼容层）。
+- 来源：musl `libc-test`（固定 commit），优先 `src/functional`、`src/regression` 中纯 C/标准库用例。
+- 价值：直接验证 `cstdapi` 自动链接、stdio/string/stdlib/math、头文件/声明和 ABI。
+- 做法：Linux native 为第一目标；筛掉 POSIX/Linux 特有、需要 fork/thread/信号或外部数据的用例。
+- 断言：编译成功、退出码、stdout；另加“无 `--lib` 自动链接”检查。
+- 风险：部分用例依赖 musl 专有行为或系统调用；按目标 skip，不伪装通过。
 
-### 4.4 验收
+### 4.3 P1：GCC `gcc.c-torture`
 
-- Windows 测试机（x64 + WoW64 x86）自动调用不使用 `--lib`：
-  - `kernel32.dll`：`GetTickCount64`/`Sleep`；
-  - `user32.dll`：`MessageBoxA` 仅做非交互/不弹窗测试或 `GetSystemMetrics`；
-  - `advapi32.dll`/`bcrypt.dll` 等非 GUI API；
-  - `A`/`W`、stdcall/cdecl、64 位返回值、struct 参数。
-- `--dump-imports` 输出 DLL/symbol/conv/min_os；错误目标加载失败。
-- Win64/Win32/ARM64 的 import 表按 arch/OS 过滤；同一 CIB 不会在错误平台静默运行。
-- 测试 Windows 全 API 索引生成可重复、带 commit/license；CI 只检查代表性 API，不跑 18k 全量调用。
+- 来源：GCC `gcc/testsuite/gcc.c-torture/execute` 与 `compile`，固定 GCC tag/commit。
+- 价值：覆盖整数/浮点/位域/结构体/优化前后语义，是最有分量的标准 C 回归来源。
+- 做法：
+  1. 解析 DejaGNU 指令和 `.x` 文件，先只选标准 C、无 GNU 扩展、无 vector/i128/外部 data 的用例。
+  2. `execute` 以退出码 0 为主；有输出/特殊 exit 的用例单独建 expected。
+  3. `compile` 只验证 cinterp 编译成功；不运行。
+  4. 对超时/内联汇编/未支持特性的用例建立显式 skip 清单。
+- 目标：先建“支持子集”而非承诺全量；所有失败先分类（编译器缺特性、ABI、测试期望、超时），再决定修复或 skip。
 
-## 5. 代码改动清单（预计）
+### 4.4 P1：CompCert test suite
 
-- `compiler/src/cinterp/codegen/binary_writer.py`：CIPKG v2 section 写入。
-- 新增 `compiler/src/cinterp/link/`：
-  - `target.py`（target metadata）
-  - `cstdapi.py`、`winmd.py`（数据库加载/匹配）
-  - `imports.py`（CIPI 生成、plan_index 绑定）
-- `compiler/src/cinterp/ffi/plan.py`：保持不变（ABI 计划）；plan 索引仍由 PlanTable 管理。
-- `compiler/src/cinterp/llvm_ir/lower.py`：外部调用生成 import entries；保留旧 fallback。
-- `compiler/src/cinterp/cli.py`：`--cib-version`、`--no-auto-link`、`--link-db`、`--dump-imports`。
-- `runtime/src/ffi/package_loader.zig`（或 `main`/`vm` 拆分）：解析 CIPKG v2/CIPM/CIPI。
-- `runtime/src/ffi/link.zig`：provider 解析、DLL/DSO 加载、符号缓存、校验。
-- `runtime/src/ffi/native.zig`：保留底层 dlopen/LoadLibrary；新增按 provider 加载。
-- `runtime/src/vm.zig`：`resolveNative` 使用 CIPI；旧路径 fallback；错误信息。
-- `runtime/src/main.zig`：目标校验/诊断、`--dump-target`/`--dump-imports`。
-- `tools/gen_cstdapi.py`、`tools/gen_winmd.py`、生成数据、provenance/license。
-- `docs/cib.md`：CIPKG v2/CIPM/CIPI 完整字段表；更新示例。
-- 测试/CI：格式 round-trip、目标不匹配、provider 回退、Windows 自动化、体积预算。
+- 来源：CompCert `test/c`、`test/regression` 等，固定 commit。
+- 价值：真实程序/控制流/内存/整数密集，补充 c-testsuite 的小用例不足。
+- 做法：挑选不依赖 CompCert 私有头/命令行选项的 C 文件；用 native 参考生成 expected；逐例处理浮点/long double/平台差异。
+- 风险：CompCert 的测试框架不是为解释器设计，需要薄适配层。
 
-## 6. 版本与兼容策略
+### 4.5 P1：chibicc 测试
 
-- CIPKG v2 默认；v1 旧包继续可读（无目标/import 元数据）。
-- CIPM v1、CIPI v1 独立版本；新增字段用 flags/header_size 扩展。
-- CIPL 保持 v3；import 表通过 plan_index 关联，避免破坏 ABI 计划格式。
-- 未知 section/version：`UnsupportedCibVersion`；未知 provider kind：`UnsupportedProvider`。
-- 生成数据库带 upstream commit 与 schema version；编译器/运行时版本不匹配时给出可诊断错误。
+- 来源：`rui314/chibicc` 的 tests，固定 commit。
+- 价值：C11 子集结构清晰，适合作为 TCC 之外的快速回归。
+- 做法：直接复用其 `assert` 风格；失败时按语法/代码生成/ABI 分类。
 
-## 7. 安全与边界
+### 4.6 P2：LLVM `SingleSource`
 
-- 自动 provider 只允许**系统库名/allowlist**；CIB 不能指定任意磁盘路径或命令行参数。
-- 不允许自动加载 CIB 内嵌的二进制；`--lib` 是显式用户授权路径。
-- 目标/OS/arch 校验在模块/计划解析前执行；计划 ABI 必须与 CIPM.abi 一致。
-- 符号错误包含 provider 尝试列表；不静默加载同名但 ABI 不兼容的 DLL。
-- Windows API 的 `min_os`/arch 过滤在编译期和运行期各做一次；缺失时报错而非猜测。
-- 仍不引入 libffi、JIT 或动态可执行内存；provider 加载只影响符号来源。
+- 来源：LLVM test-suite 的 `SingleSource`，固定 commit。
+- 价值：更大的真实 C 程序，覆盖 libc 与优化前的行为。
+- 做法：只筛选 `.c`、无 C++/OpenMP/向量扩展的用例；先 compile/load-only，再选可运行的子集。
+- 风险：运行时间/依赖较大，只进入 `full`，不进入 PR 层。
 
-## 8. 决策记录（已确认）
+### 4.7 P2：Csmith / YARPGen 差分
 
-1. CIPKG v2 采用固定 25B 头 + CIVM/CIPL/CIPM/CIPI 顺序；`header_size` 预留扩展。
-2. 显式 `--lib` 优先于 CIB provider，便于用户覆盖/测试。
-3. Phase 1 命中的标准库符号自动写 import；未命中的自定义符号保留旧 fallback/`--lib`；cstdapi 明确不可用的符号编译期报错。
-4. Windows CRT provider 顺序为 `ucrtbase.dll` → `msvcrt.dll` → `ntdll.dll`；保留 `_snprintf`/`_vsnprintf` 别名。
-5. winmd 索引采用确定性 gzip JSON（132KB，18,083 API），只把实际使用符号写入 CIB。
-6. winmd 的 args/ret 当前不参与 ABI 计划生成；只取 name→DLL/callconv/min_os/arch_mask，ABI 仍由 clang IR 决定。
-7. `CIPI.kind=data` 和 ordinal 字段已预留；本轮自动链接只生成函数符号，外部 data 符号仍不在范围。
-8. `--link-db DIR` 可覆盖 cstdapi/winmd 生成数据库；`--no-auto-link` 关闭自动链接。
+- 来源：Csmith、YARPGen，固定版本；生成式而非固定用例集。
+- 做法：
+  1. 生成单文件、有限大小、无 UB 的 C 程序（禁用未定义行为/复杂特性）。
+  2. 同时用 clang/gcc 与 cinterp 编译运行，比较退出码/stdout。
+  3. 失败自动保存源文件、seed、编译日志、CIB、两侧输出。
+  4. 用 creduce/最小化脚本缩减；修复后加入固定回归用例。
+- 目标：nightly 至少 100 个 seed；0 未分类 crash/超时；已知 UB/不支持特性由生成参数排除，而不是事后静默丢弃。
 
-## 9. 完成定义
+### 4.8 基准（非正确性）
 
-- Phase 1 完成：四个现有目标上，C 标准库示例无需 `--lib` 自动链接；CIPKG v2 + CIPM + CIPI 通过 round-trip/错误路径/真实运行；旧 v1 兼容；文档更新。
-- Phase 2 完成：Windows x64/x86（及 ARM64 如 CI 可用）代表性 API 自动从 winmd DLL 解析；stdcall/cdecl、alias/ordinal、min_os/arch 校验；错误 provider 有诊断；文档/CI 更新。
-- 只有实际使用的 import 进入 CIB；CIB 体积预算和 fuzz 覆盖新 section。
+- CoreMark、Dhrystone、MiBench、PolyBench/C 只用于 `bench`，不混入正确性通过率。
+- SPEC CPU 需要商业许可证，除非项目方提供，否则不纳入 CI。
+- 基准记录耗时/CIB 大小，不把“跑完”当作语义正确。
 
-## 10. 完成证据
+## 5. 跨 ABI 与自动链接矩阵
 
-- `make test`：21 compiler 单测、4 runtime 单测、端到端/负路径全部通过。
-- `scripts/test_cross.sh`：Win64 20 / Win32 21 / ARM64 19 用例通过；真实 Windows 包括 `winapi` 自动链接。
-- Win64/Win32 `winapi` 覆盖 `GetTickCount64`、`GetSystemMetrics`、`GetModuleHandleA`、`wsprintfA`（cdecl/varargs）。
-- `cinterp-run --dump-target --dump-imports --load-only` 可检查 CIPM/CIPI；v1 包兼容、目标不匹配返回 `TargetMismatch`。
-- `--no-auto-link` 回退旧搜索，`--lib` 覆盖 provider；自动 provider 拒绝路径。
-- 生成数据：`cstdapi.generated.json`（upstream `abba9c4`）、`winmd.generated.json.gz`（upstream `9b80278`）。
+每个 suite 的 manifest 支持 target 过滤；至少覆盖：
+
+| 目标 | 运行方式 | 重点 |
+| --- | --- | --- |
+| `x86_64-linux` | native | SysV、libc/libm、callback、fuzz |
+| `x86_64-windows` | Windows SSH | Win64、UCRT、winmd API、sret/HFA |
+| `i686-windows` | Windows SSH/WoW64 | Win32 cdecl/stdcall、4B 指针、x87 |
+| `aarch64-linux` | qemu + sysroot | AAPCS64 HFA、f128、libc |
+
+固定检查：
+
+- 编译后检查 `--dump-imports`：标准库/Windows API 必须命中预期 provider。
+- 运行时不传 `--lib`（自动链接路径）；另用自定义 `--lib` 覆盖测试验证优先级。
+- 错误 target 加载必须 `TargetMismatch`；v1 CIB 必须仍可运行。
+- 每个跨平台失败必须有 target-specific skip 或修复，不能按“本机通过”计入。
+
+## 6. 过滤、skip 与分类规则
+
+允许 skip 的情况：
+
+- 明确超出当前 C/ABI 子集：外部 data 符号、向量、复杂聚合全局初始化、Win64 vectorcall/COM、Win32 fastcall/thiscall、i128/vector 参数、HFA callback >2、long double callback。
+- 需要 GNU 扩展、内联汇编、TLS/线程/信号/fork、GUI/COM、外部服务或平台专有头。
+- 上游测试本身依赖未定义行为、非确定性输出、网络或交互输入。
+- 已知且已登记的编译器/运行时缺陷；必须在 `tests/manifests/<suite>.json` 写 issue/原因，不能只写“unsupported”。
+
+不允许：
+
+- 因为超时/崩溃直接算 skip；
+- 用 `|| true` 或吞掉 stderr 让 suite “通过”；
+- CI 自动更新 expected baseline；
+- 未固定 upstream commit 就拉取最新 main。
+
+失败分类固定为：`compile`、`run-error`、`timeout`、`mismatch`、`load-error`、`harness-error`；报告按类别统计。
+
+## 7. 实施阶段与验收
+
+### Phase 1：框架与迁移（P0）
+
+- 新增 manifest schema、`scripts/test_suites.py`、JSON 报告、Make targets。
+- 把现有 `tests/csuite` 和上游 c-testsuite 迁移到新 runner，行为不变。
+- 验收：本地 csuite 10/10；上游 217/217（3 skip）通过；`make test` 仍通过；报告可复现。
+
+### Phase 2：TCC + libc-test（P0）
+
+- 引入两个固定 commit 的 suite，建立 expected/skip。
+- 验收：native Linux 全部保留用例通过；标准库/自动链接样例无需 `--lib`；所有 skip 有原因；报告对比 baseline 无回归。
+
+### Phase 3：GCC torture + chibicc/CompCert（P1）
+
+- 先接 GCC `execute` 支持子集、chibicc，再接 CompCert 选中用例。
+- 验收：新增 suite 的保留用例全通过；失败分类完成；同一 commit 重复运行结果一致；`standard` 时间仍在预算内。
+
+### Phase 4：跨 ABI 与生成式差分（P1/P2）
+
+- TCC/GCC 可移植子集接入 Win64/Win32/ARM64；Csmith/YARPGen nightly。
+- 验收：四目标矩阵无未分类失败；nightly 至少 100 seeds；crash/timeout 有最小化样本和 issue；自动链接覆盖检查通过。
+
+### Phase 5：CI/发布门禁
+
+- PR 跑 smoke + 代表 standard；nightly 跑 full + 生成式差分；release 跑 full + size + fuzz + differential。
+- 验收：CI artifact 包含 JSON/JUnit；失败能定位 suite/case/target；发布前无未分类失败、无静默 skip。
+
+## 8. 工作清单
+
+- [ ] 设计并文档化 manifest schema 与 expected 目录。
+- [ ] 实现 `scripts/test_suites.py`（native/SSH/qemu runner、超时、报告、skip）。
+- [ ] 实现 `scripts/fetch_suites.py`（固定 commit/校验和/许可证检查，可选 vendor）。
+- [ ] 迁移 `tests/csuite` 与 upstream c-testsuite。
+- [ ] 接入 TCC tests2。
+- [ ] 接入 musl libc-test。
+- [ ] 接入 GCC c-torture 支持子集。
+- [ ] 接入 chibicc / CompCert 选中用例。
+- [ ] 接入 LLVM SingleSource C 子集（P2）。
+- [ ] 实现 Csmith/YARPGen 差分流水线与最小化。
+- [ ] 添加 `make test-suites-smoke/standard/full/report`。
+- [ ] CI：PR/nightly/release 分层、缓存、artifact、许可证检查。
+- [ ] 更新 `dev.md`、README 和测试说明。
+
+## 9. 风险与开放决策
+
+1. **许可证**：GCC/CompCert/TCC/libc-test 的许可证不同，是否 vendor？默认只保存 manifest 和 fetch 脚本，CI 拉取固定 commit；vendor 前逐项确认。
+2. **上游测试框架**：DejaGNU/expect/TCC test.h 的语义不同，优先选“可直接编译运行”的子集，不做完整上游 harness 复刻。
+3. **预期输出**：优先源内 `expected`；没有时用 native clang 生成并人工审核。浮点/`long double`/Windows CRT 格式差异必须按 target 固化。
+4. **测试时间**：GCC torture/CompCert/LLVM SingleSource 只进 full；单个慢用例（如 00040）设置显式超时，不拖垮 PR。
+5. **UB 与非确定性**：Csmith/YARPGen 生成参数必须排除 UB；测试集本身含 UB 的用例跳过并记录，不把 UB 结果当规范。
+6. **跨平台 transport**：Windows SSH/ARM64 qemu 的路径、超时和 stderr 编码差异统一在 runner 适配层处理。
+
+## 10. 完成定义
+
+- `make test-suites-smoke`、`make test-suites`、`make test-suites-full` 可复现运行并有 JSON 报告。
+- 现有 csuite/c-testsuite 迁移后无回归；新增 suite 有固定 commit、许可证说明、manifest、expected 和显式 skip。
+- 四个 ABI 的保留用例全部通过；自动链接/目标元数据/负路径有专门断言。
+- 所有失败都有分类和 issue/处置；不存在静默 skip、`|| true` 或 CI 自动改 baseline。
+- nightly 生成式差分有种子、报告和最小化失败样本；release 门禁通过。
