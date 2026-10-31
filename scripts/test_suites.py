@@ -108,11 +108,23 @@ def discover_cases(manifest: dict, root: Path) -> list[dict]:
                 continue
             parts = line.split(None, 1)
             skip[parts[0]] = parts[1].strip() if len(parts) > 1 else "listed in " + str(skip_file)
+    excluded: set[str] = set()
+    exclude_file = resolve_path(root, manifest.get("exclude_file"))
+    if manifest.get("repo_exclude_file"):
+        exclude_file = ROOT / str(manifest["repo_exclude_file"])
+    if exclude_file and exclude_file.is_file():
+        for line in exclude_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            excluded.add(line.split()[0])
     cases = []
     for source in sorted(root.glob(pattern)):
         if not source.is_file():
             continue
         cid = source.stem
+        if cid in excluded:
+            continue
         expected = None
         if expected_dir:
             expected = expected_dir / (cid + expected_ext)
@@ -480,6 +492,7 @@ def main() -> int:
                 print(f"  expected: {item['expected']}", file=sys.stderr)
     report = {
         "target": args.target,
+        "excluded": {name: len([1 for line in (ROOT / str(manifest.get("repo_exclude_file", ""))).read_text().splitlines() if line.strip() and not line.startswith("#")]) if manifest.get("repo_exclude_file") and (ROOT / manifest["repo_exclude_file"]).is_file() else 0 for name, manifest in selected.items()},
         "tier": args.tier,
         "counts": counts,
         "error_classes": classes,

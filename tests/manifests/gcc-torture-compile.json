@@ -16,5 +16,6 @@
   "timeout": 20,
   "compile_timeout": 120,
   "skip": {},
-  "repo_skip_file": "tests/manifests/gcc-torture-compile.skip"
+  "repo_skip_file": "tests/manifests/gcc-torture-compile.skip",
+  "repo_exclude_file": "tests/manifests/gcc-torture-compile.excluded"
 }
