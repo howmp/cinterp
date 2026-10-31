@@ -44,10 +44,16 @@ def norm_text(data: bytes) -> bytes:
 
 def strip_result(data: bytes) -> tuple[bytes, int | None]:
     matches = list(RESULT_RE.finditer(data))
-    if not matches:
-        return data, None
-    value = int(matches[-1].group(0).split(b":", 1)[1].strip())
-    return RESULT_RE.sub(b"", data), value
+    if matches:
+        value = int(matches[-1].group(0).split(b":", 1)[1].strip())
+        return RESULT_RE.sub(b"", data), value
+    # Test output without a trailing newline is followed directly by the
+    # runtime's `result: N` diagnostic. Strip that tail as harness output.
+    tail = re.search(rb"result: -?\d+\s*$", data)
+    if tail:
+        value = int(tail.group(0).split(b":", 1)[1].strip())
+        return data[: tail.start()], value
+    return data, None
 
 
 def resolve_root(manifest: dict) -> Path:
@@ -267,9 +273,10 @@ def run_case(
         "source": str(source),
         "status": "harness",
         "reason": "",
+        "error_class": "harness",
         "duration_ms": 0,
     }
-    skip = case_skip(case, target)
+    skip = None if runner.get("include_skipped") else case_skip(case, target)
     if skip:
         result.update(status="skip", reason=skip)
         return result
@@ -361,6 +368,7 @@ def main() -> int:
     ap.add_argument("--remote-dir", default=os.environ.get("CINTERP_REMOTE_DIR", ""))
     ap.add_argument("--qemu", default=os.environ.get("QEMU", "qemu-aarch64"))
     ap.add_argument("--sysroot", default=os.environ.get("SYSROOT", "/usr/aarch64-linux-gnu"))
+    ap.add_argument("--include-skipped", action="store_true", help="run skip-listed cases for re-triage")
     args = ap.parse_args()
 
     manifests = load_manifests()
@@ -391,6 +399,7 @@ def main() -> int:
         "remote_dir": args.remote_dir,
         "qemu": args.qemu,
         "sysroot": args.sysroot,
+        "include_skipped": args.include_skipped,
     }
     if args.target in ("x86_64-windows", "i686-windows"):
         if not runner_cfg["windows_host"]:
@@ -440,9 +449,28 @@ def main() -> int:
             shutil.rmtree(outdir, ignore_errors=True)
 
     results.sort(key=lambda x: (x["suite"], x["id"]))
+    for item in results:
+        if item["status"] == "skip":
+            item["error_class"] = "skip"
+        elif item["status"] != "ok":
+            reason = item.get("reason", "")
+            if "timeout" in reason:
+                item["error_class"] = "timeout"
+            elif item["status"] == "compile":
+                item["error_class"] = "compile"
+            elif item["status"] == "mismatch":
+                item["error_class"] = "mismatch"
+            elif item["status"] == "run":
+                item["error_class"] = "run-error"
+            else:
+                item["error_class"] = item["status"]
+        else:
+            item["error_class"] = "ok"
     counts: dict[str, int] = {}
+    classes: dict[str, int] = {}
     for item in results:
         counts[item["status"]] = counts.get(item["status"], 0) + 1
+        classes[item["error_class"]] = classes.get(item["error_class"], 0) + 1
     for item in results:
         if item["status"] != "ok" and item["status"] != "skip":
             print(f"{item['suite']}/{item['id']}: {item['status']}: {item['reason']}", file=sys.stderr)
@@ -454,6 +482,7 @@ def main() -> int:
         "target": args.target,
         "tier": args.tier,
         "counts": counts,
+        "error_classes": classes,
         "results": results,
     }
     report_path = Path(args.report)

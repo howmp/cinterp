@@ -6,11 +6,11 @@ const platform = @import("ffi/platform.zig");
 const native = @import("ffi/native.zig");
 const link_loader = @import("ffi/link_loader.zig");
 
-pub const MAX_FUNCS: usize = 8;
+pub const MAX_FUNCS: usize = 512;
 pub const MAX_NAME: usize = 32;
-pub const MAX_STACK: usize = 1024;
-pub const MAX_FRAMES: usize = 64;
-pub const MAX_MODULE: usize = 262144;
+pub const MAX_STACK: usize = 8192;
+pub const MAX_FRAMES: usize = 512;
+pub const MAX_MODULE: usize = 2097152;
 
 pub const OP_RET: u8 = 0x01;
 pub const OP_RET_VOID: u8 = 0x02;
@@ -95,6 +95,15 @@ pub const OP_F128_TO_I64: u8 = 0x8A;
 pub const OP_F128_FROM_F32: u8 = 0x8B;
 pub const OP_F128_TO_F32: u8 = 0x8C;
 pub const OP_ALLOCA_DYN: u8 = 0x8D;
+pub const OP_FPTOUI: u8 = 0x8E;
+pub const OP_UITOFP: u8 = 0x8F;
+pub const OP_FPTOUI32: u8 = 0x90;
+pub const OP_UITOFP32: u8 = 0x91;
+pub const OP_F80_TO_U64: u8 = 0x92;
+pub const OP_F80_FROM_U64: u8 = 0x93;
+pub const OP_F128_TO_U64: u8 = 0x94;
+pub const OP_F128_FROM_U64: u8 = 0x95;
+pub const OP_ADDR_EXTERN: u8 = 0x96;
 
 fn readU16At(bytes: []const u8, off: usize) u16 {
     return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
@@ -150,6 +159,12 @@ fn compareF128(a: f128, b: f128, pred: u8) bool {
         5 => !unordered and a >= b,
         6 => !unordered,
         7 => unordered,
+        8 => unordered or a == b,
+        9 => unordered or a > b,
+        10 => unordered or a >= b,
+        11 => unordered or a < b,
+        12 => unordered or a <= b,
+        13 => unordered or a != b,
         else => false,
     };
 }
@@ -165,6 +180,12 @@ fn compareF80(a: f80, b: f80, pred: u8) bool {
         5 => !unordered and a >= b,
         6 => !unordered,
         7 => unordered,
+        8 => unordered or a == b,
+        9 => unordered or a > b,
+        10 => unordered or a >= b,
+        11 => unordered or a < b,
+        12 => unordered or a <= b,
+        13 => unordered or a != b,
         else => false,
     };
 }
@@ -180,6 +201,12 @@ fn compareFloats(a: f64, b: f64, pred: u8) bool {
         5 => !unordered and a >= b,
         6 => !unordered,
         7 => unordered,
+        8 => unordered or a == b,
+        9 => unordered or a > b,
+        10 => unordered or a >= b,
+        11 => unordered or a < b,
+        12 => unordered or a <= b,
+        13 => unordered or a != b,
         else => false,
     };
 }
@@ -371,6 +398,51 @@ pub const VM = struct {
             if (native.symbol(handle, cname)) |sym| return sym;
         }
         return null;
+    }
+
+    fn loadImportedData(self: *VM, entry_index: usize, entry: *const link_loader.ImportEntry) !?*const anyopaque {
+        const name = entry.name[0..entry.name_len];
+        var li: usize = self.library_count;
+        while (li > 0) {
+            li -= 1;
+            if (self.libraries[li]) |handle| {
+                if (name.len < self.symbol_buf.len) {
+                    @memcpy(self.symbol_buf[0..name.len], name);
+                    self.symbol_buf[name.len] = 0;
+                    const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+                    if (native.symbol(handle, cname)) |sym| return sym;
+                }
+            }
+        }
+        var pi: usize = 0;
+        while (pi < entry.provider_count) : (pi += 1) {
+            const provider = &entry.providers[pi];
+            if (provider.kind != 0 and provider.kind != 1) continue;
+            const lib_name = provider.name[0..provider.name_len];
+            if (lib_name.len == 0 or std.mem.indexOfAny(u8, lib_name, "/\\:") != null) continue;
+            const handle = try self.cachedProvider(@intCast(entry_index), pi, lib_name) orelse continue;
+            const sym_name = provider.symbol[0..provider.symbol_len];
+            if (sym_name.len >= self.symbol_buf.len) return error.SymbolTooLong;
+            @memcpy(self.symbol_buf[0..sym_name.len], sym_name);
+            self.symbol_buf[sym_name.len] = 0;
+            const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+            if (native.symbol(handle, cname)) |sym| return sym;
+        }
+        // Fallback: process/global namespace and CRT.
+        if (name.len < self.symbol_buf.len) {
+            @memcpy(self.symbol_buf[0..name.len], name);
+            self.symbol_buf[name.len] = 0;
+            const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+            if (self.searchSymbol(cname)) |sym| return sym;
+        }
+        return null;
+    }
+
+    fn resolveData(self: *VM, entry_index: usize) !*const anyopaque {
+        const entry = self.imports.at(entry_index) orelse return error.BadImportPlan;
+        if (entry.kind != 1) return error.BadImportPlan;
+        if (try self.loadImportedData(entry_index, entry)) |sym| return sym;
+        return error.SymbolNotFound;
     }
 
     fn resolveNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
@@ -715,6 +787,17 @@ pub const VM = struct {
                     const fval: f64 = @floatFromInt(v.i);
                     try self.push(.{ .i = @bitCast(fval) });
                 },
+                OP_FPTOUI => {
+                    const v = try self.pop();
+                    const fval: f64 = @bitCast(v.i);
+                    try self.push(.{ .i = @bitCast(@as(u64, @intFromFloat(fval))) });
+                },
+                OP_UITOFP => {
+                    const v = try self.pop();
+                    const uval: u64 = @bitCast(v.i);
+                    const fval: f64 = @floatFromInt(uval);
+                    try self.push(.{ .i = @bitCast(fval) });
+                },
                 OP_F80_CONST => {
                     var bits: u80 = 0;
                     var i: u8 = 0;
@@ -765,6 +848,14 @@ pub const VM = struct {
                 OP_F80_TO_I64 => {
                     const v = try self.popF80();
                     try self.push(.{ .i = @intFromFloat(v) });
+                },
+                OP_F80_TO_U64 => {
+                    const v = try self.popF80();
+                    try self.push(.{ .i = @bitCast(@as(u64, @intFromFloat(v))) });
+                },
+                OP_F80_FROM_U64 => {
+                    const v = try self.pop();
+                    try self.pushF80(@floatFromInt(@as(u64, @bitCast(v.i))));
                 },
                 OP_F80_FROM_F32 => {
                     const v = try self.pop();
@@ -835,6 +926,14 @@ pub const VM = struct {
                 OP_F128_TO_I64 => {
                     const v = try self.popF128();
                     try self.push(.{ .i = @intFromFloat(v) });
+                },
+                OP_F128_TO_U64 => {
+                    const v = try self.popF128();
+                    try self.push(.{ .i = @bitCast(@as(u64, @intFromFloat(v))) });
+                },
+                OP_F128_FROM_U64 => {
+                    const v = try self.pop();
+                    try self.pushF128(@floatFromInt(@as(u64, @bitCast(v.i))));
                 },
                 OP_F128_FROM_F32 => {
                     const v = try self.pop();
@@ -930,6 +1029,17 @@ pub const VM = struct {
                     const fval: f32 = @floatFromInt(v.i);
                     try self.pushF32(fval);
                 },
+                OP_FPTOUI32 => {
+                    const v = try self.pop();
+                    const fval = f32FromValue(v);
+                    try self.push(.{ .i = @bitCast(@as(u64, @intFromFloat(fval))) });
+                },
+                OP_UITOFP32 => {
+                    const v = try self.pop();
+                    const uval: u64 = @bitCast(v.i);
+                    const fval: f32 = @floatFromInt(uval);
+                    try self.pushF32(fval);
+                },
                 OP_LOAD_LOCAL => {
                     const idx = try readU16(code, &ip);
                     const slot: usize = idx;
@@ -1008,6 +1118,13 @@ pub const VM = struct {
                     const n: usize = p.name_len;
                     const target = try self.resolveNative(idx, p.name[0..n]);
                     try self.invokeFfi(plan, target);
+                },
+                OP_ADDR_EXTERN => {
+                    if (self.safe) return error.SafeMode;
+                    const idx = try readU16(code, &ip);
+                    const sym = try self.resolveData(idx);
+                    const addr: u64 = @intFromPtr(sym);
+                    try self.push(.{ .i = @bitCast(addr) });
                 },
                 OP_ADDR_CONST => {
                     const off = try readU32(code, &ip);

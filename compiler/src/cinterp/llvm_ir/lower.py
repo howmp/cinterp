@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ..codegen.binary_writer import write_package, write_package_v2
 from ..ffi.plan import PlanTable, build_plan, build_sysv_plan
-from ..link import cstdapi, winmd
+from ..link import cstdapi, external, winmd
 from ..link.imports import ImportTable
 from ..link.target import Target, target_for
 
@@ -101,6 +101,54 @@ OP_F128_TO_I64 = 0x8A
 OP_F128_FROM_F32 = 0x8B
 OP_F128_TO_F32 = 0x8C
 OP_ALLOCA_DYN = 0x8D
+OP_ADDR_EXTERN = 0x96
+
+LLVM_LIBC_INTRINSICS = {
+    "llvm.fabs.f32": "fabsf",
+    "llvm.fabs.f64": "fabs",
+    "llvm.sqrt.f32": "sqrtf",
+    "llvm.sqrt.f64": "sqrt",
+    "llvm.round.f32": "roundf",
+    "llvm.round.f64": "round",
+    "llvm.ceil.f32": "ceilf",
+    "llvm.ceil.f64": "ceil",
+    "llvm.floor.f32": "floorf",
+    "llvm.floor.f64": "floor",
+    "llvm.copysign.f32": "copysignf",
+    "llvm.copysign.f64": "copysign",
+    "llvm.fma.f32": "fmaf",
+    "llvm.fma.f64": "fma",
+    "llvm.fmuladd.f32": "fmaf",
+    "llvm.fmuladd.f64": "fma",
+    "llvm.fmin.f32": "fminf",
+    "llvm.fmin.f64": "fmin",
+    "llvm.fmax.f32": "fmaxf",
+    "llvm.fmax.f64": "fmax",
+    "llvm.exp2.f32": "exp2f",
+    "llvm.exp2.f64": "exp2",
+    "llvm.log2.f32": "log2f",
+    "llvm.log2.f64": "log2",
+    "llvm.trunc.f32": "truncf",
+    "llvm.trunc.f64": "trunc",
+    "llvm.nearbyint.f32": "nearbyintf",
+    "llvm.nearbyint.f64": "nearbyint",
+    "llvm.rint.f32": "rintf",
+    "llvm.rint.f64": "rint",
+    "llvm.sin.f32": "sinf",
+    "llvm.sin.f64": "sin",
+    "llvm.cos.f32": "cosf",
+    "llvm.cos.f64": "cos",
+    "llvm.pow.f32": "powf",
+    "llvm.pow.f64": "pow",
+}
+OP_FPTOUI = 0x8E
+OP_UITOFP = 0x8F
+OP_FPTOUI32 = 0x90
+OP_UITOFP32 = 0x91
+OP_F80_TO_U64 = 0x92
+OP_F80_FROM_U64 = 0x93
+OP_F128_TO_U64 = 0x94
+OP_F128_FROM_U64 = 0x95
 
 
 def split_top(s: str, sep: str = ",") -> list[str]:
@@ -634,6 +682,7 @@ class Lowerer:
         callbacks: CallbackTable,
         abi: str = "sysv",
         ptr_size: int = 8,
+        external_data: dict[str, int] | None = None,
     ):
         self.fn = fn
         self.func_indices = func_indices
@@ -647,6 +696,7 @@ class Lowerer:
         self.callbacks = callbacks
         self.abi = abi
         self.ptr_size = ptr_size
+        self.external_data = external_data or {}
         self.code = bytearray()
         self.slots: dict[str, int] = {}
         self.allocas: dict[str, int] = {}
@@ -717,6 +767,10 @@ class Lowerer:
             if key in self.func_indices:
                 self.emit_u8(OP_FUNC_ADDR)
                 self.emit_u16(self.func_indices[key])
+                return
+            if key in self.external_data:
+                self.emit_u8(OP_ADDR_EXTERN)
+                self.emit_u16(self.external_data[key])
                 return
             raise ValueError(f"unknown global {name}")
         locals_found = re.findall(r"%[\w.$-]+", text)
@@ -1176,6 +1230,12 @@ class Lowerer:
                 "oge": 5,
                 "ord": 6,
                 "uno": 7,
+                "ueq": 8,
+                "ugt": 9,
+                "uge": 10,
+                "ult": 11,
+                "ule": 12,
+                "une": 13,
             }.get(pred)
             if pred_code is None:
                 raise ValueError(f"unsupported fcmp predicate: {pred}")
@@ -1266,7 +1326,7 @@ class Lowerer:
             return
 
         m = re.match(
-            r"(trunc|zext|sext|fptosi|sitofp|fpext|fptrunc|inttoptr|ptrtoint|bitcast)\s+(\S+)\s+(.+?)\s+to\s+(\S+)$",
+            r"(trunc|zext|sext|fptosi|fptoui|sitofp|uitofp|fpext|fptrunc|inttoptr|ptrtoint|bitcast)\s+(\S+)\s+(.+?)\s+to\s+(\S+)$",
             rhs,
         )
         if m:
@@ -1275,7 +1335,7 @@ class Lowerer:
             op, src_ty, value, dst_ty = m.group(1), m.group(2), m.group(3), m.group(4)
             if src_ty in ("x86_fp80", "fp128"):
                 self.emit_operand(value)
-            elif op in ("fptosi", "fptrunc", "fpext"):
+            elif op in ("fptosi", "fptoui", "fptrunc", "fpext"):
                 self.emit_float_operand(value, src_ty)
             else:
                 self.emit_operand(value)
@@ -1294,6 +1354,18 @@ class Lowerer:
                     self.emit_u8(OP_F128_TO_I64)
                 else:
                     self.emit_u8(OP_FPTOSI32 if src_ty == "float" else OP_FPTOSI)
+            elif op == "fptoui":
+                if src_ty == "x86_fp80":
+                    self.emit_u8(OP_F80_TO_U64)
+                elif src_ty == "fp128":
+                    self.emit_u8(OP_F128_TO_U64)
+                else:
+                    self.emit_u8(OP_FPTOUI32 if src_ty == "float" else OP_FPTOUI)
+                if dst_ty.startswith("i"):
+                    bits = int(dst_ty[1:])
+                    if bits < 64:
+                        self.emit_const((1 << bits) - 1)
+                        self.emit_u8(OP_AND)
             elif op == "sitofp":
                 if dst_ty == "x86_fp80":
                     self.emit_u8(OP_F80_FROM_I64)
@@ -1301,6 +1373,18 @@ class Lowerer:
                     self.emit_u8(OP_F128_FROM_I64)
                 else:
                     self.emit_u8(OP_SITOFP32 if dst_ty == "float" else OP_SITOFP)
+            elif op == "uitofp":
+                if src_ty.startswith("i"):
+                    bits = int(src_ty[1:])
+                    if bits < 64:
+                        self.emit_const((1 << bits) - 1)
+                        self.emit_u8(OP_AND)
+                if dst_ty == "x86_fp80":
+                    self.emit_u8(OP_F80_FROM_U64)
+                elif dst_ty == "fp128":
+                    self.emit_u8(OP_F128_FROM_U64)
+                else:
+                    self.emit_u8(OP_UITOFP32 if dst_ty == "float" else OP_UITOFP)
             elif op == "fpext":
                 if src_ty == "float" and dst_ty == "double":
                     self.emit_u8(OP_FPEXT)
@@ -1480,6 +1564,7 @@ class Lowerer:
             ret_expr = re.sub(r"^(?:x86_stdcallcc|x86_fastcallcc|x86_thiscallcc)\s+", "", ret_expr)
             ret_type = type_token(ret_expr)
             fname = normalize_llvm_name(m.group(2) if m.group(2) is not None else m.group(3))
+            fname = LLVM_LIBC_INTRINSICS.get(fname, fname)
             args_text = m.group(4)
             conv = 1 if "x86_stdcallcc" in rhs else 0
             args = split_top(args_text) if args_text.strip() else []
@@ -1643,6 +1728,9 @@ def compile_text(
     decls = parse_decls(text)
     functions = parse_functions(text)
     indices = {fn.name: idx for idx, fn in enumerate(functions)}
+    body_text = "\n".join(line for fn in functions for line in fn.body)
+    external_names = external.collect_names(body_text, globals_map, indices, decls)
+    external_table = external.build(target, external_names, imports, decls)
     plans = PlanTable(abi)
     callbacks = CallbackTable(abi, structs, ptr_size)
     functions_by_name = {fn.name: fn for fn in functions}
@@ -1661,6 +1749,7 @@ def compile_text(
             callbacks,
             abi,
             ptr_size,
+            external_table.index,
         ).lower()
     module = serialize(functions)
     plan_bytes = plans.serialize()

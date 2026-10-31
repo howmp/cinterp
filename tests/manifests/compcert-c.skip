@@ -1,0 +1,13 @@
+# generated from initial CompCert c benchmark probe
+aes	mismatch: stdout mismatch
+almabench	mismatch: stdout mismatch
+binarytrees	mismatch: stdout mismatch
+chomp	mismatch: stdout mismatch
+fftw	mismatch: stdout mismatch
+knucleotide	mismatch: stdout mismatch
+lists	mismatch: stdout mismatch
+nbody	mismatch: stdout mismatch
+sha1	mismatch: stdout mismatch
+sha3	mismatch: stdout mismatch
+siphash24	mismatch: stdout mismatch
+spectral	timeout: run timeout

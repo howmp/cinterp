@@ -917,8 +917,8 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
-- **测试集**：csuite 10、c-testsuite 217+3 skip、TCC 77+66 skip、chibicc 13+28 skip、libc-test 28+47 skip、GCC execute 1072+628 skip、GCC compile 1272+744 skip、CompCert 35+74 skip、LLVM UnitTests 79+14 skip。总计 2803 通过 / 1604 显式 skip。
-- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 各跑 csuite 10 个用例，均 10/10；Windows 用 SSH，ARM64 用 qemu。
+- **测试集**：csuite 12、c-testsuite 217+3 skip、TCC 84+59 skip、chibicc 14+27 skip、libc-test 40+35 skip、GCC execute 1154+546 skip、GCC compile 1389+627 skip、CompCert regression 41+68 skip、CompCert c 12+12 skip、LLVM UnitTests 84+9 skip、GCC ieee 59+20 skip。总计 3106 通过 / 1406 显式 skip。
+- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 各跑 csuite 12 个用例，均 12/12；Windows 用 SSH，ARM64 用 qemu。
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 13、skip 7；100-seed nightly 通过 61、skip 39。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
 - **策略**：不自动更新 expected/skip；新增失败必须先分类（compile/runtime/mismatch/timeout/harness），再修复或写入显式 skip；`build/suites` 不进入版本库。

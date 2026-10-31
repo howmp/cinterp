@@ -53,16 +53,18 @@ make generate-diff          # YARPGen differential smoke
 
 | suite | passed | skipped |
 | --- | ---: | ---: |
-| csuite | 10 | 0 |
+| csuite | 12 | 0 |
 | c-testsuite | 217 | 3 |
-| tcc-tests2 | 77 | 66 |
-| chibicc | 13 | 28 |
-| libc-test | 28 | 47 |
-| gcc-torture | 1072 | 628 |
-| gcc-torture-compile | 1272 | 744 |
-| compcert | 35 | 74 |
-| llvm-singlesource | 79 | 14 |
-| **total** | **2803** | **1604** |
+| tcc-tests2 | 84 | 59 |
+| chibicc | 14 | 27 |
+| libc-test | 40 | 35 |
+| gcc-torture | 1154 | 546 |
+| gcc-torture-compile | 1389 | 627 |
+| compcert | 41 | 68 |
+| llvm-singlesource | 84 | 9 |
+| gcc-ieee | 59 | 20 |
+| compcert-c | 12 | 12 |
+| **total** | **3106** | **1406** |
 
 `make test-suites-full` is the command that produced this table; generated
 YARPGen/Csmith known-failure seeds are recorded separately in

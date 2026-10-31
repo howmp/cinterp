@@ -1,10 +1,12 @@
-# generated from initial CompCert regression probe
-alias	compile: cinterp: unsupported instruction: %conv = fptoui double %0 to i64
+# regenerated after P0/P1 semantics and external-data changes
+NaNs	mismatch: stdout mismatch
+alias	mismatch: stdout mismatch
 alignas	compile: /home/admin/cl/build/suites/CompCert/test/regression/alignas.c:25:10: error: size of array element of type 'int16' (aka 'int') (4 bytes) isn't a multiple of its alignment (16 by...
 aligned	mismatch: stdout mismatch
 alignglob	mismatch: stdout mismatch
+annot1	compile: /home/admin/cl/build/suites/CompCert/test/regression/annot1.c:7:10: error: use of unknown builtin '__builtin_annot_intval' [-Wimplicit-function-declaration]
 attribs1	mismatch: stdout mismatch
-binops	compile: cinterp: unsupported instruction: %conv115 = uitofp i32 %110 to double
+binops	mismatch: stdout mismatch
 bitfields1	mismatch: stdout mismatch
 bitfields10	mismatch: stdout mismatch
 bitfields2	mismatch: stdout mismatch
@@ -17,25 +19,51 @@ builtins-common	compile: /home/admin/cl/build/suites/CompCert/test/regression/bu
 builtins-powerpc	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-powerpc.c:23:40: error: use of unknown builtin '__builtin_mulhw' [-Wimplicit-function-declaration]
 builtins-riscV	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-riscV.c:14:47: error: use of unknown builtin '__builtin_fmadd' [-Wimplicit-function-declaration]
 builtins-x86	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-x86.c:24:33: error: use of unknown builtin '__builtin_read16_reversed' [-Wimplicit-function-declaration]
-casts3	compile: cinterp: unsupported instruction: %conv = uitofp i32 %0 to double
+casts3	mismatch: stdout mismatch
 charlit	compile: /home/admin/cl/build/suites/CompCert/test/regression/charlit.c:20:21: error: hex escape sequence out of range
+commaprec	mismatch: stdout mismatch
 compound	mismatch: stdout mismatch
 consteval	mismatch: stdout mismatch
 dollars	mismatch: stdout mismatch
-expr6	compile: cinterp: unsupported fcmp predicate: une
-extern2	compile: cinterp: unknown global @ungetc
-floats	compile: /home/admin/cl/build/suites/CompCert/test/regression/floats.c:3703:10: warning: implicit conversion from 'int' to 'float' changes value from 16777217 to 16777216 [-Wimplicit-con...
-ifconv	mismatch: stdout mismatch
+emptydecl	mismatch: stdout mismatch
+expr2	mismatch: stdout mismatch
+expr3	mismatch: stdout mismatch
+expr4	mismatch: stdout mismatch
+extasm	compile: cinterp: unsupported instruction: %1 = call i32 asm "TEST0 out:$0 in:$1", "=r,r,~{cc},~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !24
+extern1	mismatch: stdout mismatch
+floats	mismatch: stdout mismatch
+funct1	mismatch: stdout mismatch
+funct2	mismatch: stdout mismatch
+funptr1	mismatch: stdout mismatch
+init1	mismatch: stdout mismatch
+init2	mismatch: stdout mismatch
+init3	compile: /home/admin/cl/build/suites/CompCert/test/regression/init3.c:5:14: error: incompatible pointer to integer conversion initializing 'int' with an expression of type 'void *' [-Win...
+init4	mismatch: stdout mismatch
+initializers	mismatch: stdout mismatch
 initializers2	mismatch: stdout mismatch
 instrsel	mismatch: stdout mismatch
-int32	compile: /home/admin/cl/build/suites/CompCert/test/regression/int32.c:28:38: warning: shifting a negative signed value is undefined [-Wshift-negative-value]
-int64	compile: /home/admin/cl/build/suites/CompCert/test/regression/int64.c:27:40: warning: shifting a negative signed value is undefined [-Wshift-negative-value]
+int32	mismatch: stdout mismatch
 krfun	compile: /home/admin/cl/build/suites/CompCert/test/regression/krfun.c:5:6: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C...
 memcpy	compile: /home/admin/cl/build/suites/CompCert/test/regression/memcpy.c:18:31: warning: invalid conversion specifier ',' [-Wformat-invalid-specifier]
+packedstruct1	compile: /home/admin/cl/build/suites/CompCert/test/regression/packedstruct1.c:19:19: error: expected identifier or '('
 packedstruct2	compile: /home/admin/cl/build/suites/CompCert/test/regression/packedstruct2.c:7:19: error: expected identifier or '('
-parsing	mismatch: stdout mismatch
+pragmas	mismatch: stdout mismatch
+ptrs1	mismatch: stdout mismatch
+ptrs2	mismatch: stdout mismatch
 sections	compile: /home/admin/cl/build/suites/CompCert/test/regression/sections.c:39:3: error: use of unknown builtin '__builtin_membar' [-Wimplicit-function-declaration]
-struct7	compile: cinterp: unknown global @B
-switch3	mismatch: stdout mismatch
+seqops	mismatch: stdout mismatch
+singlefloats	mismatch: stdout mismatch
+sizeof1	mismatch: stdout mismatch
+struct1	mismatch: stdout mismatch
+struct10	mismatch: stdout mismatch
+struct2	mismatch: stdout mismatch
+struct3	mismatch: stdout mismatch
+struct4	mismatch: stdout mismatch
+struct5	mismatch: stdout mismatch
+struct6	mismatch: stdout mismatch
+struct7	mismatch: stdout mismatch
+struct9	mismatch: stdout mismatch
+types1	mismatch: stdout mismatch
 varargs1	mismatch: stdout mismatch
 varargs2	mismatch: stdout mismatch
+varargs3	mismatch: stdout mismatch

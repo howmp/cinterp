@@ -1,33 +1,35 @@
 ---
 name: test-results-improvement
-overview: 根据当前 2803/4407 通过、1604 skip 的结果，按“先修真实缺陷和标准 C 语义，再扩跨 ABI/覆盖”的顺序提升测试通过率和诊断质量。
+overview: 根据当前 3106/4512 通过、1406 skip 的结果，按“先修真实缺陷和标准 C 语义，再扩跨 ABI/覆盖”的顺序提升测试通过率和诊断质量。
 ---
 
 # 测试结果提升计划
 
-> **状态（2026-10-31）：计划中。** 当前统一测试集、manifest、runner 和基线已完成，
+> **状态（2026-10-31）：执行中。** P0 的 `fcmp`/float 转换、VM 上限、external data 已落地；统一测试集、runner 和基线已完成，
 > 见 `dev.md` §20；本文件只记录后续未完成的改进项。
 
 ## 0. 当前基线
 
 | 套件 | 通过 | skip | 说明 |
 | --- | ---: | ---: | --- |
-| csuite | 10 | 0 | 四 ABI 各 10/10 |
+| csuite | 12 | 0 | 四 ABI 各 12/12 |
 | c-testsuite | 217 | 3 | 外部 data/向量/复杂全局初始化 |
-| TCC tests2 | 77 | 66 | 29 mismatch、36 compile、1 run |
-| chibicc | 13 | 28 | 21 compile、7 run |
-| libc-test | 28 | 47 | 29 mismatch、14 compile、4 runtime |
-| GCC torture execute | 1072 | 628 | 226 run、402 compile |
-| GCC torture compile | 1272 | 744 | 743 compile、1 timeout |
-| CompCert regression | 35 | 74 | 21 compile、19 mismatch、34 无 expected |
-| LLVM UnitTests | 79 | 14 | 全部 compile 失败 |
-| **合计** | **2803** | **1604** | skip 占 36.4% |
+| TCC tests2 | 84 | 59 | 23 compile、35 mismatch、1 run |
+| chibicc | 14 | 27 | 20 compile、7 run |
+| libc-test | 40 | 35 | 29 mismatch、3 compile、3 runtime |
+| GCC torture execute | 1154 | 546 | 228 run、318 compile |
+| GCC torture compile | 1389 | 627 | 626 compile、1 timeout |
+| CompCert regression | 41 | 68 | 16 compile、52 mismatch（含无 expected） |
+| LLVM UnitTests | 84 | 9 | 全部 compile 失败 |
+| GCC ieee | 59 | 20 | ieee 子集 |
+| CompCert c | 12 | 12 | benchmark 选中子集 |
+| **合计** | **3106** | **1406** | skip 占 31.2% |
 
 已识别的重点信号：
 
-- 约 **226** 个 GCC execute 运行失败，很多只是 `run: exit 1 != 0`，缺少真实 stderr；样本里已经出现 `FrameOverflow`、`TooManyFunctions`、`SymbolNotFound`、`abort`。
-- 约 **75** 个 `fcmp une`、**20+** 个 `fptoui/uitofp` 编译跳过，属于标准 C 语义而不是 GNU 扩展。
-- 约 **100** 个 `unknown global`（`stdout`/`errno`/`environ`/`t_status` 等），是 external data 符号能力缺口。
+- 约 **228** 个 GCC execute 运行失败，很多只是 `run: exit 1 != 0`，缺少真实 stderr；样本里已经出现 `FrameOverflow`、`TooManyFunctions`、`SymbolNotFound`、`abort`。
+- `fcmp une` 和 `fptoui/uitofp` 已实现，相关 skip 已移除；剩下一部分运行失败仍需分诊。
+- external data 已支持 `stdout`/`t_status` 等基础场景；剩余未解析数据/函数指针仍需分诊。
 - TCC/libc/CompCert 共约 **77** 个 stdout mismatch；必须区分真实语义 bug、浮点/printf 格式差异和上游 expected 差异。
 - YARPGen 100 seeds：61 通过、39 skip；Csmith 3/3 命中已知 checksum/TooManyFunctions 失败。
 - 跨 ABI 只系统验证了 csuite；上游套件仍是 native-only。
@@ -143,7 +145,7 @@ overview: 根据当前 2803/4407 通过、1604 skip 的结果，按“先修真�
 
 ## 7. P1：跨 ABI 与自动链接
 
-- 目前只有 csuite 在 Win64/Win32/ARM64 各 10/10；上游测试集 native-only。
+- 目前只有 csuite 在 Win64/Win32/ARM64 各 12/12；上游测试集 native-only。
 - 为 TCC/chibicc/GCC/CompCert 建立 per-target manifest 子集；
 - 增加 target-specific expected 和 skip，不允许 compile 失败被 native 通过结果掩盖；
 - 自动链接断言：
@@ -217,14 +219,14 @@ overview: 根据当前 2803/4407 通过、1604 skip 的结果，按“先修真�
 
 | 指标 | 当前 | 目标 |
 | --- | ---: | ---: |
-| full 通过率 | 2803/4407 (63.6%) | 先提升到 ≥72%，最终 ≥80% |
+| full 通过率 | 3106/4512 (68.8%) | 先提升到 ≥72%，最终 ≥80% |
 | skip 数 | 1604 | 先降到 <1200，再按范围外/缺陷拆分 |
 | GCC execute 运行失败 | 226 | 至少减半，其余有 error_class/issue |
 | `fcmp une` skip | ~75 | 0（标准 C） |
 | `fptoui/uitofp` skip | ~20+ | 0（标准 C） |
 | `unknown global` skip | ~100 | 代表性 external data 用例通过 |
-| 跨 ABI 上游套件 | csuite only | 四目标各有 TCC/GCC/CompCert 子集 |
-| YARPGen 100 未分类 failure | 19（未分类前） | 0；known 失败有最小复现 |
+| 跨 ABI 上游套件 | csuite 12/12 × 3 | 四目标各有 TCC/GCC/CompCert 子集 |
+| YARPGen 100 未分类 failure | 0（已分类 39 skip） | 保持 0；known 失败有最小复现 |
 | CI nightly 生成式 seeds | 20 | 100 |
 
 目标是“真实通过率”提高，不是把 skip 换个名字。

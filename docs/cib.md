@@ -55,7 +55,7 @@ offset  size  field
 - `25 + module_len + plan_len + meta_len + import_len` 必须精确等于文件长度；不允许 padding。
 - `meta_len` 至少包含完整的 CIPM v1（29 字节头 + 字符串）。
 - `import_len` 可以为 0；编译器在无外部符号时写 10 字节空 CIPI 头，不是省略。
-- 运行时模块上限 `MAX_MODULE = 262144` 字节；CLI 读取包文件上限 16 MiB。
+- 运行时模块上限 `MAX_MODULE = 1048576` 字节；CLI 读取包文件上限 16 MiB。
 - v2 在加载模块前执行目标校验；CIPI 在计划加载后校验 plan 索引。
 
 ### 2.2 v1（兼容）
@@ -117,7 +117,7 @@ offset size field
 
 ```
 2     plan_index       # CIPL 计划索引；0xffff 预留给 data 符号
-1     kind             # 0=function, 1=data（data 暂未实现）
+1     kind             # 0=function, 1=data
 1     flags            # bit0=required, bit1=lazy, bit2=allow_fallback, bit3=allow_override
 1     callconv         # 0=cdecl, 1=stdcall/winapi
 1     arch_mask        # bit0=x86_64, bit1=x86, bit2=aarch64; 0=all
@@ -136,11 +136,11 @@ provider[]:
   N   version          # 预留（GLIBC_2.x / API set 版本）
 ```
 
-- `plan_index` 绑定 CIPL；同一符号多次调用可以有多条 entry，运行时按 plan 精确匹配。
+- `plan_index` 绑定 CIPL；`0xffff` 表示 data entry，`ADDR_EXTERN` 使用 entry 索引解析地址。同一符号多次调用可以有多条 entry。
 - provider 按顺序尝试；成功后缓存库 handle 和符号地址。
 - 自动生成的 provider 只能是系统库名/allowlist；运行时会拒绝包含 `/`、`\` 或 `:` 的自动 provider 名，避免 CIB 指定任意路径。显式 `--lib` 仍允许用户路径。
 - `arch_mask` 与 `min_os` 在加载时校验；不匹配返回 `ImportArchMismatch` / `ImportUnavailable`。
-- `kind=data` 与 `ordinal` 已预留；当前自动链接只生成 function entry，ordinal 解析在 Windows 已支持。
+- `kind=data` 已支持 `stdout`/`errno` 类 external data：编译器为未知外部全局生成 data entry，运行时按 provider/`--lib` 解析地址；`ordinal` 解析在 Windows 已支持。
 
 ### 2.5 运行时符号解析顺序
 
@@ -151,7 +151,7 @@ provider[]:
 3. 若 entry 允许 fallback，再走旧的进程默认 → `--lib` → CRT 搜索。
 4. 否则返回 `SymbolNotFound`。
 
-没有 CIPI entry 的计划（旧 v1 包或未收录的自定义符号）仍走旧搜索路径。`--safe` 在解析前直接拒绝 `CALL_NATIVE`/`CALL_VARARG`。
+没有 CIPI entry 的计划（旧 v1 包或未收录的自定义符号）仍走旧搜索路径。`--safe` 在解析前直接拒绝 `CALL_NATIVE`/`CALL_VARARG`/`ADDR_EXTERN`。
 
 ### 2.6 自动链接数据库
 
@@ -188,7 +188,7 @@ M     code bytes
 
 - `param_count` 是函数参数个数；参数占用函数局部槽的**前 `param_count` 个**。
 - `local_count` 包含参数槽和后续 alloca/SSA 槽；必须 `>= param_count`。
-- 函数名有效上限为运行时的 `MAX_NAME = 32` 字节；函数数上限 `MAX_FUNCS = 8`。
+- 函数名有效上限为运行时的 `MAX_NAME = 32` 字节；函数数上限 `MAX_FUNCS = 256`。
 - code 是字节流，跳转目标是**当前函数 code 内的绝对字节偏移**。
 - 入口默认是 `main`，运行时可指定其他入口。
 
@@ -199,7 +199,7 @@ M     code bytes
   `callee_base = sp - param_count` 建立被调帧，清零 `callee_base+param_count`
   到 `callee_base+local_count-1`。
 - `OP_RET` 弹出一个值并返回给调用者；入口/Callback 的 `RET` 直接结束执行。
-- 运行时槽栈上限 `MAX_STACK = 1024`，帧上限 `MAX_FRAMES = 64`。
+- 运行时槽栈上限 `MAX_STACK = 4096`，帧上限 `MAX_FRAMES = 256`。
 - 函数返回后，`OP_ALLOCA` 在 `mem_mark` 之后的线性内存会回收；调用者分配的内存保留。
 
 ### 3.4 线性内存与 globals
@@ -294,6 +294,12 @@ VM 有 1 MiB 线性内存（`mem`），`mem_top` 是 bump pointer：
 | 0x86 | `F128_NEG` | — | f128 取负 |
 | 0x87-0x8C | `F128_FROM_F64/TO_F64/FROM_I64/TO_I64/FROM_F32/TO_F32` | — | f128 转换 |
 | 0x8D | `ALLOCA_DYN` | — | 弹 size，动态分配 VLA |
+| 0x8E | `FPTOUI` | — | f64 -> u64 bits |
+| 0x8F | `UITOFP` | — | u64 bits -> f64 |
+| 0x90 | `FPTOUI32` | — | f32 -> u64 bits |
+| 0x91 | `UITOFP32` | — | u64 bits -> f32 |
+| 0x92-0x95 | `F80_TO_U64/FROM_U64/F128_TO_U64/FROM_U64` | — | long double 无符号转换 |
+| 0x96 | `ADDR_EXTERN` | u16 import | 压入 CIPI data 符号地址 |
 
 ### 4.1 浮点谓词
 
@@ -512,8 +518,8 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o buil
 ## 8. 限制与兼容性
 
 - `CIVM` 当前 v1；`CIPKG` 当前 v2（接受 v1）；`CIPL` 当前 v3（接受 v2）；`CIPM`/`CIPI` 当前 v1。
-- `CIVM` 函数数上限 8、函数名有效上限 32、模块上限 262144 字节；槽栈 1024、帧 64、线性内存 1 MiB（显式 16 字节对齐）。
-- `CIPL` 计划上限 256、每计划参数 16、每参数 loc 8、名称有效上限 32；FFI arg/stack/ret 缓冲区各 4096 字节。
+- `CIVM` 函数数上限 256、函数名有效上限 32、模块上限 1048576 字节；槽栈 4096、帧 256、线性内存 1 MiB（显式 16 字节对齐）。
+- `CIPL` 计划上限 512、每计划参数 32、每参数 loc 8、名称有效上限 32；FFI arg/stack/ret 缓冲区各 4096 字节。
 - CIPM 目标必须匹配运行时；v1 包没有目标 triple，只能依赖 CIPL ABI 和调用方正确选择运行时。
 - CIPI 上限 256 entry、每 entry 8 provider、名称/符号 64 字节、版本 32 字节；自动 provider 只允许库名，不允许 CIB 携带任意路径。
 - 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。`--safe` 只用于 fuzz，不允许原生调用和越界 VM 内存访问。

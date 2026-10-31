@@ -1,42 +1,30 @@
-# generated from the initial support-subset probe; every entry is an explicit known skip
+# regenerated after P0/P1 semantics and external-data changes
 argv	mismatch: stdout mismatch
 clocale_mbfuncs	mismatch: stdout mismatch
 crypt	mismatch: stdout mismatch
 dlopen	run: exit -11 != 0
 dlopen_dso	mismatch: stdout mismatch
-env	compile: cinterp: unknown global @environ
 fnmatch	mismatch: stdout mismatch
 fscanf	mismatch: stdout mismatch
 fwscanf	mismatch: stdout mismatch
-inet_pton	mismatch: stdout mismatch
-ipc_msg	compile: cinterp: unknown global @t_status
-ipc_sem	compile: cinterp: unknown global @t_status
-ipc_shm	compile: cinterp: unknown global @t_status
 mbc	mismatch: stdout mismatch
 popen	mismatch: stdout mismatch
 pthread_cancel	mismatch: stdout mismatch
-pthread_cancel-points	mismatch: stdout mismatch
-pthread_cond	mismatch: stdout mismatch
+pthread_cancel-points	run: exit -11 != 0
+pthread_cond	run: exit -11 != 0
 pthread_mutex	run: exit -11 != 0
-pthread_mutex_pi	run: exit -11 != 0
-qsort	mismatch: stdout mismatch
-search_lsearch	compile: cinterp: unknown global @strcmp
+pthread_mutex_pi	mismatch: stdout mismatch
+sem_init	mismatch: stdout mismatch
 snprintf	mismatch: stdout mismatch
 spawn	mismatch: stdout mismatch
 sscanf	mismatch: stdout mismatch
-sscanf_long	compile: cinterp: unsupported fcmp predicate: une
+sscanf_long	run: exit -11 != 0
 strftime	mismatch: stdout mismatch
 string	mismatch: stdout mismatch
-string_memcpy	compile: cinterp: unknown global @memcpy
-string_memset	compile: cinterp: unknown global @memset
-strtod	compile: cinterp: unsupported fcmp predicate: une
-strtod_long	compile: cinterp: unsupported fcmp predicate: une
-strtof	compile: cinterp: unsupported fcmp predicate: une
+string_memcpy	mismatch: stdout mismatch
+string_memset	run: exit -6 != 0
 strtol	mismatch: stdout mismatch
-strtold	compile: cinterp: unsupported fcmp predicate: une
-tgmath	compile: cinterp: unsupported fcmp predicate: une
-time	mismatch: stdout mismatch
-tls_align	compile: cinterp: unknown global @t
+tls_align	mismatch: stdout mismatch
 tls_align_dlopen	mismatch: stdout mismatch
 tls_align_dso	mismatch: stdout mismatch
 tls_init	mismatch: stdout mismatch
@@ -45,4 +33,4 @@ tls_init_dso	mismatch: stdout mismatch
 tls_local_exec	mismatch: stdout mismatch
 vfork	mismatch: stdout mismatch
 wcstol	mismatch: stdout mismatch
-sem_init	runtime: segfault (exit -11) in sem_init; known runtime failure
+pthread_robust	runtime: known intermittent segfault; quarantine

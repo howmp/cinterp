@@ -1,4 +1,4 @@
-# generated from the initial support-subset probe; every entry is an explicit known skip
+# regenerated after P0/P1 semantics and external-data changes
 alignof	run: exit 1 != 0
 alloca	compile: In file included from /home/admin/cl/build/suites/chibicc/test/alloca.c:1:
 asm	compile: In file included from /home/admin/cl/build/suites/chibicc/test/asm.c:1:
@@ -10,7 +10,6 @@ compat	compile: In file included from /home/admin/cl/build/suites/chibicc/test/c
 const	compile: In file included from /home/admin/cl/build/suites/chibicc/test/const.c:1:
 constexpr	compile: In file included from /home/admin/cl/build/suites/chibicc/test/constexpr.c:1:
 control	compile: In file included from /home/admin/cl/build/suites/chibicc/test/control.c:1:
-extern	compile: In file included from /home/admin/cl/build/suites/chibicc/test/extern.c:1:
 float	run: exit 1 != 0
 function	compile: In file included from /home/admin/cl/build/suites/chibicc/test/function.c:1:
 generic	compile: In file included from /home/admin/cl/build/suites/chibicc/test/generic.c:1:

@@ -41,8 +41,7 @@ jobs:
           version: 0.13.0
       - run: sudo apt-get update && sudo apt-get install -y clang python3 make cmake m4
       - run: python3 scripts/fetch_suites.py --all --support
-      - run: make test-suites-full
-      - run: make generate-diff
+      - run: make test-suites-nightly
       - uses: actions/upload-artifact@v4
         if: always()
         with:
