@@ -420,6 +420,7 @@ class Lowerer:
         self.next_slot = 0
         self.label_pos: dict[str, int] = {}
         self.patches: list[tuple[int, str]] = []
+        self.select_id = 0
 
         for _ptype, pname in fn.params:
             self.slots[pname] = self.alloc_slot()
@@ -981,6 +982,29 @@ class Lowerer:
 
         if rhs.startswith("getelementptr "):
             self.lower_gep(rhs, result)
+            return
+
+        if rhs.startswith("select "):
+            if result is None:
+                raise ValueError(f"select without result: {line}")
+            parts = split_top(rhs[len("select "):])
+            if len(parts) != 3:
+                raise ValueError(f"bad select: {line}")
+            cond = parts[0].strip()
+            true_val = parts[1].strip()
+            false_val = parts[2].strip()
+            n = self.select_id
+            self.select_id += 1
+            else_label = f"__select_else_{n}"
+            end_label = f"__select_end_{n}"
+            self.emit_operand(cond)
+            self.jump(OP_JZ, else_label)
+            self.emit_operand(true_val)
+            self.jump(OP_JMP, end_label)
+            self.label_pos[else_label] = len(self.code)
+            self.emit_operand(false_val)
+            self.label_pos[end_label] = len(self.code)
+            self.store_slot(self.slot_for(result))
             return
 
         if rhs.startswith("br "):

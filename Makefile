@@ -1,4 +1,4 @@
-.PHONY: all test runtime compiler-test integration size release-check cross-test clean
+.PHONY: all test runtime compiler-test integration size release-check cross-test c-testsuite clean
 
 all: test
 
@@ -28,6 +28,9 @@ release-check: test size
 
 cross-test:
 	./scripts/test_cross.sh
+
+c-testsuite: runtime
+	./scripts/c_testsuite.sh
 
 clean:
 	rm -rf build compiler/src/cinterp/__pycache__ compiler/tests/__pycache__

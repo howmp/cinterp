@@ -48,6 +48,9 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c \
 cd runtime && zig build -Dtarget=x86_64-windows-gnu && cd ..
 # HOST=user@windows-box make cross-test   # Win64/Win32/ARM64 suite
 
+# C subset suite
+make c-testsuite
+
 # full test suite
 make test
 
@@ -57,6 +60,8 @@ make release-check
 
 `make test` runs runtime/compiler unit tests, all end-to-end examples, and
 negative paths (missing input, corrupt/truncated packages, unknown symbol).
+`make c-testsuite` runs a local C subset; set `C_TESTSUITE_DIR` to point at an
+external c-testsuite directory (tests without `// expect: N` are skipped).
 
 ## Validation and trust
 
