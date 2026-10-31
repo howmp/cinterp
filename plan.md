@@ -36,10 +36,10 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 - GCC execute 仍有 **91** 个运行缺陷；137 个 varargs/builtin/asm 用例已明确排除。
 - `fcmp une` 和 `fptoui/uitofp` 已实现，相关 skip 已移除；剩下一部分运行失败仍需分诊。
 - external data 已支持 `stdout`/`t_status` 等基础场景；剩余未解析数据/函数指针仍需分诊。
-- TCC/libc/CompCert 共约 **77** 个 stdout mismatch；必须区分真实语义 bug、浮点/printf 格式差异和上游 expected 差异。
-- YARPGen 100 seeds：61 通过、39 skip；Csmith 3/3 命中已知 checksum/TooManyFunctions 失败。
-- 跨 ABI 只系统验证了 csuite；上游套件仍是 native-only。
-- fuzz 只有 200 变异；nightly CI 仍跑 20-seed diff，而不是 100-seed。
+- TCC/libc/CompCert 仍有 mismatch/skip；必须区分真实语义 bug、浮点/printf 格式差异和上游 expected 差异。
+- YARPGen 100 seeds：77 通过、23 明确 skip；Csmith 3/3 命中已知 checksum/TooManyFunctions 失败。
+- 跨 ABI 已验证 csuite + c-testsuite/TCC/GCC/CompCert smoke；完整上游子集仍主要 native。
+- fuzz 已扩到 load 1000/exec 500；nightly 使用 100-seed diff。
 
 ## 0.1 本轮已完成（2026-10-31）
 
@@ -173,7 +173,7 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 
 ## 8. P1：生成式差分
 
-- 当前 YARPGen 100 seeds 有 39 个 skip（27 个已知失败 + native/规模）；Csmith 3/3 已知失败。
+- 当前 YARPGen 100 seeds 有 23 个 skip（已知失败/native/规模）；Csmith 3/3 已知失败。
 - 失败样本自动保存到 `build/generate-failures/<generator>/<seed>/`，包含源文件、CIB、native/cinterp 输出、seed、命令和最小化结果。
 - 引入 creduce 或内置简化器；修复后把最小样本加入固定回归 suite。
 - 修复 StackOverflow、TooManyFunctions、checksum mismatch 的共性根因；不要持续扩大 known-failures 列表。

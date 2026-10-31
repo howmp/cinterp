@@ -55,7 +55,7 @@ offset  size  field
 - `25 + module_len + plan_len + meta_len + import_len` 必须精确等于文件长度；不允许 padding。
 - `meta_len` 至少包含完整的 CIPM v1（29 字节头 + 字符串）。
 - `import_len` 可以为 0；编译器在无外部符号时写 10 字节空 CIPI 头，不是省略。
-- 运行时模块上限 `MAX_MODULE = 1048576` 字节；CLI 读取包文件上限 16 MiB。
+- 运行时模块上限 `MAX_MODULE = 2097152` 字节；CLI 读取包文件上限 16 MiB。
 - v2 在加载模块前执行目标校验；CIPI 在计划加载后校验 plan 索引。
 
 ### 2.2 v1（兼容）
@@ -188,7 +188,7 @@ M     code bytes
 
 - `param_count` 是函数参数个数；参数占用函数局部槽的**前 `param_count` 个**。
 - `local_count` 包含参数槽和后续 alloca/SSA 槽；必须 `>= param_count`。
-- 函数名有效上限为运行时的 `MAX_NAME = 32` 字节；函数数上限 `MAX_FUNCS = 256`。
+- 函数名有效上限为运行时的 `MAX_NAME = 32` 字节；函数数上限 `MAX_FUNCS = 512`。
 - code 是字节流，跳转目标是**当前函数 code 内的绝对字节偏移**。
 - 入口默认是 `main`，运行时可指定其他入口。
 
@@ -199,7 +199,7 @@ M     code bytes
   `callee_base = sp - param_count` 建立被调帧，清零 `callee_base+param_count`
   到 `callee_base+local_count-1`。
 - `OP_RET` 弹出一个值并返回给调用者；入口/Callback 的 `RET` 直接结束执行。
-- 运行时槽栈上限 `MAX_STACK = 4096`，帧上限 `MAX_FRAMES = 256`。
+- 运行时槽栈上限 `MAX_STACK = 8192`，帧上限 `MAX_FRAMES = 512`。
 - 函数返回后，`OP_ALLOCA` 在 `mem_mark` 之后的线性内存会回收；调用者分配的内存保留。
 
 ### 3.4 线性内存与 globals
@@ -519,8 +519,8 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o buil
 
 - `CIVM` 当前 v1；`CIPKG` 当前 v2（接受 v1）；`CIPL` 当前 v3（接受 v2）；`CIPM`/`CIPI` 当前 v1。
 - `CIVM` 函数数上限 256、函数名有效上限 32、模块上限 1048576 字节；槽栈 4096、帧 256、线性内存 1 MiB（显式 16 字节对齐）。
-- `CIPL` 计划上限 512、每计划参数 32、每参数 loc 8、名称有效上限 32；FFI arg/stack/ret 缓冲区各 4096 字节。
+- `CIPL` 计划上限 512、每计划参数 64、每参数 loc 8、名称有效上限 32；FFI arg/stack/ret 缓冲区各 4096 字节。
 - CIPM 目标必须匹配运行时；v1 包没有目标 triple，只能依赖 CIPL ABI 和调用方正确选择运行时。
 - CIPI 上限 256 entry、每 entry 8 provider、名称/符号 64 字节、版本 32 字节；自动 provider 只允许库名，不允许 CIB 携带任意路径。
 - 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。`--safe` 只用于 fuzz，不允许原生调用和越界 VM 内存访问。
-- 自动链接当前覆盖函数符号；外部 data 符号（`errno`/`stdout` 等）、向量、复杂聚合全局初始化仍不在范围内。`CIPKG` 本身不携带 `.so`/`.dll` 二进制。
+- 自动链接覆盖函数符号和基础 external data（`stdout`/`t_status` 等，`CIPI.kind=data` + `ADDR_EXTERN`）；向量、复杂聚合全局初始化仍不在范围内。`CIPKG` 本身不携带 `.so`/`.dll` 二进制。

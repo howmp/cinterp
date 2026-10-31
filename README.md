@@ -110,8 +110,8 @@ skips and writes `build/test-suites-*.json`.
 python3 scripts/fetch_suites.py --all --support
 make test-suites-smoke      # fast local subset
 make test-suites            # c-testsuite + TCC + chibicc + libc-test
-make test-suites-full       # adds GCC torture, CompCert, LLVM UnitTests
-make test-suites-cross      # csuite on Win64/Win32/ARM64
+make test-suites-full       # adds GCC torture, CompCert, LLVM subsets
+make test-suites-cross      # csuite + upstream smoke on Win64/Win32/ARM64
 make generate-diff          # YARPGen differential smoke
 ```
 

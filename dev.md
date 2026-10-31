@@ -847,7 +847,7 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 | Win32 | Windows SSH（WoW64） | 21（含 stdcall + `winapi`） | 通过 |
 | ARM64 | qemu-aarch64 + aarch64 sysroot | 19 | 通过 |
 | c-testsuite 上游支持集 | native Linux | 217（3 skip） | 通过 |
-| fuzz load-only | native Linux | 200 变异 | 0 crash |
+| fuzz load-only | native Linux | 1000 变异 | 0 crash |
 | fuzz-exec safe | native Linux | 500 变异 | 0 crash / 0 timeout |
 | 差分测试 | native Linux | 7 | 通过 |
 | `make size-cross` | native 构建 | 4 目标 | 77,544（static sysv） / 85,504 / 101,888 / 88,824 B，均 <128K |
@@ -857,8 +857,8 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 ```bash
 make test
 make c-testsuite
-make fuzz
-make fuzz-exec
+make fuzz                 # 1000 load-only mutations
+make fuzz-exec            # 500 safe execution mutations
 make differential
 make bench
 make size                 # native runtime 87,000B；qsort.cib 646B
@@ -878,7 +878,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 19.6 当前边界
 
-- 外部数据符号、向量类型、复杂聚合全局初始化：c-testsuite 3 个 skip。
+- external data 已支持基础场景；向量类型、复杂聚合全局初始化仍有 skip。
 - HFA callback >2 向量、long double callback、Win64 vectorcall/COM、Win32 fastcall/thiscall、SysV i128/vector：明确范围外。
 - Windows CRT `%Lf` 与原生 MinGW 一致，不额外提供格式化 shim。
 - safe 字节码 fuzz 目前只在 native 运行时执行；其他 ABI 的完整执行 fuzz 依赖对应 runner。
@@ -887,7 +887,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **无未完成计划项**：多 ABI、精确 long double、跨 ABI callback、ABI 边界、上游 c-testsuite 支持集、fuzz/差分/CI、性能/体积/发布打包均完成。
 - **2026-10-31 新增完成**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。
-- **明确范围外**：外部数据符号（`stdout`/`errno`）、向量类型、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV `i128`/向量参数、HFA callback >2 向量、long double callback；这些不是当前 C/ABI 子集的计划项。
+- **明确范围外**：向量类型、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV `i128`/向量参数、HFA callback >2 向量、long double callback；这些不是当前 C/ABI 子集的计划项。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
 - **信任模型**：恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
 - 交付物与验证数字见 19.5；旧 CIB 目标/自动链接计划已合并到 §19.8，`plan.md` 现在只保留测试结果提升计划。
@@ -911,15 +911,15 @@ zig build -Dtarget=aarch64-linux-gnu
 - **兼容/版本**：CIPKG v2 默认、v1 兼容；CIPM/CIPI v1；CIPL 保持 v3（v2 可读），CIVM 的 `arch=1` 表示 VM 字节码架构、保持不变；未知版本在加载阶段失败。`--cib-version 1` 可生成旧包，`--no-auto-link` 不生成 import，`--link-db DIR` 可替换生成数据库。
 - **自动链接数据**：cstdapi 表用于 C 标准库符号→Linux libc/libm 或 Windows UCRT/MSVCRT/NTDLL/别名；winmd 表用于 Windows API→DLL/callconv/min_os/arch_mask。两表都固定 upstream commit，只有实际使用符号进入 CIB。
 - **工具/诊断**：`--dump-imports`（编译器和运行时）、`--dump-target`、`--load-only`；运行时错误名区分 `TargetMismatch`、`UnsupportedFeature`、`BadImportPlan`、`ImportArchMismatch`、`ImportUnavailable`。
-- **边界**：外部 data 符号、向量、复杂聚合全局初始化、Win64 vectorcall/COM、Win32 fastcall/thiscall 等仍不在自动链接范围；cstdapi/winmd 只是链接元数据，不替代 C 头文件或 ABI 计划。
+- **边界**：向量、复杂聚合全局初始化、Win64 vectorcall/COM、Win32 fastcall/thiscall 等仍不在自动链接范围；external data 已支持基础 provider/`--lib` 解析。cstdapi/winmd 只是链接元数据，不替代 C 头文件或 ABI 计划。
 
 ## 20. C 测试集基础设施（2026-10-31，支持集已完成）
 
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
 - **测试集**：csuite 12、c-testsuite 217+3 skip、TCC 84+59 skip、chibicc 14+27 skip、libc-test 40+35 skip、GCC execute 1155+91 skip、GCC compile 1407+0 skip、CompCert regression 41+34 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 49+20 skip、GCC ieee 59+20 skip。总计 4140 通过 / 313 显式 skip；另有 455 个明确排除的非目标用例。
-- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 各跑 csuite、c-testsuite、TCC、GCC、CompCert 各 12 个上游 smoke 用例，均 12/12；Windows 用 SSH，ARM64 用 qemu。
-- **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 13、skip 7；100-seed nightly 通过 61、skip 39。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
+- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 各跑 csuite、c-testsuite、TCC、GCC、CompCert 各 12 个上游 smoke 用例，均 12/12；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
+- **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
 - **策略**：不自动更新 expected/skip；新增失败必须先分类（compile/runtime/mismatch/timeout/harness），再修复或写入显式 skip；`build/suites` 不进入版本库。
 

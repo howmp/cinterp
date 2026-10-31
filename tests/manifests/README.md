@@ -60,7 +60,7 @@ make generate-diff          # YARPGen differential smoke
 | libc-test | 40 | 35 |
 | gcc-torture | 1155 | 91 |
 | gcc-torture-compile | 1407 | 0 |
-| compcert | 41 | 68 |
+| compcert | 41 | 34 |
 | llvm-singlesource | 85 | 8 |
 | gcc-ieee | 59 | 20 |
 | compcert-c | 12 | 12 |
