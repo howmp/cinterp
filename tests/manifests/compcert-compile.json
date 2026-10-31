@@ -1,0 +1,156 @@
+{
+  "suite": "compcert-compile",
+  "description": "CompCert regression compile-only cases without reference output",
+  "root": "{SUITES}/CompCert/test",
+  "upstream": "https://github.com/AbsInt/CompCert-small-tests",
+  "commit": "71c682d6b3a74e1a7d5da30285b5735761031da3",
+  "license": "GPL-2.0-or-later",
+  "tiers": [
+    "full",
+    "nightly"
+  ],
+  "mode": "compile",
+  "compare_stdout": false,
+  "expected_exit": null,
+  "timeout": 30,
+  "compile_timeout": 120,
+  "cases": [
+    {
+      "id": "NaNs",
+      "source": "regression/NaNs.c"
+    },
+    {
+      "id": "annot1",
+      "source": "regression/annot1.c"
+    },
+    {
+      "id": "commaprec",
+      "source": "regression/commaprec.c"
+    },
+    {
+      "id": "emptydecl",
+      "source": "regression/emptydecl.c"
+    },
+    {
+      "id": "expr2",
+      "source": "regression/expr2.c"
+    },
+    {
+      "id": "expr3",
+      "source": "regression/expr3.c"
+    },
+    {
+      "id": "expr4",
+      "source": "regression/expr4.c"
+    },
+    {
+      "id": "extasm",
+      "source": "regression/extasm.c"
+    },
+    {
+      "id": "extern1",
+      "source": "regression/extern1.c"
+    },
+    {
+      "id": "funct1",
+      "source": "regression/funct1.c"
+    },
+    {
+      "id": "funct2",
+      "source": "regression/funct2.c"
+    },
+    {
+      "id": "funptr1",
+      "source": "regression/funptr1.c"
+    },
+    {
+      "id": "init1",
+      "source": "regression/init1.c"
+    },
+    {
+      "id": "init2",
+      "source": "regression/init2.c"
+    },
+    {
+      "id": "init3",
+      "source": "regression/init3.c"
+    },
+    {
+      "id": "init4",
+      "source": "regression/init4.c"
+    },
+    {
+      "id": "initializers",
+      "source": "regression/initializers.c"
+    },
+    {
+      "id": "packedstruct1",
+      "source": "regression/packedstruct1.c"
+    },
+    {
+      "id": "pragmas",
+      "source": "regression/pragmas.c"
+    },
+    {
+      "id": "ptrs1",
+      "source": "regression/ptrs1.c"
+    },
+    {
+      "id": "ptrs2",
+      "source": "regression/ptrs2.c"
+    },
+    {
+      "id": "seqops",
+      "source": "regression/seqops.c"
+    },
+    {
+      "id": "singlefloats",
+      "source": "regression/singlefloats.c"
+    },
+    {
+      "id": "sizeof1",
+      "source": "regression/sizeof1.c"
+    },
+    {
+      "id": "struct1",
+      "source": "regression/struct1.c"
+    },
+    {
+      "id": "struct10",
+      "source": "regression/struct10.c"
+    },
+    {
+      "id": "struct2",
+      "source": "regression/struct2.c"
+    },
+    {
+      "id": "struct3",
+      "source": "regression/struct3.c"
+    },
+    {
+      "id": "struct4",
+      "source": "regression/struct4.c"
+    },
+    {
+      "id": "struct5",
+      "source": "regression/struct5.c"
+    },
+    {
+      "id": "struct6",
+      "source": "regression/struct6.c"
+    },
+    {
+      "id": "struct9",
+      "source": "regression/struct9.c"
+    },
+    {
+      "id": "types1",
+      "source": "regression/types1.c"
+    },
+    {
+      "id": "varargs3",
+      "source": "regression/varargs3.c"
+    }
+  ],
+  "repo_skip_file": "tests/manifests/compcert-compile.skip"
+}

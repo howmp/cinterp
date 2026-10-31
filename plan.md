@@ -1,6 +1,6 @@
 ---
 name: test-results-improvement
-overview: 根据当前 4110/4453 通过、343 skip 的结果，按“先修真实缺陷和标准 C 语义，再扩跨 ABI/覆盖”的顺序提升测试通过率和诊断质量。
+overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真实缺陷和标准 C 语义，再扩跨 ABI/覆盖”的顺序提升测试通过率和诊断质量。
 ---
 
 # 测试结果提升计划
@@ -21,13 +21,14 @@ overview: 根据当前 4110/4453 通过、343 skip 的结果，按“先修真�
 | libc-test | 40 | 35 | 29 mismatch、3 compile、3 runtime |
 | GCC torture execute | 1155 | 91 | 剩余运行缺陷；455 个非目标用例排除 |
 | GCC torture compile | 1407 | 0 | 非目标编译用例已拆出 |
-| CompCert regression | 41 | 68 | 16 compile、52 mismatch（含无 expected） |
+| CompCert regression | 41 | 34 | 缺 expected 用例已拆出 |
 | LLVM UnitTests | 85 | 8 | 全部 compile 失败 |
 | GCC ieee | 59 | 20 | ieee 子集 |
 | CompCert c | 12 | 12 | benchmark 选中子集 |
+| CompCert compile | 30 | 4 | 无参考输出的编译子集 |
 | LLVM Regression/C | 935 | 0 | compile-supported 子集 |
 | libc regression | 49 | 20 | 选中子集 |
-| **合计** | **4110** | **343** | skip 占 7.7%；另有 455 个明确排除 |
+| **合计** | **4140** | **313** | skip 占 7.0%；另有 455 个明确排除 |
 
 已识别的重点信号：
 
@@ -46,7 +47,7 @@ overview: 根据当前 4110/4453 通过、343 skip 的结果，按“先修真�
 - external data + 函数地址：`stdout`/`t_status`/`strcmp`/`memcpy` 等可通过 CIPI data/`--lib` 解析。
 - 常见 LLVM 数学 intrinsic（fabs/round/ceil/floor/sqrt/fma/min/max 等）映射到 libc provider。
 - csuite 增加 NaN、float 转换用例；新增 GCC ieee、CompCert c、LLVM Regression/C 支持子集和 c-testsuite 跨 ABI smoke。
-- full 从 2803/1604 提升到 4110/343（支持集）；`make test-suites` 367/491；cross smoke 12/12 × 3。
+- full 从 2803/1604 提升到 4140/313（支持集）；`make test-suites` 367/491；cross smoke 12/12 × 3。
 - CI nightly 改为 `make test-suites-nightly`（含 100-seed 差分）；runner 报告增加 `error_class`。
 
 ## 1. 原则
@@ -233,7 +234,7 @@ overview: 根据当前 4110/4453 通过、343 skip 的结果，按“先修真�
 
 | 指标 | 当前 | 目标 |
 | --- | ---: | ---: |
-| full 通过率 | 4110/4453 (92.3%) | ≥72% 已达到，下一步 ≥80% |
+| full 通过率 | 4140/4453 (93.0%) | ≥72% 已达到，下一步 ≥80% |
 | skip 数 | 1426 | 先降到 <1200，再按范围外/缺陷拆分 |
 | GCC execute 运行失败 | 226 | 至少减半，其余有 error_class/issue |
 | `fcmp une` skip | ~75 | 0（标准 C） |

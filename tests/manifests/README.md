@@ -64,10 +64,11 @@ make generate-diff          # YARPGen differential smoke
 | llvm-singlesource | 85 | 8 |
 | gcc-ieee | 59 | 20 |
 | compcert-c | 12 | 12 |
+| compcert-compile | 30 | 4 |
 | llvm-regression-c | 935 | 0 |
 | libc-test-regression | 49 | 20 |
 | c-testsuite-smoke | 12 | 0 |
-| **total** | **4110** | **343** |
+| **total** | **4140** | **313** |
 
 `make test-suites-full` is the command that produced this table; generated
 YARPGen/Csmith known-failure seeds are recorded separately in

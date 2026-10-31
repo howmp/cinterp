@@ -85,18 +85,7 @@ def load_manifests() -> dict[str, dict]:
     return out
 
 
-def discover_cases(manifest: dict, root: Path) -> list[dict]:
-    explicit = manifest.get("cases")
-    if explicit:
-        cases = []
-        for item in explicit:
-            case = dict(item)
-            case["id"] = str(case.get("id") or Path(case["source"]).stem)
-            cases.append(case)
-        return cases
-    pattern = manifest.get("source_glob", "*.c")
-    expected_ext = manifest.get("expected_ext", ".expected")
-    expected_dir = resolve_path(root, manifest.get("expected_dir"))
+def load_skip(manifest: dict, root: Path) -> tuple[dict, set[str]]:
     skip = dict(manifest.get("skip", {}))
     skip_file = resolve_path(root, manifest.get("skip_file"))
     if manifest.get("repo_skip_file"):
@@ -118,6 +107,26 @@ def discover_cases(manifest: dict, root: Path) -> list[dict]:
             if not line or line.startswith("#"):
                 continue
             excluded.add(line.split()[0])
+    return skip, excluded
+
+
+def discover_cases(manifest: dict, root: Path) -> list[dict]:
+    skip, excluded = load_skip(manifest, root)
+    explicit = manifest.get("cases")
+    if explicit:
+        cases = []
+        for item in explicit:
+            case = dict(item)
+            case["id"] = str(case.get("id") or Path(case["source"]).stem)
+            if case["id"] in excluded:
+                continue
+            if case["id"] in skip:
+                case["skip"] = skip[case["id"]]
+            cases.append(case)
+        return cases
+    pattern = manifest.get("source_glob", "*.c")
+    expected_ext = manifest.get("expected_ext", ".expected")
+    expected_dir = resolve_path(root, manifest.get("expected_dir"))
     cases = []
     for source in sorted(root.glob(pattern)):
         if not source.is_file():

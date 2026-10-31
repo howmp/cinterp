@@ -17,5 +17,6 @@
   "timeout": 60,
   "compile_timeout": 120,
   "skip": {},
-  "repo_skip_file": "tests/manifests/compcert.skip"
+  "repo_skip_file": "tests/manifests/compcert.skip",
+  "repo_exclude_file": "tests/manifests/compcert.excluded"
 }
