@@ -1,6 +1,6 @@
 # C 解释器架构与关键决策
 
-> 实施计划、里程碑和 spike 清单见 [plan.md](./plan.md)。
+> 剩余工作见 [plan.md](./plan.md)；本文记录已实现的架构、决策、ABI 细节、已知边界与验证方法。
 
 ## 1. 产品概述
 
@@ -12,17 +12,17 @@
 - **C FFI 直接**：所有 VM 指针就是宿主指针，结构体布局与宿主 ABI 一致。
 - **无动态可执行内存**：没有 JIT、没有 libffi closure、没有运行时代码生成；回调用静态 trampoline 池。
 - **编译期决定 ABI**：前端知道所有签名，生成寄存器/栈位置、结构体分类、varargs 和 callback 反向计划；运行时只执行。
-- **平台**：v1 优先 Linux x64；目标 ABI 为 Windows x64、Windows x86、Linux ARM64；ABI 计划从第一天按多 ABI 设计。
+- **平台**：SysV x64、Win64、Win32、AArch64 AAPCS64 均已实现并通过真实环境交叉验证；ABI 计划按目标 ABI 生成。
 
 ## 2. 已确认决策
 
 - **运行时语言**：Zig 0.13（pin）。
 - **前端**：Python + clang LLVM IR（`-O0`），不使用 libclang AST。
-- **v1 平台**：Linux x64 优先；Windows x64、Windows x86、Linux ARM64 后续；32 位仅 Windows x86，不做 Linux i386/ARM32。
+- **平台**：Linux x64、Windows x64、Windows x86、Linux ARM64 已实现；32 位仅 Windows x86，不做 Linux i386/ARM32。
 - **C11 范围**：核心 C11 + 结构体 FFI。
 - **FFI**：不链接 libffi，不使用 `@call` 桩矩阵，不申请动态可执行内存；编译期生成 FFI ABI 计划，运行时用固定汇编引擎执行；callback 用静态 trampoline 池 + 反向计划。
-- **ABI 顺序**：Linux x64（v1）→ Windows x64 → Windows x86 → Linux ARM64。
-- **Callback 池**：固定 256 槽；Windows x86 支持 `cdecl` + `stdcall` callback。
+- **ABI 顺序**：Linux x64 → Windows x64 → Windows x86 → Linux ARM64（已完成）。
+- **Callback 池**：固定 256 槽；当前仅 SysV x86-64 接入，其他 ABI 是剩余工作。
 - **编译器发布方式**：仅构建期使用；发布物是 Zig 运行时 + 字节码。
 
 ## 3. 核心功能
@@ -38,14 +38,14 @@
 ### 3.2 运行时 VM（Zig）
 
 - **字节码解释器**：栈式 VM，固定 8 字节栈槽。
-- **动态符号链接**：Linux 用 `dlopen`/`dlsym`，Windows 预留 `LoadLibrary`/`GetProcAddress`。
+- **动态符号链接**：Linux 用 `dlopen`/`dlsym`，Windows 用 `LoadLibraryA`/`GetProcAddress`；`--lib` 加载的句柄会被搜索后再回退到 CRT。
 - **FFI 桥接**：
   - Zig 侧按 ABI 计划把 VM 值搬进 `ABIFrame`（GPR/XMM/栈/sret）。
   - 每个 ABI 一段固定汇编引擎，负责装载寄存器/栈、调用目标、捕获返回值。
-  - 回调用静态 trampoline 池捕获参数，Zig dispatcher 按反向计划调用 VM 函数。
+  - 回调用静态 trampoline 池捕获参数，Zig dispatcher 按反向计划调用 VM 函数；目前仅 SysV。
   - 不链接 libffi，不使用 `@call` 桩，不产生动态可执行内存。
 - **C ABI 导出**：运行时导出 `ci_vm_*` 纯 C ABI，可被 cffi、C/C++、其他语言直接调用。
-- **跨平台**：Linux x64（SysV）优先；Windows x64、Windows x86、Linux ARM64（AArch64）按 ABI 模块扩展。
+- **跨平台**：Linux x64（SysV）、Windows x64、Windows x86、Linux ARM64（AArch64）由编译期 `ffi/platform.zig` 选择 frame/引擎/loader。
 
 ## 4. 技术栈与目标平台
 
@@ -64,7 +64,7 @@
 - **构建系统**：`zig build`；`.S` 文件由 clang 集成汇编器编译
 - **平台 API**：
   - Linux：`std.DynLib` 或 `dlfcn.h`
-  - Windows（后置）：`LoadLibrary`/`GetProcAddress`
+  - Windows：`LoadLibraryA`/`GetProcAddress`（`ffi/native.zig`）
 - **FFI**：编译期 ABI 计划 + 固定汇编引擎；不链接 libffi，不使用 `@call` 矩阵
 - **无动态可执行内存**：无 JIT、无 closure、无运行时代码生成
 
@@ -72,10 +72,10 @@
 
 | ABI | 状态 | 说明 |
 | --- | --- | --- |
-| x86-64 System V | v1 | Linux x64 |
-| x86-64 Microsoft | 下一目标 | Windows x64 |
-| x86 Microsoft 32-bit | Win64 之后 | Windows x86；cdecl/stdcall |
-| AArch64 AAPCS64 | Win32 之后 | Linux ARM64；x0-x7/v0-v7 |
+| x86-64 System V | 已实现 | Linux x64；`call_x86_64_sysv.S` |
+| x86-64 Microsoft | 已实现 | Windows x64；`call_x86_64_win64.S` |
+| x86 Microsoft 32-bit | 已实现（cdecl） | Windows x86；`call_x86_win32.S`；stdcall 计划待补 |
+| AArch64 AAPCS64 | 已实现 | Linux ARM64；`call_arm64_aapcs.S`；x0-x7/v0-v7 |
 
 ## 5. 总体架构
 
@@ -156,13 +156,13 @@ Python 侧用标准库解析文本 LLVM IR（大文件可选 llvmlite，但默�
 - 算术：`add`、`sub`、`mul`、`udiv`、`sdiv`、`urem`、`srem`、`fadd`、`fsub`、`fmul`、`fdiv`、`frem`。
 - 位运算：`shl`、`lshr`、`ashr`、`and`、`or`、`xor`。
 - 比较：`icmp`、`fcmp`（含谓词）。
-- 转换：`trunc`、`zext`、`sext`、`fptrunc`、`fpext`、`fptoui`、`fptosi`、`uitofp`、`sitofp`、`ptrtoint`、`inttoptr`、`bitcast`。
-- 控制流：`ret`、`br`、`switch`、`unreachable`。
-- 聚合：`extractvalue`、`insertvalue`、`select`。
+- 转换：`trunc`、`zext`、`sext`、`fpext`、`fptrunc`、`fptosi`、`sitofp`；`x86_fp80` 目前按 16B 存储/64-bit 精度处理。
+- 控制流：`ret`、`br`、`switch`。
+- 聚合：`extractvalue`、`select`；`insertvalue` 未支持。
 - 调用：`call`；内部函数调用降为 VM `CALL`，外部声明降为 `CALL_NATIVE`/`CALL_VARARG`。
 - 内建：`llvm.memcpy`、`llvm.memset`、`llvm.lifetime.*`（lifetime 可忽略）。
 
-v1 明确不支持：`invoke`、`indirectbr`、内联汇编、向量类型、`x86_fp80`（`long double`）、`atomic` 指令、异常/展开。
+当前明确不支持：`invoke`、`indirectbr`、内联汇编、向量类型、`atomic` 指令、异常/展开、phi/`-O1`、`fptoui`/`uitofp`/`ptrtoint`/`inttoptr`/`bitcast`、`insertvalue`、`va_start`/`va_arg`。
 
 降级规则：
 
@@ -172,7 +172,7 @@ v1 明确不支持：`invoke`、`indirectbr`、内联汇编、向量类型、`x8
 - `icmp`/`fcmp` 生成 `CMP_*` + 谓词。
 - `br` 生成 `JMP`/`JZ`/`JNZ`；`switch` 生成 `SWITCH`。
 - `memcpy`/`memset` 生成 `MEMCPY`/`MEMSET`。
-- `extractvalue`/`insertvalue` 生成字段偏移 load/store 或结构体拷贝。
+- `extractvalue` 生成字段偏移 load/store；聚合 store 使用 `MEMCPY`。
 - 源位置从 `!dbg` 元数据提取，生成 `LINE_INFO`（可选）。
 
 类型与布局：
@@ -344,10 +344,13 @@ pub const SysV64Frame = extern struct {
 };
 ```
 
-- `marshal.zig` 按 `CallPlan` 把 VM 栈上的值拷贝到 GPR/XMM/stack/sret。
-- 结构体按 `Loc` 拆成 eightbyte/栈块拷贝，保持位模式。
-- varargs 按计划填槽；不需要 8 槽 padding。
-- 返回值按 `ret_locs` 从帧的返回寄存器/缓冲区读取。
+- `ffi/platform.zig` 在编译期按目标选择 `SysVFrame` / `Win64Frame` / `Win32Frame` / `Arm64Frame`，并提供 `configure/marshal/readRet/invoke/validate` 分派。
+- Win64 frame：`gpr[4]`、`xmm[4][2]`、`sse_count`、shadow/stack、sret、RAX/RDX/XMM0/XMM1 返回。
+- Win32 frame：`eax`、`edx`、`st0`、stack、`stack_size`、`conv`、`ret_x87`。
+- ARM64 frame：`gpr[8]`、`vec[8][2]`、`sret`(x8)、stack、`ret_x0/x1`、`ret_v0/v1`。
+- `marshal` 按 `CallPlan` 把 VM 栈值拷贝到 GPR/XMM/vec/stack/sret；结构体按 `Loc` 拷贝字节，保持位模式。
+- varargs 按计划填槽；SysV `%al`、Win64 浮点 GPR/XMM 副本、Win32 全栈。
+- 返回值按 `ret_locs` 从帧的返回寄存器/缓冲区读取；Win32 i64 用单个 8B `rax` loc 合并 EAX:EDX，float 从 ST0 转 f32。
 
 ### 7.2 固定汇编引擎
 
@@ -367,9 +370,10 @@ ci_abi_call_sysv64:
 
 - 汇编只做固定 ABI 的寄存器/栈装载和返回值捕获，不解析复杂签名。
 - 计划解析、结构体分类、varargs 位置已在 Zig/前端完成。
-- Win32 引擎 `ci_abi_call_x86_win32` 处理 cdecl/stdcall 的栈参数、清理字节数和 `eax/edx/st0` 返回值。
-- ARM64 引擎 `ci_abi_call_arm64_aapcs` 处理 x0-x7/v0-v7/栈参数，捕获 x0/x1/v0/v1 和 x8 sret。
-- Win64 引擎处理 32 字节 shadow space 和 varargs 浮点双写。
+- 实际引擎符号：SysV `ci_abi_call_sysv64`、Win64 `ci_win64_call`、Win32 `ci_win32_call`（asm 标签 `_ci_win32_call`）、ARM64 `ci_arm64_call`。
+- Win32 引擎处理 cdecl 栈参数、调用者清理、`eax/edx/st0` 返回值；stdcall 计划尚未从编译器暴露。
+- ARM64 引擎处理 x0–x7/v0–v7/栈参数，捕获 x0/x1/v0/v1 和 x8 sret；当前只捕获 v0/v1 两个返回向量。
+- Win64 引擎处理 32B shadow space、位置相关的 XMM 编号、sret 对 GPR/XMM 的移位和 varargs 浮点副本；保存 RSI/RDI 等 callee-saved 寄存器。
 - 每个 ABI 一段固定代码，不随程序增长。
 
 ### 7.3 Marshaler
@@ -396,28 +400,28 @@ ci_abi_call_sysv64:
 
 ### 8.2 x86-64 Microsoft（Windows x64）
 
-- 整数参数：RCX、RDX、R8、R9。
-- 浮点参数：XMM0–XMM3。
-- 32 字节 shadow space；栈 16 字节对齐。
-- 变长参数：浮点参数在对应 GPR 中再复制一份。
-- 返回值：RAX 或 XMM0；大结构体 sret。
-- 结构体 1/2/4/8 字节按整数传递，其他按引用。
+- 整数参数：RCX、RDX、R8、R9；浮点参数：XMM0–XMM3。
+- **寄存器编号按参数位置**：位置 i<4 的 double 用 XMMi，而不是独立浮点计数器（例如 `f(int,double,int,double)` → RCX/XMM1/R8/XMM3）。
+- sret 隐藏指针占用第 0 个位置，普通参数从位置 1 开始；GPR 和 XMM 两个寄存器文件都整体后移一位。
+- 32 字节 shadow space；栈 16 字节对齐；超过 4 个位置用栈。
+- varargs：浮点值在对应位置 XMM、GPR 及栈 home 位置按计划复制；`sse_count` 写 AL。
+- 返回值：RAX/XMM0；>8B 结构体 sret；1/2/4/8B 结构体按整数返回。
+- 引擎必须保存 RSI/RDI/ RBX/R12–R15 等 Windows callee-saved 寄存器。
 
 ### 8.3 Windows x86（32 位）
 
-- `cdecl`：参数在栈上，调用者清理栈。
-- `stdcall`：参数在栈上，被调方清理栈；计划记录 `cleanup_bytes`；名称修饰 `_foo@N`。
-- 返回值：EAX/EDX；`float`/`double` 在 ST0；结构体按 MSVC 规则（小结构体寄存器/大结构体 sret）。
-- 保存 EBX/ESI/EDI/EBP 等 callee-saved 寄存器。
-- v1 只支持 `cdecl`/`stdcall`；`fastcall`/`thiscall` 不需要。
+- **当前编译器只生成 cdecl 计划**；引擎保留 `conv` 字段，stdcall 计划/名称修饰是剩余工作。
+- 所有参数在栈上，4 字节对齐；byval 结构体按原始字节复制到栈。
+- 返回值：≤4B 用 EAX；i64 合并为一个 8B `rax` loc（EAX:EDX）；float/double 在 ST0（`ret_x87` 标志），float 读取时转 f32；小结构体 EAX:EDX；大结构体 sret 隐藏指针在栈首。
+- 保存 EBX/ESI/EDI/EBP；引擎在恢复前必须丢弃临时 target/conv 槽（已修复一个栈清理 bug）。
+- `fastcall`/`thiscall` 不纳入当前目标。
 
 ### 8.4 AArch64 AAPCS64（Linux ARM64）
 
-- 整数/指针参数：x0–x7；浮点/向量参数：v0–v7。
-- 栈 16 字节对齐；调用者清理栈。
+- 整数/指针参数：x0–x7；浮点/向量参数：v0–v7；栈 16 字节对齐。
 - 返回值：x0/x1 或 v0/v1；大结构体 sret 指针在 x8。
-- 结构体按 AAPCS64 分类（寄存器/栈）；HFA（同类浮点聚合）按 v0–v3 等规则。
-- 后续实现，不影响 x64/Win32 设计。
+- HFA（1–4 个同类型 float/double）：参数/返回用连续 v 寄存器；聚合整体存储为 16B 时通过 aggregate store/memcpy 复制。
+- 当前计划限制：HFA 返回最多 2 个向量（v0/v1），3/4 成员、栈上 HFA、大结构体按值仍是剩余工作。
 
 ## 9. 变长参数
 
@@ -708,31 +712,50 @@ class CallPlan:
 
 ## 14. 测试策略
 
+当前测试入口：
+
+```bash
+make test            # runtime/compiler 单测 + 15 个端到端用例 + 错误路径
+make c-testsuite     # 本地 C 子集（9/9）；C_TESTSUITE_DIR 可指向外部目录
+make fuzz            # 200 次 package/plan 变异（--load-only），0 crash
+make size            # ReleaseSmall 体积；runtime 40K
+make release-check   # test + size
+HOST=user@windows ./scripts/test_cross.sh   # Win64/Win32/ARM64，33/33
+```
+
+测试分层：
+
 - 前端单测：LLVM IR 解析、降级、ABI 计划、二进制 round-trip。
-- ABI 计划对照：用 clang 编译 C helper，比较寄存器/栈布局和调用结果。
-- 运行时单测：opcode、栈/帧、内存、加载器。
-- FFI 集成：`puts`/`printf`、`malloc`/`free`、`memcpy`、`qsort` callback、结构体按值传参/返回。
-- Windows x86：cdecl/stdcall 的标量/结构体/varargs/callback；Linux ARM64：AAPCS64 标量/结构体/HFA/varargs/callback。
-- C 测试集：c-testsuite / chibicc。
+- 运行时单测：CIVM 模块、栈/帧、内存/计划校验、错误路径。
+- 端到端：hello/arrays/structs/malloc/puts/printf/snprintf/math/float/struct FFI/qsort callback。
+- 交叉矩阵：Win64 11 用例、Win32 11 用例、ARM64 11 用例（真实 Windows SSH + qemu）。
+- c-testsuite：本地 9 用例；上游/外部目录还没有完整通过率基线。
+- fuzz：当前只覆盖 package/plan load-only；VM bytecode 执行 fuzz、差分测试、sanitizer 尚未纳入。
 
-## 15. v1 明确不支持
+## 15. 当前边界与明确不支持
 
-- 平台：v1 仅 Linux x64；Windows x64、Windows x86、Linux ARM64 后续；Linux i386/ARM32 不在目标。
-- C11：`_Atomic`、`_Thread_local`、`_Complex`、`long double`、VLA、`setjmp`/`longjmp`、内联汇编、向量类型、`indirectbr`。
-- 变长参数里的 struct、`long double`；定义变长参数函数（`va_start`/`va_arg`）。
-- Windows x86 仅支持 `cdecl`/`stdcall`；`fastcall`/`thiscall` 不需要。
-- 多线程 callback；跨 ABI 调用。
+- **平台**：Linux x64、Windows x64、Windows x86、Linux ARM64 已支持；Linux i386/ARM32、macOS、Windows ARM64 不在目标。
+- **C11**：`_Atomic`、`_Thread_local`、`_Complex`、VLA、`setjmp`/`longjmp`、内联汇编、向量类型、`indirectbr` 不支持；仅保证 clang `-O0` IR。
+- **long double**：16B 存储、64-bit 精度；内部算术/比较/转换可用；FFI/varargs `%Lf`、精确 80-bit x87 语义尚未完成。
+- **变长参数**：支持调用外部 varargs 函数；定义 varargs 函数（`va_start`/`va_arg`）不支持；varargs 中 struct/long double 受限。
+- **callback**：静态 trampoline/dispatcher 仅 SysV x86-64；Win64/Win32/ARM64 callback 会返回 `UnsupportedCallback`。
+- **Win32**：编译器只生成 cdecl 计划；stdcall 计划/名称修饰未接入。
+- **AAPCS64**：HFA 返回/参数当前最多 2 个向量；3/4 成员 HFA、栈上 HFA、大结构体按值未完成。
+- **SysV**：>2 eightbyte 聚合、packed/未对齐、i128、复杂 mixed aggregate 未系统覆盖。
+- **工具链/信任**：clang `-O0`；VM 指针就是宿主指针，恶意 package 必须在 OS 沙箱中运行。
 
-## 16. 风险与备选方案
+## 16. 风险与待解决设计
 
-- **ABI 计划正确性**：x86-64 SysV 已通过 `spike/callplan_gen`（15 个计划，4/4）；仍需覆盖 literal aggregate 边界、packed/未对齐、栈参数组合和 Win64/Win32/ARM64。
-- **汇编引擎正确性**：x86-64 SysV 已通过 `spike/asm_abi_call`（5/5）；Win64/Win32/ARM64 待验证；栈对齐、`%al`、shadow space、x87 返回、sret、callee-saved 寄存器每个 ABI 单独测试。
-- **Callback trampoline**：保存/恢复寄存器、栈参数、stdcall 清理、可重入；需要专门 spike。
-- **Windows x86 / Linux ARM64**：Win32 cdecl/stdcall、名称修饰、被调方清栈；AAPCS64 结构体/HFA 分类、x8 sret、16 字节栈对齐；每个 ABI 单独测试。
-- **Zig 0.13 + `.S` 工具链**：确认 `zig build` 对目标 `.S` 的汇编/链接；Windows COFF 符号修饰。
-- **备选方案**：如果固定汇编引擎在某平台成本过高，可回退到 per-program C dispatcher（编译期生成 exact stubs，编译成 `.so` 或静态链接）；但当前方向是固定引擎，不引入 libffi/运行时代码生成。
+- **跨 ABI callback**：每 ABI 独立 trampoline 池会增大固定代码；需要确认是否按目标只链接一份、以及回调栈参数/sret/HFA 的 dispatcher 设计。
+- **long double 精度决策**：精确 x87 f80 会引入独立值表示/opcode；保留 64-bit 精度则必须明确不支持其 FFI/printf。
+- **ABI 边界正确性**：Win64 varargs/home space、Win32 stdcall/名称修饰、AAPCS64 HFA>2/栈混合、SysV >2 eightbyte 都需要 clang helper 差分测试。
+- **c-testsuite 通过率**：上游测试大量依赖未实现 C 特性；需要先确定支持子集和 skip 分类，避免“全部通过”目标不可执行。
+- **fuzz 信任边界**：VM 执行变异字节码可能调用任意原生符号；需要隔离/白名单/超时策略，不能简单与 load-only fuzz 混在一起。
+- **CI 外部环境**：Windows SSH 测试机和 qemu-aarch64 不在 GitHub 托管 runner 默认环境；需要自托管 runner 或仅做交叉编译 smoke。
 
-## 17. 验证结论（关键发现）
+## 17. 验证结论（关键发现，历史 spike 记录）
+
+> 以下是 2026-10-30 的 spike 结论，保留作 ABI/路线参考；当前实现状态、修复和剩余边界见第 19 节。
 
 - **clang IR 已完成大部分结构体 ABI lowering**：小结构体参数 coerced 成 `i64`/`double`/literal aggregate；MEMORY 参数是 `ptr byval(...)`；MEMORY 返回是 `sret`。因此前端计划生成器不需要重新实现完整 C 结构体 ABI 分类，只需处理 lowered 类型和 literal aggregate。
 - **固定汇编引擎可行**：`spike/asm_abi_call` 用一段固定 x86-64 SysV 汇编 + 手写 `CallPlan` 通过标量、混合、结构体、`byval`、`sret`、varargs 测试；`ReleaseSmall` 8.7K。
@@ -747,7 +770,7 @@ class CallPlan:
 - **ARM64 AAPCS64 可行**：qemu-aarch64 下通过整数、混合、HFA、栈参数、sret（S12，6/6，12K）。
 - **C11 内存/全局模型可行**：VM 线性内存 + ALLOCA/LOAD_MEM/STORE_MEM + GEP；数组、结构体、指针、union、memcpy/memset、globals/字符串通过（S9 部分，sample1..12 12/12，21K）；bitfield/float/c-testsuite 待扩展。
 - **`@call` 矩阵已放弃**：早期 `ffi_struct_call`/`varargs_call` spike 保留为 ABI 行为参考；256 桩矩阵（63K/固定前缀）不再采用。
-- 详细 spike 目标、结果和后续计划见 [plan.md](./plan.md)。
+- 各 spike 的目标/结果保留在 `spike/*/README.md`；剩余工作见 [plan.md](./plan.md)。
 
 ## 18. 参考实现
 
@@ -755,3 +778,95 @@ class CallPlan:
 - LLVM IR 指令语义和 clang `-O0` 输出模式。
 - System V AMD64、Microsoft x64/x86 调用约定、AArch64 AAPCS64。
 - libffi / dyncall：ABI 分类和栈布局实现参考（不引入依赖）。
+
+## 19. 2026-10-31 实现更新（多 ABI 与数值/测试）
+
+### 19.1 编译器
+
+- `cinterp compile --target` 支持：
+  - `x86_64-linux` → clang triple `x86_64-pc-linux-gnu`，ABI `sysv`，指针 8B。
+  - `x86_64-windows` → `x86_64-pc-windows-gnu`，ABI `win64`，指针 8B。
+  - `i686-windows` → `i686-pc-windows-gnu`，ABI `win32`，指针 4B。
+  - `aarch64-linux` → `aarch64-linux-gnu`，ABI `aapcs64`，指针 8B。
+- `ffi/plan.py` 的 `build_plan()` 按 ABI 分派到 `build_sysv_plan` / `build_win64_plan` / `build_win32_plan` / `build_aapcs64_plan`；CIPL v2 头部的 ABI id 分别为 1/2/3/4，运行时加载时校验。
+- 目标指针大小贯穿 `type_size_align`、`struct_layout`、globals、GEP、alloca/load/store；Win32 结构体布局按 4B 指针计算。
+- 聚合值表示：>8B 的 load 结果保存“指向源字节的指针”；聚合 store 用 `MEMCPY`；ARM64 `[2 x i64]`/`%struct.D2` 返回值经 `extractvalue`/指针读取。
+- 新增 `select` 降级为分支；bitfield 依赖 clang 的 shift/mask lowering；`long double` 走 16B 存储/64-bit 精度路径。
+- `CallbackTable` 也会为目标 ABI 生成 callback 计划，但运行时目前只支持 SysV callback。
+
+### 19.2 运行时
+
+- `src/ffi/platform.zig` 编译期选择 ABI、Frame、marshal/readRet/invoke/validate、callback 表；`src/ffi/native.zig` 统一 Unix `dlopen/dlsym` 与 Windows `LoadLibraryA/GetProcAddress`。
+- `build.zig` 按 target 只链接对应引擎：SysV + callback 池、Win64、Win32 或 ARM64。
+- `invokeFfi` 现在只写 `loc.size` 字节（不再固定写 8B），避免 Win32 紧凑栈 arg block 被相邻参数覆盖。
+- `OP_ADDR_CONST`/`OP_ALLOCA`/ret_buf 的宿主指针统一经 `usize` 转换，支持 32 位运行时。
+- `--load-only` 只加载/校验 CIPKG，不执行字节码；`make fuzz` 用它做 package/plan 变异测试。
+- 计划校验覆盖 ABI loc 索引、offset/size、stack/sret/ret_size/sse_count；损坏计划在调用前失败。
+
+### 19.3 ABI 决策与已修复问题
+
+- **Win64**
+  - 整数/浮点寄存器编号都按**参数位置**（RCX/RDX/R8/R9 与 XMM0–3），不是独立计数器；`f(int,double,int,double)` 使用 RCX/XMM1/R8/XMM3。
+  - sret 隐藏指针占参数位置 0，显式参数从位置 1 开始，GPR/XMM 两个寄存器文件都后移。
+  - varargs 浮点按计划同时写位置 XMM、GPR 副本和栈 home；`sse_count` 写 AL。
+  - 引擎必须保存 RSI/RDI；此前未保存导致 ReleaseSmall/ReleaseSafe 原生调用崩溃，已修复。
+- **Win32**
+  - 所有参数在栈上，4B 对齐；byval 结构体复制原始字节；sret 隐藏指针在栈首。
+  - i64 返回值合并为单个 8B `rax` ret loc（EAX:EDX）；否则 VM 会把 ret_locs>1 误判为聚合指针。
+  - float 从 ST0 读取后转换为 f32；double 直接读 8B；`ret_x87` 由计划自动设置。
+  - 编译器只生成 cdecl 计划；stdcall 引擎字段存在但计划未暴露。
+  - 修复引擎恢复前未丢弃 target/conv 两个临时栈槽的问题；该 bug 在优化构建中破坏 EBX/ESI/EDI。
+- **AAPCS64**
+  - HFA 参数/≤2 向量返回走 v0/v1；`[2 x double]` 参数、`%struct.D2` 返回、16B 聚合 store 已覆盖。
+  - 大结构体通过指针/sret；x8 保存 sret；栈 16B 对齐。
+- **SysV**
+  - 既有 SysV 行为保持；`platform.zig` 抽象后 callback 仍仅 SysV 链接。
+- **Windows 符号解析**
+  - `--lib` 加载的 DLL 也会参与 `GetProcAddress` 搜索，再回退到 msvcrt/ucrtbase；`snprintf` 在 Windows 上回退到 `_snprintf`。
+  - helper DLL 用 `zig cc -shared -Wl,--export-all-symbols` 导出符号。
+
+### 19.4 数值与 C 子集
+
+- float32/double：`fadd/fsub/fmul/fdiv`、`fcmp`、`fpext/fptrunc`、`sitofp/fptosi`，含 FFI float 参数/返回。
+- `long double`：当前按 16B 对象存储，运算使用 f64 精度；常量 `0xK...` 解析；不支持其 FFI/varargs printf。
+- bitfield：clang 已降为整数 shift/mask，现有整数 opcode 覆盖。
+- `select`：降级为条件分支，支持 ternary。
+- c-testsuite 本地子集覆盖算术、控制流、结构体/union、指针、float、bitfield、long double、递归、qsort callback。
+
+### 19.5 验证矩阵与命令
+
+| 目标 | 运行环境 | 用例数 | 结果 |
+| --- | --- | --- | --- |
+| SysV x86-64 | native Linux | 15 端到端 + 3 runtime + 15 compiler 单测 | 通过 |
+| Win64 | Windows SSH（真实） | 11 | 通过 |
+| Win32 | Windows SSH（WoW64） | 11 | 通过 |
+| ARM64 | qemu-aarch64 + aarch64 sysroot | 11 | 通过 |
+| c-testsuite 子集 | native Linux | 9 | 通过 |
+| fuzz | native Linux，load-only | 200 变异 | 0 crash |
+
+```bash
+make test
+make c-testsuite
+make fuzz
+make size                 # runtime 40K、hello.cib 78B、qsort.cib 460B
+make release-check
+HOST=admin@192.168.153.132 ./scripts/test_cross.sh
+```
+
+跨平台构建：
+
+```bash
+cd runtime
+zig build -Dtarget=x86_64-windows-gnu
+zig build -Dtarget=x86-windows-gnu
+zig build -Dtarget=aarch64-linux-gnu
+```
+
+### 19.6 当前剩余边界
+
+- callback 仅 SysV；Win64/Win32/ARM64 返回 `UnsupportedCallback`。
+- long double 64-bit 精度、无 FFI/printf。
+- AAPCS64 HFA ≤2 返回向量；Win32 stdcall 未接入编译器。
+- c-testsuite 是本地子集，不是完整上游通过率。
+- fuzz 只覆盖 load-only，不含 VM bytecode/差分/sanitizer。
+- 具体剩余任务、优先级和完成定义见 [plan.md](./plan.md)。
