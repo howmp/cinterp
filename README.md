@@ -74,10 +74,11 @@ The compiler currently supports:
 - float32/double arithmetic: `fadd`/`fsub`/`fmul`/`fdiv`, `fcmp`,
   `fpext`/`fptrunc`, `sitofp`/`fptosi` (see `examples/math.c`,
   `examples/float_math.c`, `examples/ffi_float.c`)
+- bitfields via clang's integer shift/mask lowering (see
+  `examples/bitfields.c`)
 
 Not yet in the compiler (the runtime engines and spikes validate the ABI):
-aggregates larger than two eightbytes outside MEMORY/sret, bitfields,
-`long double`.
+aggregates larger than two eightbytes outside MEMORY/sret, `long double`.
 
 ## Binary formats
 
@@ -120,7 +121,7 @@ runtime/               Zig VM/runtime (shipped)
   src/main.zig         cinterp-run CLI
 examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
                        MEMORY/register/mixed struct FFI, qsort callback, math,
-                       float32 FFI
+                       float32 FFI, bitfields
 scripts/test.sh        integration suite
 spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
 plan.md, dev.md        implementation plan and architecture/decisions

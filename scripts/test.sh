@@ -39,6 +39,12 @@ run_case arrays 10
 run_case structs 34
 run_case ffi_snprintf 55
 
+echo "== bitfields"
+python3 -m cinterp compile examples/bitfields.c -o "$OUT/bitfields.cib" >/dev/null
+bits_out="$("$RUNTIME" "$OUT/bitfields.cib" 2>&1)"
+printf '%s\n' "$bits_out" | grep -Fq "result: 12"
+echo "OK bitfields -> 12"
+
 echo "== native calls"
 python3 -m cinterp compile examples/ffi_puts.c -o "$OUT/ffi_puts.cib" >/dev/null
 puts_out="$("$RUNTIME" "$OUT/ffi_puts.cib" 2>&1)"
