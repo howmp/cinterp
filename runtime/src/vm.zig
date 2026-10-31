@@ -65,6 +65,32 @@ pub const OP_SET_MEM_TOP: u8 = 0x66;
 pub const OP_CALL_NATIVE: u8 = 0x70;
 pub const OP_CALL_VARARG: u8 = 0x71;
 pub const OP_CREATE_CALLBACK: u8 = 0x72;
+pub const OP_F80_CONST: u8 = 0x73;
+pub const OP_F80_ADD: u8 = 0x74;
+pub const OP_F80_SUB: u8 = 0x75;
+pub const OP_F80_MUL: u8 = 0x76;
+pub const OP_F80_DIV: u8 = 0x77;
+pub const OP_F80_CMP: u8 = 0x78;
+pub const OP_F80_FROM_F64: u8 = 0x79;
+pub const OP_F80_TO_F64: u8 = 0x7A;
+pub const OP_F80_FROM_I64: u8 = 0x7B;
+pub const OP_F80_TO_I64: u8 = 0x7C;
+pub const OP_F80_FROM_F32: u8 = 0x7D;
+pub const OP_F80_TO_F32: u8 = 0x7E;
+pub const OP_F80_NEG: u8 = 0x7F;
+pub const OP_F128_CONST: u8 = 0x80;
+pub const OP_F128_ADD: u8 = 0x81;
+pub const OP_F128_SUB: u8 = 0x82;
+pub const OP_F128_MUL: u8 = 0x83;
+pub const OP_F128_DIV: u8 = 0x84;
+pub const OP_F128_CMP: u8 = 0x85;
+pub const OP_F128_NEG: u8 = 0x86;
+pub const OP_F128_FROM_F64: u8 = 0x87;
+pub const OP_F128_TO_F64: u8 = 0x88;
+pub const OP_F128_FROM_I64: u8 = 0x89;
+pub const OP_F128_TO_I64: u8 = 0x8A;
+pub const OP_F128_FROM_F32: u8 = 0x8B;
+pub const OP_F128_TO_F32: u8 = 0x8C;
 
 pub const Value = extern union {
     i: i64,
@@ -95,6 +121,36 @@ var callback_vm: ?*VM = null;
 fn f32FromValue(v: Value) f32 {
     const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
     return @bitCast(bits);
+}
+
+fn compareF128(a: f128, b: f128, pred: u8) bool {
+    const unordered = std.math.isNan(a) or std.math.isNan(b);
+    return switch (pred) {
+        0 => !unordered and a == b,
+        1 => !unordered and a != b,
+        2 => !unordered and a < b,
+        3 => !unordered and a <= b,
+        4 => !unordered and a > b,
+        5 => !unordered and a >= b,
+        6 => !unordered,
+        7 => unordered,
+        else => false,
+    };
+}
+
+fn compareF80(a: f80, b: f80, pred: u8) bool {
+    const unordered = std.math.isNan(a) or std.math.isNan(b);
+    return switch (pred) {
+        0 => !unordered and a == b,
+        1 => !unordered and a != b,
+        2 => !unordered and a < b,
+        3 => !unordered and a <= b,
+        4 => !unordered and a > b,
+        5 => !unordered and a >= b,
+        6 => !unordered,
+        7 => unordered,
+        else => false,
+    };
 }
 
 fn compareFloats(a: f64, b: f64, pred: u8) bool {
@@ -270,9 +326,17 @@ pub const VM = struct {
             const loc = plan.ret_locs[0];
             const off: usize = @intCast(loc.offset);
             const n: usize = @intCast(loc.size);
-            var bits: u64 = 0;
-            @memcpy(std.mem.asBytes(&bits)[0..n], ret_block[off..][0..n]);
-            try self.push(.{ .i = @bitCast(bits) });
+            if (loc.kind == .st0 or n > 8) {
+                const rs: usize = @intCast(plan.ret_size);
+                if (rs > self.ret_buf.len) return error.ReturnTooLarge;
+                @memcpy(self.ret_buf[0..rs], ret_block[off..][0..rs]);
+                const addr: u64 = @intCast(@intFromPtr(&self.ret_buf));
+                try self.push(.{ .i = @bitCast(addr) });
+            } else {
+                var bits: u64 = 0;
+                @memcpy(std.mem.asBytes(&bits)[0..n], ret_block[off..][0..n]);
+                try self.push(.{ .i = @bitCast(bits) });
+            }
         } else if (plan.ret_locs.len > 1) {
             const rs: usize = @intCast(plan.ret_size);
             if (rs > self.ret_buf.len) return error.ReturnTooLarge;
@@ -504,6 +568,137 @@ pub const VM = struct {
                     const v = try self.pop();
                     const fval: f64 = @floatFromInt(v.i);
                     try self.push(.{ .i = @bitCast(fval) });
+                },
+                OP_F80_CONST => {
+                    var bits: u80 = 0;
+                    var i: u8 = 0;
+                    while (i < 10) : (i += 1) {
+                        bits |= @as(u80, try readU8(code, &ip)) << @intCast(8 * @as(u7, @intCast(i)));
+                    }
+                    try self.pushF80(@bitCast(bits));
+                },
+                OP_F80_ADD => {
+                    const b = try self.popF80();
+                    const a = try self.popF80();
+                    try self.pushF80(a + b);
+                },
+                OP_F80_SUB => {
+                    const b = try self.popF80();
+                    const a = try self.popF80();
+                    try self.pushF80(a - b);
+                },
+                OP_F80_MUL => {
+                    const b = try self.popF80();
+                    const a = try self.popF80();
+                    try self.pushF80(a * b);
+                },
+                OP_F80_DIV => {
+                    const b = try self.popF80();
+                    const a = try self.popF80();
+                    try self.pushF80(a / b);
+                },
+                OP_F80_CMP => {
+                    const pred = try readU8(code, &ip);
+                    const b = try self.popF80();
+                    const a = try self.popF80();
+                    try self.push(.{ .i = if (compareF80(a, b, pred)) 1 else 0 });
+                },
+                OP_F80_FROM_F64 => {
+                    const v = try self.pop();
+                    const fval: f64 = @bitCast(v.i);
+                    try self.pushF80(@floatCast(fval));
+                },
+                OP_F80_TO_F64 => {
+                    const v = try self.popF80();
+                    try self.push(.{ .i = @bitCast(@as(f64, @floatCast(v))) });
+                },
+                OP_F80_FROM_I64 => {
+                    const v = try self.pop();
+                    try self.pushF80(@floatFromInt(v.i));
+                },
+                OP_F80_TO_I64 => {
+                    const v = try self.popF80();
+                    try self.push(.{ .i = @intFromFloat(v) });
+                },
+                OP_F80_FROM_F32 => {
+                    const v = try self.pop();
+                    const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
+                    const fval: f32 = @bitCast(bits);
+                    try self.pushF80(@floatCast(fval));
+                },
+                OP_F80_TO_F32 => {
+                    const v = try self.popF80();
+                    const fval: f32 = @floatCast(v);
+                    try self.pushF32(fval);
+                },
+                OP_F80_NEG => {
+                    const v = try self.popF80();
+                    try self.pushF80(-v);
+                },
+                OP_F128_CONST => {
+                    var bits: u128 = 0;
+                    var i: u8 = 0;
+                    while (i < 16) : (i += 1) {
+                        bits |= @as(u128, try readU8(code, &ip)) << @intCast(8 * @as(u8, i));
+                    }
+                    try self.pushF128(@bitCast(bits));
+                },
+                OP_F128_ADD => {
+                    const b = try self.popF128();
+                    const a = try self.popF128();
+                    try self.pushF128(a + b);
+                },
+                OP_F128_SUB => {
+                    const b = try self.popF128();
+                    const a = try self.popF128();
+                    try self.pushF128(a - b);
+                },
+                OP_F128_MUL => {
+                    const b = try self.popF128();
+                    const a = try self.popF128();
+                    try self.pushF128(a * b);
+                },
+                OP_F128_DIV => {
+                    const b = try self.popF128();
+                    const a = try self.popF128();
+                    try self.pushF128(a / b);
+                },
+                OP_F128_CMP => {
+                    const pred = try readU8(code, &ip);
+                    const b = try self.popF128();
+                    const a = try self.popF128();
+                    try self.push(.{ .i = if (compareF128(a, b, pred)) 1 else 0 });
+                },
+                OP_F128_NEG => {
+                    const v = try self.popF128();
+                    try self.pushF128(-v);
+                },
+                OP_F128_FROM_F64 => {
+                    const v = try self.pop();
+                    const fval: f64 = @bitCast(v.i);
+                    try self.pushF128(@floatCast(fval));
+                },
+                OP_F128_TO_F64 => {
+                    const v = try self.popF128();
+                    try self.push(.{ .i = @bitCast(@as(f64, @floatCast(v))) });
+                },
+                OP_F128_FROM_I64 => {
+                    const v = try self.pop();
+                    try self.pushF128(@floatFromInt(v.i));
+                },
+                OP_F128_TO_I64 => {
+                    const v = try self.popF128();
+                    try self.push(.{ .i = @intFromFloat(v) });
+                },
+                OP_F128_FROM_F32 => {
+                    const v = try self.pop();
+                    const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
+                    const fval: f32 = @bitCast(bits);
+                    try self.pushF128(@floatCast(fval));
+                },
+                OP_F128_TO_F32 => {
+                    const v = try self.popF128();
+                    try self.pushF32(@floatCast(v));
                 },
                 OP_FADD => {
                     const b = try self.pop();
@@ -791,6 +986,38 @@ pub const VM = struct {
     fn pushF32(self: *VM, f: f32) !void {
         const bits: u32 = @bitCast(f);
         try self.push(.{ .i = @intCast(bits) });
+    }
+
+    fn pushF80(self: *VM, value: f80) !void {
+        const start = (self.mem_top + 15) & ~@as(usize, 15);
+        if (start + 16 > self.mem.len) return error.OutOfMemory;
+        const p: *align(1) f80 = @ptrCast(&self.mem[start]);
+        p.* = value;
+        self.mem_top = start + 16;
+        const addr: u64 = @intCast(@intFromPtr(p));
+        try self.push(.{ .i = @bitCast(addr) });
+    }
+
+    fn popF80(self: *VM) !f80 {
+        const v = try self.pop();
+        const addr = addressFromBits(v.i);
+        return @as(*align(1) const f80, @ptrFromInt(addr)).*;
+    }
+
+    fn pushF128(self: *VM, value: f128) !void {
+        const start = (self.mem_top + 15) & ~@as(usize, 15);
+        if (start + 16 > self.mem.len) return error.OutOfMemory;
+        const p: *align(1) f128 = @ptrCast(&self.mem[start]);
+        p.* = value;
+        self.mem_top = start + 16;
+        const addr: u64 = @intCast(@intFromPtr(p));
+        try self.push(.{ .i = @bitCast(addr) });
+    }
+
+    fn popF128(self: *VM) !f128 {
+        const v = try self.pop();
+        const addr = addressFromBits(v.i);
+        return @as(*align(1) const f128, @ptrFromInt(addr)).*;
     }
 
     fn pop(self: *VM) !Value {

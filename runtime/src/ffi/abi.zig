@@ -1,4 +1,4 @@
-pub const LocKind = enum { gpr, xmm, stack, sret, rax, rdx, xmm0, xmm1 };
+pub const LocKind = enum { gpr, xmm, stack, sret, rax, rdx, xmm0, xmm1, st0 };
 
 pub const Loc = struct {
     kind: LocKind,

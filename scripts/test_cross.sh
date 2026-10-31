@@ -35,13 +35,13 @@ win_run() {
     echo "OK $package -> $expected"
 }
 
-USUAL=(hello arrays structs ffi_malloc ffi_printf ffi_snprintf math ffi_float ffi_structs ffi_regstruct ffi_mixedstruct ffi_qsort ffi_callback ffi_callback_big)
+USUAL=(hello arrays structs ffi_malloc ffi_printf ffi_snprintf math ffi_float ffi_structs ffi_regstruct ffi_mixedstruct ffi_qsort ffi_callback ffi_callback_big ffi_longdouble)
 
 echo "== Win64"
 (cd runtime && zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSmall)
 cp runtime/zig-out/bin/cinterp-run.exe "$OUT/cinterp-run64.exe"
 for name in "${USUAL[@]}"; do compile x86_64-windows "$name"; done
-for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper; do
+for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper ffi_longdouble_helper; do
     zig cc -target x86_64-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/lib${h}64.dll" "examples/$h.c"
 done
@@ -61,12 +61,13 @@ win_run cinterp-run64.exe ffi_mixedstruct-x86_64-windows.cib libffi_mixedstruct_
 win_run cinterp-run64.exe ffi_qsort-x86_64-windows.cib "" 1
 win_run cinterp-run64.exe ffi_callback-x86_64-windows.cib libffi_callback_helper64.dll 256
 win_run cinterp-run64.exe ffi_callback_big-x86_64-windows.cib libffi_callback_big_helper64.dll 246
+win_run cinterp-run64.exe ffi_longdouble-x86_64-windows.cib libffi_longdouble_helper64.dll 60
 
 echo "== Win32"
 (cd runtime && zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSmall)
 cp runtime/zig-out/bin/cinterp-run.exe "$OUT/cinterp-run32.exe"
 for name in "${USUAL[@]}"; do compile i686-windows "$name"; done
-for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper; do
+for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper ffi_longdouble_helper; do
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/lib${h}32.dll" "examples/$h.c"
 done
@@ -85,12 +86,13 @@ win_run cinterp-run32.exe ffi_mixedstruct-i686-windows.cib libffi_mixedstruct_he
 win_run cinterp-run32.exe ffi_qsort-i686-windows.cib "" 1
 win_run cinterp-run32.exe ffi_callback-i686-windows.cib libffi_callback_helper32.dll 256
 win_run cinterp-run32.exe ffi_callback_big-i686-windows.cib libffi_callback_big_helper32.dll 246
+win_run cinterp-run32.exe ffi_longdouble-i686-windows.cib libffi_longdouble_helper32.dll 60
 
 echo "== ARM64"
 (cd runtime && zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSmall)
 cp runtime/zig-out/bin/cinterp-run "$OUT/cinterp-run-arm64"
 for name in "${USUAL[@]}"; do compile aarch64-linux "$name"; done
-for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper; do
+for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper ffi_longdouble_helper; do
     aarch64-linux-gnu-gcc -shared -fPIC -O0 -o "$OUT/lib${h}-arm64.so" "examples/$h.c"
 done
 arm_run() {
@@ -122,5 +124,6 @@ arm_run ffi_mixedstruct 11 libffi_mixedstruct_helper-arm64.so
 arm_run ffi_qsort 1
 arm_run ffi_callback 256 libffi_callback_helper-arm64.so
 arm_run ffi_callback_big 246 libffi_callback_big_helper-arm64.so
+arm_run ffi_longdouble 60 libffi_longdouble_helper-arm64.so
 
 echo "cross-target tests passed"

@@ -69,6 +69,32 @@ OP_SET_MEM_TOP = 0x66
 OP_CALL_NATIVE = 0x70
 OP_CALL_VARARG = 0x71
 OP_CREATE_CALLBACK = 0x72
+OP_F80_CONST = 0x73
+OP_F80_ADD = 0x74
+OP_F80_SUB = 0x75
+OP_F80_MUL = 0x76
+OP_F80_DIV = 0x77
+OP_F80_CMP = 0x78
+OP_F80_FROM_F64 = 0x79
+OP_F80_TO_F64 = 0x7A
+OP_F80_FROM_I64 = 0x7B
+OP_F80_TO_I64 = 0x7C
+OP_F80_FROM_F32 = 0x7D
+OP_F80_TO_F32 = 0x7E
+OP_F80_NEG = 0x7F
+OP_F128_CONST = 0x80
+OP_F128_ADD = 0x81
+OP_F128_SUB = 0x82
+OP_F128_MUL = 0x83
+OP_F128_DIV = 0x84
+OP_F128_CMP = 0x85
+OP_F128_NEG = 0x86
+OP_F128_FROM_F64 = 0x87
+OP_F128_TO_F64 = 0x88
+OP_F128_FROM_I64 = 0x89
+OP_F128_TO_I64 = 0x8A
+OP_F128_FROM_F32 = 0x8B
+OP_F128_TO_F32 = 0x8C
 
 
 def split_top(s: str, sep: str = ",") -> list[str]:
@@ -154,6 +180,8 @@ def type_size_align(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -
         return ptr_size, ptr_size
     if ty == "x86_fp80":
         return (12, 4) if ptr_size == 4 else (16, 16)
+    if ty == "fp128":
+        return 16, 16
     if ty == "void":
         return 0, 1
     if ty == "float":
@@ -228,6 +256,42 @@ def parse_x86_fp80(init: str) -> float:
         return 0.0
 
 
+def parse_fp128_bytes(init: str) -> bytes:
+    text = init.strip().split()[-1]
+    if text.startswith("0xL"):
+        hex_text = text[3:]
+        try:
+            if len(hex_text) == 32:
+                high = int(hex_text[:16], 16)
+                low = int(hex_text[16:], 16)
+                value = (low << 64) | high
+            else:
+                value = int(hex_text, 16)
+        except ValueError:
+            value = 0
+        return value.to_bytes(16, "little")
+    try:
+        value = float(text.rstrip("LlFf"))
+    except ValueError:
+        value = 0.0
+    return struct.pack("<d", value) + b"\x00" * 8
+
+
+def parse_x86_fp80_bytes(init: str) -> bytes:
+    text = init.strip().split()[-1]
+    if text.startswith("0xK"):
+        try:
+            value = int(text[3:], 16)
+        except ValueError:
+            value = 0
+        return value.to_bytes(10, "little")
+    try:
+        value = float(text.rstrip("LlFf"))
+    except ValueError:
+        value = 0.0
+    return struct.pack("<d", value) + b"\x00\x00"
+
+
 def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_size: int = 8) -> bytes:
     size, _ = type_size_align(ty, structs, ptr_size)
     out = bytearray(size)
@@ -270,8 +334,12 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_
     if init in ("zeroinitializer", "null"):
         return bytes(out)
     if ty == "x86_fp80":
-        raw = struct.pack("<d", parse_x86_fp80(init))
-        out[:8] = raw
+        raw = parse_x86_fp80_bytes(init)
+        out[: min(len(raw), size)] = raw[:size]
+        return bytes(out)
+    if ty == "fp128":
+        raw = parse_fp128_bytes(init)
+        out[: min(len(raw), size)] = raw[:size]
         return bytes(out)
     if ty in ("double", "float"):
         try:
@@ -489,8 +557,14 @@ class Lowerer:
             return
         stripped = text.strip()
         if "x86_fp80" in text or stripped.startswith("0xK"):
-            bits = struct.unpack("<Q", struct.pack("<d", parse_x86_fp80(stripped.split()[-1])))[0]
-            self.emit_const(bits)
+            raw = parse_x86_fp80_bytes(stripped.split()[-1])
+            self.emit_u8(OP_F80_CONST)
+            self.code.extend(raw[:10])
+            return
+        if "fp128" in text or stripped.startswith("0xL"):
+            raw = parse_fp128_bytes(stripped.split()[-1])
+            self.emit_u8(OP_F128_CONST)
+            self.code.extend(raw[:16])
             return
         if re.fullmatch(r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?", stripped):
             bits = struct.unpack("<Q", struct.pack("<d", float(stripped)))[0]
@@ -523,9 +597,8 @@ class Lowerer:
 
     def emit_float_operand(self, text: str, ty: str) -> None:
         stripped = text.strip()
-        if ty == "x86_fp80" and not re.search(r"[%@]", stripped):
-            bits = struct.unpack("<Q", struct.pack("<d", parse_x86_fp80(stripped)))[0]
-            self.emit_const(bits)
+        if ty in ("x86_fp80", "fp128"):
+            self.emit_operand(text)
             return
         if not re.search(r"[%@]", stripped) and re.fullmatch(
             r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?", stripped
@@ -728,11 +801,11 @@ class Lowerer:
             size = self.type_size(ty)
             if size <= 0:
                 raise ValueError(f"aggregate store unsupported: {ty}")
-            if ty == "x86_fp80":
-                self.emit_float_operand(value, ty)
+            if ty in ("x86_fp80", "fp128"):
                 self.emit_pointer(ptr)
-                self.emit_u8(OP_STORE_MEM)
-                self.emit_u8(8)
+                self.emit_operand(value)
+                self.emit_const(size)
+                self.emit_u8(OP_MEMCPY)
                 return
             if size > 8 and ty.startswith(("%", "[", "{")):
                 self.emit_pointer(ptr)
@@ -759,10 +832,8 @@ class Lowerer:
                 raise ValueError(f"bad load: {line}")
             ty, ptr = m.group(1).strip(), m.group(2).strip()
             size = self.type_size(ty)
-            if ty == "x86_fp80":
+            if ty in ("x86_fp80", "fp128"):
                 self.emit_pointer(ptr)
-                self.emit_u8(OP_LOAD_MEM)
-                self.emit_u8(8)
                 self.store_slot(self.slot_for(result))
                 return
             if size > 8:
@@ -778,7 +849,7 @@ class Lowerer:
             self.store_slot(self.slot_for(result))
             return
 
-        m = re.match(r"(fadd|fsub|fmul|fdiv)\s+(?:fast\s+)?(double|float|x86_fp80)\s+(.+)$", rhs)
+        m = re.match(r"(fadd|fsub|fmul|fdiv)\s+(?:fast\s+)?(double|float|x86_fp80|fp128)\s+(.+)$", rhs)
         if m:
             if result is None:
                 raise ValueError(f"float arithmetic without result: {line}")
@@ -787,7 +858,23 @@ class Lowerer:
             self.emit_float_operand(a, ty)
             self.emit_float_operand(b, ty)
             if ty == "x86_fp80":
-                ty = "double"
+                self.emit_u8({
+                    "fadd": OP_F80_ADD,
+                    "fsub": OP_F80_SUB,
+                    "fmul": OP_F80_MUL,
+                    "fdiv": OP_F80_DIV,
+                }[m.group(1)])
+                self.store_slot(self.slot_for(result))
+                return
+            if ty == "fp128":
+                self.emit_u8({
+                    "fadd": OP_F128_ADD,
+                    "fsub": OP_F128_SUB,
+                    "fmul": OP_F128_MUL,
+                    "fdiv": OP_F128_DIV,
+                }[m.group(1)])
+                self.store_slot(self.slot_for(result))
+                return
             ops = {
                 "double": {
                     "fadd": OP_FADD,
@@ -806,11 +893,21 @@ class Lowerer:
             self.store_slot(self.slot_for(result))
             return
 
-        m = re.match(r"fneg\s+(double|float|x86_fp80)\s+(.+)$", rhs)
+        m = re.match(r"fneg\s+(double|float|x86_fp80|fp128)\s+(.+)$", rhs)
         if m:
             if result is None:
                 raise ValueError(f"fneg without result: {line}")
             ty = m.group(1)
+            if ty == "x86_fp80":
+                self.emit_operand(m.group(2))
+                self.emit_u8(OP_F80_NEG)
+                self.store_slot(self.slot_for(result))
+                return
+            if ty == "fp128":
+                self.emit_operand(m.group(2))
+                self.emit_u8(OP_F128_NEG)
+                self.store_slot(self.slot_for(result))
+                return
             self.emit_float_operand(m.group(2), ty)
             self.emit_const(0x8000000000000000 if ty != "float" else 0x80000000)
             self.emit_u8(OP_XOR)
@@ -824,7 +921,7 @@ class Lowerer:
             if not m:
                 raise ValueError(f"bad fcmp: {line}")
             src_ty = m.group(2)
-            if src_ty not in ("double", "float", "x86_fp80"):
+            if src_ty not in ("double", "float", "x86_fp80", "fp128"):
                 raise ValueError(f"unsupported fcmp type: {src_ty}")
             pred = m.group(1)
             pred_code = {
@@ -840,6 +937,13 @@ class Lowerer:
             if pred_code is None:
                 raise ValueError(f"unsupported fcmp predicate: {pred}")
             a, b = split_top(m.group(3), ",")
+            if src_ty in ("x86_fp80", "fp128"):
+                self.emit_operand(a)
+                self.emit_operand(b)
+                self.emit_u8(OP_F80_CMP if src_ty == "x86_fp80" else OP_F128_CMP)
+                self.emit_u8(pred_code)
+                self.store_slot(self.slot_for(result))
+                return
             self.emit_float_operand(a, src_ty)
             self.emit_float_operand(b, src_ty)
             self.emit_u8(OP_FCMP if src_ty != "float" else OP_FCMP32)
@@ -926,28 +1030,50 @@ class Lowerer:
             if result is None:
                 raise ValueError(f"cast without result: {line}")
             op, src_ty, value, dst_ty = m.group(1), m.group(2), m.group(3), m.group(4)
-            if op in ("fptosi", "fptrunc", "fpext"):
+            if src_ty in ("x86_fp80", "fp128"):
+                self.emit_operand(value)
+            elif op in ("fptosi", "fptrunc", "fpext"):
                 self.emit_float_operand(value, src_ty)
             else:
                 self.emit_operand(value)
             if op == "fptosi":
-                self.emit_u8(OP_FPTOSI32 if src_ty == "float" else OP_FPTOSI)
+                if src_ty == "x86_fp80":
+                    self.emit_u8(OP_F80_TO_I64)
+                elif src_ty == "fp128":
+                    self.emit_u8(OP_F128_TO_I64)
+                else:
+                    self.emit_u8(OP_FPTOSI32 if src_ty == "float" else OP_FPTOSI)
             elif op == "sitofp":
-                self.emit_u8(OP_SITOFP32 if dst_ty == "float" else OP_SITOFP)
+                if dst_ty == "x86_fp80":
+                    self.emit_u8(OP_F80_FROM_I64)
+                elif dst_ty == "fp128":
+                    self.emit_u8(OP_F128_FROM_I64)
+                else:
+                    self.emit_u8(OP_SITOFP32 if dst_ty == "float" else OP_SITOFP)
             elif op == "fpext":
-                if src_ty == "float" and dst_ty in ("double", "x86_fp80"):
+                if src_ty == "float" and dst_ty == "double":
                     self.emit_u8(OP_FPEXT)
+                elif src_ty == "float" and dst_ty == "x86_fp80":
+                    self.emit_u8(OP_F80_FROM_F32)
                 elif src_ty == "double" and dst_ty == "x86_fp80":
-                    pass
+                    self.emit_u8(OP_F80_FROM_F64)
+                elif src_ty == "float" and dst_ty == "fp128":
+                    self.emit_u8(OP_F128_FROM_F32)
+                elif src_ty == "double" and dst_ty == "fp128":
+                    self.emit_u8(OP_F128_FROM_F64)
                 else:
                     raise ValueError(f"unsupported fpext {src_ty} -> {dst_ty}")
             elif op == "fptrunc":
                 if src_ty == "double" and dst_ty == "float":
                     self.emit_u8(OP_FPTRUNC)
                 elif src_ty == "x86_fp80" and dst_ty == "float":
-                    self.emit_u8(OP_FPTRUNC)
+                    self.emit_u8(OP_F80_TO_F32)
                 elif src_ty == "x86_fp80" and dst_ty == "double":
-                    pass
+                    self.emit_u8(OP_F80_TO_F64)
+                elif src_ty == "fp128" and dst_ty == "float":
+                    self.emit_u8(OP_F128_TO_F32)
+                elif src_ty == "fp128" and dst_ty == "double":
+                    self.emit_u8(OP_F128_TO_F64)
                 else:
                     raise ValueError(f"unsupported fptrunc {src_ty} -> {dst_ty}")
             elif not src_ty.startswith("i") or not dst_ty.startswith("i"):
@@ -1154,7 +1280,7 @@ def parse_functions(text: str) -> list[Function]:
         params: list[tuple[str, str]] = []
         raw_params = split_top(params_text) if params_text.strip() else []
         for p in raw_params:
-            pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80)\s+.*%([\w.$-]+)", p)
+            pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80|fp128)\s+.*%([\w.$-]+)", p)
             if not pm:
                 raise ValueError(f"bad parameter: {p!r}")
             params.append((pm.group(1), pm.group(2)))

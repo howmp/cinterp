@@ -114,6 +114,7 @@ fn readLoc(r: *Reader) !abi.Loc {
         5 => .rdx,
         6 => .xmm0,
         7 => .xmm1,
+        8 => .st0,
         else => return error.BadLocKind,
     };
     const index = try r.readU16();

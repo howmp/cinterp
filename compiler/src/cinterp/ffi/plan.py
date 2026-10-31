@@ -228,6 +228,8 @@ def _return_locs(ret_type: str) -> tuple[list[Loc], int]:
                 locs.append(Loc("xmm0" if xmm == 0 else "xmm1", 0, size, idx * 8))
                 xmm += 1
         return locs, total
+    if ty == "x86_fp80":
+        return [Loc("st0", 0, 16, 0)], 16
     kind, size = _type_info(ty)
     if kind == "void":
         return [], 0
@@ -258,6 +260,13 @@ def build_sysv_plan(
         if sret_idx == i:
             args.append(ArgPlan([Loc("sret", 0, 8, arg_offset)], 8, 8, False))
             arg_offset += 8
+            continue
+        if ty == "x86_fp80":
+            stack_size = _align_up(stack_size, 16)
+            loc = Loc("stack", stack_size, 16, arg_offset)
+            args.append(ArgPlan([loc], 16, 16, True))
+            stack_size += 16
+            arg_offset += 16
             continue
         if byval_sizes and byval_sizes[i] > 0:
             size = byval_sizes[i]
@@ -432,6 +441,8 @@ def build_win64_plan(
 
 def _win32_ret(ret_type: str, structs: dict[str, list[str]], ptr_size: int) -> tuple[list[Loc], int]:
     ty = ret_type.strip()
+    if ty == "x86_fp80":
+        return [Loc("st0", 0, 16, 0)], 16
     if _is_aggregate(ty, structs):
         size = _type_size(ty, structs, ptr_size)
         if size <= 4:
@@ -476,6 +487,15 @@ def build_win32_plan(
             args.append(ArgPlan([loc], 4, 4, False))
             stack_size += 4
             arg_offset += 4
+            continue
+        if ty == "x86_fp80":
+            size = 16 if ptr_size == 8 else 12
+            stack_size = _align_up(stack_size, 4)
+            loc = Loc("stack", stack_size, size, arg_offset)
+            stack_size += _align_up(size, 4)
+            arg_offset = _align_up(arg_offset, 4)
+            arg_offset += size
+            args.append(ArgPlan([loc], size, 4, True))
             continue
         if byval_sizes and i < len(byval_sizes) and byval_sizes[i] > 0:
             size = byval_sizes[i]
@@ -525,6 +545,8 @@ def build_win32_plan(
 
 def _aapcs64_ret(ret_type: str, structs: dict[str, list[str]], ptr_size: int) -> tuple[list[Loc], int]:
     ty = ret_type.strip()
+    if ty == "fp128":
+        return [Loc("xmm0", 0, 16, 0)], 16
     hfa = _hfa_info(ty, structs, ptr_size)
     if hfa is not None:
         count, elem_size, size = hfa
@@ -573,6 +595,17 @@ def build_aapcs64_plan(
         if sret_idx == i:
             args.append(ArgPlan([Loc("sret", 0, 8, arg_offset)], 8, 8, False))
             arg_offset += 8
+            continue
+        if ty == "fp128":
+            if vec < 8:
+                loc = Loc("xmm", vec, 16, arg_offset)
+                vec += 1
+            else:
+                stack_size = _align_up(stack_size, 16)
+                loc = Loc("stack", stack_size, 16, arg_offset)
+                stack_size += 16
+            args.append(ArgPlan([loc], 16, 16, True))
+            arg_offset += 16
             continue
         hfa = _hfa_info(ty, structs, ptr_size)
         if hfa is not None:
@@ -710,6 +743,7 @@ _KINDS = {
     "rdx": 5,
     "xmm0": 6,
     "xmm1": 7,
+    "st0": 8,
 }
 
 

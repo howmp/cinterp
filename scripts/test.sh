@@ -99,6 +99,13 @@ ffloat_out="$("$RUNTIME" --lib "$OUT/libfloat_helpers.so" "$OUT/ffi_float.cib" 2
 printf '%s\n' "$ffloat_out" | grep -Fq "result: 5"
 echo "OK ffi_float -> 5"
 
+echo "== long double FFI"
+cc -shared -fPIC -O0 examples/ffi_longdouble_helper.c -o "$OUT/libffi_longdouble_helper.so"
+python3 -m cinterp compile examples/ffi_longdouble.c -o "$OUT/ffi_longdouble.cib" >/dev/null
+ld_out="$("$RUNTIME" --lib "$OUT/libffi_longdouble_helper.so" "$OUT/ffi_longdouble.cib" 2>&1)"
+printf '%s\n' "$ld_out" | grep -Fq "result: 60"
+echo "OK ffi_longdouble -> 60"
+
 echo "== callback (qsort)"
 python3 -m cinterp compile examples/ffi_qsort.c -o "$OUT/ffi_qsort.cib" >/dev/null
 qsort_out="$("$RUNTIME" "$OUT/ffi_qsort.cib" 2>&1)"

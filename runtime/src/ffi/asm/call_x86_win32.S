@@ -7,6 +7,7 @@
 .equ STACK_SIZE, 20
 .equ CONV,       24
 .equ RET_X87,    28
+.equ RET_ST0_F80, 32
 
 .text
 .globl _ci_win32_call
@@ -39,7 +40,12 @@ _ci_win32_call:
     mov [ebx + RET_EDX], edx
     cmp byte ptr [ebx + RET_X87], 0
     je no_x87
+    cmp byte ptr [ebx + RET_X87], 2
+    je x87_tbyte
     fstp qword ptr [ebx + RET_ST0]
+    jmp no_x87
+x87_tbyte:
+    fstp tbyte ptr [ebx + RET_ST0_F80]
 no_x87:
     test edi, edi
     jne no_clean

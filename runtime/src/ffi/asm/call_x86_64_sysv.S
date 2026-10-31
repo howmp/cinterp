@@ -16,6 +16,8 @@
 .equ F_RET_RDX,    216
 .equ F_RET_XMM0,   224
 .equ F_RET_XMM1,   240
+.equ F_RET_X87,    256
+.equ F_RET_ST0,    264
 
 .text
 .globl ci_abi_call_sysv64
@@ -74,6 +76,10 @@ ci_abi_call_sysv64:
     mov [rbx + F_RET_RDX], rdx
     movups [rbx + F_RET_XMM0], xmm0
     movups [rbx + F_RET_XMM1], xmm1
+    cmp byte ptr [rbx + F_RET_X87], 0
+    je .Lno_x87
+    fstp tbyte ptr [rbx + F_RET_ST0]
+.Lno_x87:
 
     lea rsp, [rbp - 40]
     pop r15

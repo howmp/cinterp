@@ -33,6 +33,9 @@ pub const SysVFrame = extern struct {
     ret_rdx: u64,
     ret_xmm0: [2]u64,
     ret_xmm1: [2]u64,
+    ret_x87: u8,
+    _pad2: [7]u8,
+    ret_st0: [16]u8,
 };
 
 pub const Win64Frame = extern struct {
@@ -58,6 +61,7 @@ pub const Win32Frame = extern struct {
     conv: u32,
     ret_x87: u8,
     _pad: [3]u8,
+    ret_st0_f80: [16]u8,
 };
 
 pub const Arm64Frame = extern struct {
@@ -173,6 +177,10 @@ fn configureSysV(frame: *SysVFrame, plan: abi.CallPlan, ret_buf: *[256]u8, stack
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
     frame.sse_count = plan.sse_count;
+    frame.ret_x87 = 0;
+    for (plan.ret_locs) |loc| {
+        if (loc.kind == .st0) frame.ret_x87 = 1;
+    }
     if (plan.sret) frame.sret = sret_ptr orelse @ptrCast(ret_buf);
 }
 
@@ -189,11 +197,11 @@ fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[256]u8, sta
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
     frame.conv = 0;
-    var ret_x87 = false;
+    frame.ret_x87 = 0;
     for (plan.ret_locs) |loc| {
-        if (loc.kind == .xmm0) ret_x87 = true;
+        if (loc.kind == .xmm0) frame.ret_x87 = 1;
+        if (loc.kind == .st0) frame.ret_x87 = 2;
     }
-    frame.ret_x87 = if (ret_x87) 1 else 0;
 }
 
 fn configureArm64(frame: *Arm64Frame, plan: abi.CallPlan, ret_buf: *[256]u8, stack_buf: *[256]u8, sret_ptr: ?*anyopaque) void {
@@ -319,6 +327,7 @@ fn readRetSysV(frame: *const SysVFrame, plan: abi.CallPlan, ret: *[256]u8) void 
             .rdx => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_rdx)[0..n]),
             .xmm0 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_xmm0)[0..n]),
             .xmm1 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_xmm1)[0..n]),
+            .st0 => @memcpy(ret[off..][0..n], frame.ret_st0[0..n]),
             else => unreachable,
         }
     }
@@ -360,6 +369,7 @@ fn readRetWin32(frame: *const Win32Frame, plan: abi.CallPlan, ret: *[256]u8) voi
                     @memcpy(ret[off..][0..@min(n, 8)], std.mem.asBytes(&frame.st0)[0..@min(n, 8)]);
                 }
             },
+            .st0 => @memcpy(ret[off..][0..n], frame.ret_st0_f80[0..n]),
             else => {},
         }
     }
@@ -452,7 +462,7 @@ fn validateCommon(plan: abi.CallPlan, gpr_max: u16, xmm_max: u16, stack_only: bo
             .rax, .rdx => {
                 if (n > 8) return error.BadPlan;
             },
-            .xmm0, .xmm1 => {
+            .xmm0, .xmm1, .st0 => {
                 if (n > 16) return error.BadPlan;
             },
             else => return error.BadPlan,
@@ -474,6 +484,7 @@ fn validateWin32(plan: abi.CallPlan) !void {
         switch (loc.kind) {
             .rax, .rdx => if (loc.size > 8) return error.BadPlan,
             .xmm0 => if (loc.size > 8) return error.BadPlan,
+            .st0 => if (loc.size > 16) return error.BadPlan,
             else => return error.BadPlan,
         }
     }
