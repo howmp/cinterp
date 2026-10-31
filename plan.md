@@ -5,8 +5,10 @@ overview: 根据当前 4041/5447 通过、1406 skip 的结果，按“先修真�
 
 # 测试结果提升计划
 
-> **状态（2026-10-31）：执行中。** P0 的 `fcmp`/float 转换、VM 上限、external data 已落地；统一测试集、runner 和基线已完成，
-> 见 `dev.md` §20；本文件只记录后续未完成的改进项。
+> **状态（2026-10-31）：执行中。** P0 的 `fcmp`/float 转换、VM 上限、external data
+> 与函数指针已落地；full 基线升到 **4041/5447（74.2%）**，csuite+c-testsuite smoke 在
+> Win64/Win32/ARM64 均 12/12。仍剩 GCC 运行失败分诊、mismatch 收敛、生成式最小化等项。
+> 统一测试集和 runner 见 `dev.md` §20。
 
 ## 0. 当前基线
 
@@ -35,6 +37,16 @@ overview: 根据当前 4041/5447 通过、1406 skip 的结果，按“先修真�
 - YARPGen 100 seeds：61 通过、39 skip；Csmith 3/3 命中已知 checksum/TooManyFunctions 失败。
 - 跨 ABI 只系统验证了 csuite；上游套件仍是 native-only。
 - fuzz 只有 200 变异；nightly CI 仍跑 20-seed diff，而不是 100-seed。
+
+## 0.1 本轮已完成（2026-10-31）
+
+- `fcmp` 全 ordered/unordered 谓词；`fptoui/uitofp` 的 f32/f64/f80/f128 路径。
+- VM 上限提高：函数 512、帧 512、槽栈 8192、模块 2 MiB、plan 1024、参数 64。
+- external data + 函数地址：`stdout`/`t_status`/`strcmp`/`memcpy` 等可通过 CIPI data/`--lib` 解析。
+- 常见 LLVM 数学 intrinsic（fabs/round/ceil/floor/sqrt/fma/min/max 等）映射到 libc provider。
+- csuite 增加 NaN、float 转换用例；新增 GCC ieee、CompCert c、LLVM Regression/C 支持子集和 c-testsuite 跨 ABI smoke。
+- full 从 2803/1604 提升到 4041/1406；`make test-suites` 367/491；cross smoke 12/12 × 3。
+- CI nightly 改为 `make test-suites-nightly`（含 100-seed 差分）；runner 报告增加 `error_class`。
 
 ## 1. 原则
 
