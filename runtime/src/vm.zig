@@ -104,6 +104,10 @@ pub const OP_F80_FROM_U64: u8 = 0x93;
 pub const OP_F128_TO_U64: u8 = 0x94;
 pub const OP_F128_FROM_U64: u8 = 0x95;
 pub const OP_ADDR_EXTERN: u8 = 0x96;
+pub const OP_SETJMP: u8 = 0x97;
+pub const OP_LONGJMP: u8 = 0x98;
+pub const OP_CALL_VARIADIC: u8 = 0x99;
+pub const OP_VA_START: u8 = 0x9A;
 
 fn readU16At(bytes: []const u8, off: usize) u16 {
     return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
@@ -133,6 +137,21 @@ pub const Frame = struct {
     base: usize,
     func: usize,
     mem_mark: usize,
+    va_base: usize,
+    va_named: usize,
+    va_count: usize,
+};
+
+const JumpEntry = struct {
+    buf: u64 = 0,
+    ip: usize = 0,
+    base: usize = 0,
+    func: usize = 0,
+    sp: usize = 0,
+    frames: usize = 0,
+    mem_top: usize = 0,
+    slot: u16 = 0,
+    valid: bool = false,
 };
 
 const CallbackEntry = struct {
@@ -232,6 +251,7 @@ pub const VM = struct {
     ret_buf: [4096]u8 align(16) = undefined,
     frames: [MAX_FRAMES]Frame = undefined,
     frame_count: usize = 0,
+    jumps: [32]JumpEntry = [_]JumpEntry{.{}} ** 32,
     result: i64 = 0,
     safe: bool = false,
     last_error: [128]u8 = undefined,
@@ -605,6 +625,11 @@ pub const VM = struct {
     }
 
     pub fn runEntry(self: *VM, name: []const u8) !i64 {
+        const default_args = [_][]const u8{"cinterp"};
+        return self.runEntryArgs(name, &default_args);
+    }
+
+    pub fn runEntryArgs(self: *VM, name: []const u8, cargs: []const []const u8) !i64 {
         var fi: usize = 0;
         while (fi < self.func_count) : (fi += 1) {
             if (std.mem.eql(u8, self.functions[fi].name, name)) break;
@@ -623,7 +648,80 @@ pub const VM = struct {
         self.sp = entry_locals;
         if (self.sp > MAX_STACK) return error.StackOverflow;
 
+        const argc, const argv_addr, const envp_addr = try self.buildArgArea(cargs);
+        if (entry_fn.param_count > 0) self.values[0] = .{ .u = @intCast(argc) };
+        if (entry_fn.param_count > 1) self.values[1] = .{ .u = argv_addr };
+        if (entry_fn.param_count > 2) self.values[2] = .{ .u = envp_addr };
+
         return self.executeLoop(fi, 0, 0);
+    }
+
+    fn buildArgArea(self: *VM, cargs: []const []const u8) !struct { usize, u64, u64 } {
+        const ptr_size = @sizeOf(usize);
+        const max_ptrs = 256;
+        if (cargs.len > max_ptrs) return error.TooManyArgs;
+        var env = std.process.getEnvMap(std.heap.page_allocator) catch return error.OutOfMemory;
+        defer env.deinit();
+        const arg_count = cargs.len;
+        if (env.count() > max_ptrs - arg_count) return error.TooManyArgs;
+        var strings_len: usize = 0;
+        for (cargs) |arg| strings_len += arg.len + 1;
+        var env_iter_count = env.iterator();
+        while (env_iter_count.next()) |entry| {
+            strings_len += entry.key_ptr.*.len + 1 + entry.value_ptr.*.len + 1;
+        }
+        const arg_ptrs_size = (arg_count + 1) * ptr_size;
+        const env_ptrs_size = (env.count() + 1) * ptr_size;
+        const total = strings_len + arg_ptrs_size + env_ptrs_size + 16;
+        if (total >= self.mem.len) return error.OutOfMemory;
+        const area = self.mem.len - total;
+        var pos: usize = area;
+        var arg_ptrs: [max_ptrs]usize = undefined;
+        for (cargs, 0..) |arg, idx| {
+            arg_ptrs[idx] = @intFromPtr(&self.mem[pos]);
+            @memcpy(self.mem[pos .. pos + arg.len], arg);
+            self.mem[pos + arg.len] = 0;
+            pos += arg.len + 1;
+        }
+        var env_ptrs: [max_ptrs]usize = undefined;
+        var env_iter = env.iterator();
+        var env_count: usize = 0;
+        while (env_iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const value = entry.value_ptr.*;
+            env_ptrs[env_count] = @intFromPtr(&self.mem[pos]);
+            @memcpy(self.mem[pos .. pos + key.len], key);
+            pos += key.len;
+            self.mem[pos] = '=';
+            pos += 1;
+            @memcpy(self.mem[pos .. pos + value.len], value);
+            pos += value.len;
+            self.mem[pos] = 0;
+            pos += 1;
+            env_count += 1;
+        }
+        pos = (pos + ptr_size - 1) & ~@as(usize, ptr_size - 1);
+        const argv_off = pos;
+        for (arg_ptrs[0..arg_count]) |p| {
+            var ptr: usize = p;
+            @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&ptr));
+            pos += ptr_size;
+        }
+        var zero: usize = 0;
+        @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&zero));
+        pos += ptr_size;
+        const envp_off = pos;
+        for (env_ptrs[0..env_count]) |p| {
+            var ptr: usize = p;
+            @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&ptr));
+            pos += ptr_size;
+        }
+        @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&zero));
+        return .{
+            arg_count,
+            @intFromPtr(&self.mem[argv_off]),
+            @intFromPtr(&self.mem[envp_off]),
+        };
     }
 
     pub fn runCallback(self: *VM, func_index: usize, args: []const Value) !i64 {
@@ -659,6 +757,9 @@ pub const VM = struct {
         var base: usize = start_base;
         var current: usize = start_fi;
         var ip: usize = 0;
+        var va_base: usize = 0;
+        var va_named: usize = 0;
+        var va_count: usize = 0;
 
         while (true) {
             const f = self.functions[current];
@@ -681,6 +782,9 @@ pub const VM = struct {
                     try self.push(v);
                     base = fr.base;
                     current = fr.func;
+                    va_base = fr.va_base;
+                    va_named = fr.va_named;
+                    va_count = fr.va_count;
                     ip = fr.return_ip;
                 },
                 OP_LOAD_CONST_I64 => {
@@ -1119,6 +1223,100 @@ pub const VM = struct {
                     const target = try self.resolveNative(idx, p.name[0..n]);
                     try self.invokeFfi(plan, target);
                 },
+                OP_VA_START => {
+                    const pv = try self.pop();
+                    const extra = if (va_count > va_named) va_count - va_named else 0;
+                    const slot_size: usize = if (platform.abi_id == 3) 4 else 8;
+                    var overflow: u64 = 0;
+                    if (extra > 0) {
+                        const start = (self.mem_top + 7) & ~@as(usize, 7);
+                        const bytes = extra * slot_size;
+                        if (start + bytes > self.mem.len) return error.OutOfMemory;
+                        var i: usize = 0;
+                        while (i < extra) : (i += 1) {
+                            const v = self.values[va_base + va_named + i];
+                            @memcpy(self.mem[start + i * slot_size .. start + i * slot_size + slot_size], std.mem.asBytes(&v.i)[0..slot_size]);
+                        }
+                        self.mem_top = start + bytes;
+                        overflow = @intFromPtr(&self.mem[start]);
+                    }
+                    const p = pv.u;
+                    switch (platform.abi_id) {
+                        1 => {
+                            const q: *align(1) [24]u8 = @ptrFromInt(addressFromBits(pv.i));
+                            @memcpy(q[0..4], std.mem.asBytes(&@as(u32, 48)));
+                            @memcpy(q[4..8], std.mem.asBytes(&@as(u32, 304)));
+                            @memcpy(q[8..16], std.mem.asBytes(&overflow));
+                            @memcpy(q[16..24], std.mem.asBytes(&@as(u64, 0)));
+                        },
+                        2 => {
+                            const q: *align(1) u64 = @ptrFromInt(addressFromBits(pv.i));
+                            q.* = overflow;
+                        },
+                        3 => {
+                            const q: *align(1) u32 = @ptrFromInt(addressFromBits(pv.i));
+                            q.* = @truncate(overflow);
+                        },
+                        4 => {
+                            // AAPCS64: stack, gr_top, vr_top, gr_offs, vr_offs.
+                            const q: *align(1) [32]u8 = @ptrFromInt(addressFromBits(pv.i));
+                            @memcpy(q[0..8], std.mem.asBytes(&overflow));
+                            @memcpy(q[8..16], std.mem.asBytes(&@as(u64, 0)));
+                            @memcpy(q[16..24], std.mem.asBytes(&@as(u64, 0)));
+                            @memcpy(q[24..28], std.mem.asBytes(&@as(u32, 0)));
+                            @memcpy(q[28..32], std.mem.asBytes(&@as(u32, 0)));
+                        },
+                        else => return error.UnsupportedVaList,
+                    }
+                    _ = p;
+                },
+                OP_SETJMP => {
+                    const slot = try readU16(code, &ip);
+                    const buf = try self.pop();
+                    var found: ?*JumpEntry = null;
+                    var free_slot: ?*JumpEntry = null;
+                    var ji: usize = 0;
+                    while (ji < self.jumps.len) : (ji += 1) {
+                        if (self.jumps[ji].valid and self.jumps[ji].buf == buf.u) {
+                            found = &self.jumps[ji];
+                            break;
+                        }
+                        if (!self.jumps[ji].valid and free_slot == null) free_slot = &self.jumps[ji];
+                    }
+                    if (found == null) found = free_slot;
+                    if (found == null) return error.TooManyJumps;
+                    const e = found.?;
+                    e.* = .{
+                        .buf = buf.u,
+                        .ip = ip,
+                        .base = base,
+                        .func = current,
+                        .sp = self.sp,
+                        .frames = self.frame_count,
+                        .mem_top = self.mem_top,
+                        .slot = slot,
+                        .valid = true,
+                    };
+                    self.values[base + slot] = .{ .i = 0 };
+                },
+                OP_LONGJMP => {
+                    const value = try self.pop();
+                    const buf = try self.pop();
+                    var ji: usize = 0;
+                    while (ji < self.jumps.len) : (ji += 1) {
+                        const e = &self.jumps[ji];
+                        if (e.valid and e.buf == buf.u) {
+                            ip = e.ip;
+                            base = e.base;
+                            current = e.func;
+                            self.sp = e.sp;
+                            self.frame_count = e.frames;
+                            self.mem_top = e.mem_top;
+                            self.values[base + e.slot] = .{ .i = if (value.i == 0) 1 else value.i };
+                            break;
+                        }
+                    } else return error.BadLongjmp;
+                },
                 OP_ADDR_EXTERN => {
                     if (self.safe) return error.SafeMode;
                     const idx = try readU16(code, &ip);
@@ -1223,6 +1421,46 @@ pub const VM = struct {
                     if (self.safe and !memRange(self, @intCast(addressFromBits(dst_v.i)), len)) return error.BadAddress;
                     @memset(dst[0..len], byte);
                 },
+                OP_CALL_VARIADIC => {
+                    const fn_idx = try readU16(code, &ip);
+                    const total = try readU16(code, &ip);
+                    const fidx: usize = fn_idx;
+                    if (fidx >= self.func_count) return error.BadFunction;
+                    const callee = self.functions[fidx];
+                    const params: usize = callee.param_count;
+                    const locals: usize = callee.local_count;
+                    const arg_count: usize = total;
+                    if (arg_count < params or self.sp < arg_count) return error.StackUnderflow;
+                    if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
+                    const callee_base = self.sp - arg_count;
+                    self.frames[self.frame_count] = .{
+                        .return_ip = ip,
+                        .base = base,
+                        .func = current,
+                        .mem_mark = self.mem_top,
+                        .va_base = va_base,
+                        .va_named = va_named,
+                        .va_count = va_count,
+                    };
+                    self.frame_count += 1;
+                    base = callee_base;
+                    current = fidx;
+                    // The callee's locals start immediately after its named
+                    // parameters. Move variadic extras past those locals so
+                    // compiler temporaries cannot overwrite them.
+                    const extra = arg_count - params;
+                    const extra_base = callee_base + locals;
+                    var ei: usize = 0;
+                    while (ei < extra) : (ei += 1) {
+                        self.values[extra_base + ei] = self.values[callee_base + params + ei];
+                    }
+                    va_base = extra_base;
+                    va_named = 0;
+                    va_count = extra;
+                    self.sp = extra_base + extra;
+                    if (self.sp > MAX_STACK) return error.StackOverflow;
+                    ip = 0;
+                },
                 OP_CALL => {
                     const fn_idx = try readU16(code, &ip);
                     const fidx: usize = fn_idx;
@@ -1238,10 +1476,16 @@ pub const VM = struct {
                         .base = base,
                         .func = current,
                         .mem_mark = self.mem_top,
+                        .va_base = va_base,
+                        .va_named = va_named,
+                        .va_count = va_count,
                     };
                     self.frame_count += 1;
                     base = callee_base;
                     current = fidx;
+                    va_base = 0;
+                    va_named = 0;
+                    va_count = 0;
                     self.sp = callee_base + locals;
                     if (self.sp > MAX_STACK) return error.StackOverflow;
                     var li: usize = params;
@@ -1272,10 +1516,16 @@ pub const VM = struct {
                         .base = base,
                         .func = current,
                         .mem_mark = self.mem_top,
+                        .va_base = va_base,
+                        .va_named = va_named,
+                        .va_count = va_count,
                     };
                     self.frame_count += 1;
                     base = callee_base;
                     current = fidx;
+                    va_base = 0;
+                    va_named = 0;
+                    va_count = 0;
                     self.sp = callee_base + locals;
                     if (self.sp > MAX_STACK) return error.StackOverflow;
                     var li: usize = params;
@@ -1284,7 +1534,10 @@ pub const VM = struct {
                     }
                     ip = 0;
                 },
-                else => return error.BadOpcode,
+                else => {
+                    std.debug.print("bad opcode 0x{x} func={d} ip={d}\n", .{ op, current, ip });
+                    return error.BadOpcode;
+                },
             }
         }
     }

@@ -300,6 +300,10 @@ VM 有 1 MiB 线性内存（`mem`），`mem_top` 是 bump pointer：
 | 0x91 | `UITOFP32` | — | u64 bits -> f32 |
 | 0x92-0x95 | `F80_TO_U64/FROM_U64/F128_TO_U64/FROM_U64` | — | long double 无符号转换 |
 | 0x96 | `ADDR_EXTERN` | u16 import | 压入 CIPI data 符号地址 |
+| 0x97 | `SETJMP` | u16 slot | 保存 VM 执行上下文，结果写 slot |
+| 0x98 | `LONGJMP` | — | 恢复对应 jmp_buf 的上下文 |
+| 0x99 | `CALL_VARIADIC` | u16 func,u16 total | 调用内部可变参数函数，保留额外参数 |
+| 0x9A | `VA_START` | — | 按目标 ABI 初始化 va_list，溢出参数放到 VM 内存 |
 
 ### 4.1 浮点谓词
 

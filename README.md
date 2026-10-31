@@ -115,7 +115,7 @@ make test-suites-cross      # csuite + upstream smoke on Win64/Win32/ARM64
 make generate-diff          # YARPGen differential smoke
 ```
 
-Current native baseline: 4144 passed / 308 explicitly skipped across csuite,
+Current native baseline: 4172 passed / 282 explicitly skipped across csuite,
 c-testsuite, TCC tests2, chibicc, libc-test, GCC torture, CompCert and LLVM
 SingleSource. Skip files record unsupported features and known failures; they
 are never auto-updated by CI. See [`tests/manifests/README.md`](tests/manifests/README.md).
@@ -165,6 +165,9 @@ The compiler currently supports:
   GEP, union aliasing, `memcpy`/`memset`, globals and string literals
 - external scalar/pointer/varargs calls (FFI plans), e.g. `puts`, `printf`,
   `malloc`, `free`, `snprintf`
+- C varargs functions (`va_start`/`va_arg`/`va_end`) across the four ABIs
+- `main(argc, argv, envp)` with `cinterp-run package -- arg...`
+- VM-level `setjmp`/`longjmp` (including Windows `_setjmp3`/`__intrinsic_setjmpex`)
 - external MEMORY structs by value (`byval`) and struct returns through `sret`
   (see `examples/ffi_structs.c` + `--lib`)
 - register-class small structs: coerced 8-byte (S8) and 16-byte double-HFA

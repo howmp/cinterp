@@ -917,7 +917,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
-- **测试集**：csuite 12、c-testsuite 217+3 skip、TCC 89+53 skip、chibicc 14+27 skip、libc-test 40+35 skip、GCC execute 1155+91 skip、GCC compile 1407+0 skip、CompCert regression 41+34 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 49+20 skip、GCC ieee 59+20 skip。总计 4144 通过 / 308 显式 skip；另有 1098 个明确排除的非目标用例。
+- **测试集**：csuite 14、c-testsuite 217+3 skip、TCC 91+51 skip、chibicc 14+27 skip、libc-test 40+35 skip、GCC execute 1179+67 skip、GCC compile 1407+0 skip、CompCert regression 41+34 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 59+20 skip。总计 4172 通过 / 282 显式 skip；另有 1098 个明确排除的非目标用例。
 - **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 各跑 csuite、c-testsuite、TCC、GCC、CompCert 各 12 个上游 smoke 用例，均 12/12；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。

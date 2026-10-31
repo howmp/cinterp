@@ -137,6 +137,8 @@ def discover_cases(manifest: dict, root: Path) -> list[dict]:
                 continue
             if case["id"] in skip:
                 case["skip"] = skip[case["id"]]
+            if manifest.get("case_args", {}).get(case["id"]):
+                case["args"] = list(manifest["case_args"][case["id"]])
             cases.append(case)
         return cases
     pattern = manifest.get("source_glob", "*.c")
@@ -164,6 +166,8 @@ def discover_cases(manifest: dict, root: Path) -> list[dict]:
             skip[cid] = "no reference output in suite manifest"
         if cid in skip:
             case["skip"] = skip[cid]
+        if manifest.get("case_args", {}).get(cid):
+            case["args"] = list(manifest["case_args"][cid])
         if manifest.get("expect_marker"):
             text = source.read_bytes()[:4096]
             m = EXPECT_RE.search(text)
@@ -250,6 +254,9 @@ def run_on_target(
     args.append(str(cib))
     if case.get("entry"):
         args.append(str(case["entry"]))
+    if case.get("args"):
+        args.append("--")
+        args.extend(str(a) for a in case["args"])
     if target == "x86_64-linux":
         runtime = Path(runner.get("native_runtime") or RUNTIME)
         if not runtime.is_file():

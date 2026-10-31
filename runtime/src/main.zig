@@ -12,7 +12,7 @@ pub fn main() !void {
     };
     defer vm.ci_vm_destroy(machine);
 
-    const usage = "usage: cinterp-run [--lib path]... [--load-only] [--safe] [--dump-target] [--dump-imports] <package.cib> [entry]\n";
+    const usage = "usage: cinterp-run [--lib path]... [--load-only] [--safe] [--dump-target] [--dump-imports] <package.cib> [entry] [-- arg...]\n";
     var load_only = false;
     var safe_mode = false;
     var dump_target = false;
@@ -66,7 +66,22 @@ pub fn main() !void {
 
     const package_path = args[i];
     i += 1;
-    const entry: [*:0]const u8 = if (i < args.len) args[i].ptr else "main";
+    var entry: [*:0]const u8 = "main";
+    var cargs = std.ArrayList([]const u8).init(allocator);
+    defer cargs.deinit();
+    cargs.append(package_path) catch {
+        std.debug.print("cinterp-run: out of memory\n", .{});
+        std.process.exit(2);
+    };
+    if (i < args.len and std.mem.eql(u8, args[i], "--")) {
+        i += 1;
+        while (i < args.len) : (i += 1) cargs.append(args[i]) catch {
+            std.debug.print("cinterp-run: out of memory\n", .{});
+            std.process.exit(2);
+        };
+    } else if (i < args.len) {
+        entry = args[i];
+    }
 
     const package = std.fs.cwd().readFileAlloc(allocator, package_path, 16 * 1024 * 1024) catch |err| {
         std.debug.print("cinterp-run: cannot read {s}: {s}\n", .{ package_path, @errorName(err) });
@@ -104,10 +119,11 @@ pub fn main() !void {
     if (safe_mode) _ = vm.ci_vm_set_safe(machine, 1);
     if (load_only) return;
 
-    const result = vm.ci_vm_run(machine, entry);
-    if (result == -1) {
+    const result = machine.runEntryArgs(std.mem.span(entry), cargs.items) catch |err| {
+        machine.setError(@errorName(err));
         std.debug.print("cinterp-run: run failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(machine))});
         std.process.exit(1);
-    }
-    std.debug.print("result: {d}\n", .{result});
+    };
+    machine.result = result;
+    std.debug.print("result: {d}\n", .{@as(i32, @truncate(result))});
 }

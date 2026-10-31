@@ -102,6 +102,10 @@ OP_F128_FROM_F32 = 0x8B
 OP_F128_TO_F32 = 0x8C
 OP_ALLOCA_DYN = 0x8D
 OP_ADDR_EXTERN = 0x96
+OP_SETJMP = 0x97
+OP_LONGJMP = 0x98
+OP_CALL_VARIADIC = 0x99
+OP_VA_START = 0x9A
 
 LLVM_LIBC_INTRINSICS = {
     "llvm.fabs.f32": "fabsf",
@@ -1605,6 +1609,34 @@ class Lowerer:
                 arg_types.append(type_match.group(1))
                 arg_values.append(arg.strip())
 
+            if fname in ("llvm.frameaddress.p0", "llvm.frameaddress"):
+                if result is not None:
+                    self.emit_const(0)
+                    self.store_slot(self.slot_for(result))
+                return
+            if fname in ("llvm.va_start.p0", "llvm.va_start"):
+                if not args:
+                    raise ValueError(f"bad va_start: {line}")
+                self.emit_operand(args[0].strip())
+                self.emit_u8(OP_VA_START)
+                return
+            if fname in ("llvm.va_end.p0", "llvm.va_end"):
+                return
+            if fname in ("setjmp", "_setjmp", "_setjmp3", "__builtin_setjmp", "__intrinsic_setjmpex"):
+                if result is None or not args:
+                    raise ValueError(f"bad setjmp: {line}")
+                self.emit_operand(args[0].strip())
+                self.emit_u8(OP_SETJMP)
+                self.emit_u16(self.slot_for(result))
+                return
+            if fname in ("longjmp", "_longjmp", "__builtin_longjmp"):
+                if len(args) < 2:
+                    raise ValueError(f"bad longjmp: {line}")
+                self.emit_operand(args[0].strip())
+                self.emit_operand(args[1].strip())
+                self.emit_u8(OP_LONGJMP)
+                return
+
             if fname not in self.func_indices:
                 decl = self.decls.get(fname)
                 is_varargs = decl[2] if decl else ("..." in rhs)
@@ -1658,13 +1690,15 @@ class Lowerer:
                 return
 
             callee = self.functions_by_name.get(fname)
-            emitted = arg_values
-            if callee is not None and callee.is_varargs:
-                emitted = arg_values[: len(callee.params)]
-            for value in emitted:
+            for value in arg_values:
                 self.emit_operand(value)
-            self.emit_u8(OP_CALL)
-            self.emit_u16(self.func_indices[fname])
+            if callee is not None and callee.is_varargs:
+                self.emit_u8(OP_CALL_VARIADIC)
+                self.emit_u16(self.func_indices[fname])
+                self.emit_u16(len(arg_values))
+            else:
+                self.emit_u8(OP_CALL)
+                self.emit_u16(self.func_indices[fname])
             if ret_type != "void":
                 if result is None:
                     raise ValueError(f"call without result: {line}")

@@ -1,26 +1,26 @@
 ---
 name: test-results-improvement
-overview: 根据当前 4144/4452 通过、308 skip 的结果，按“先修真实缺陷和标准 C 语义，再扩跨 ABI/覆盖”的顺序提升测试通过率和诊断质量。
+overview: 根据当前 4172/4454 通过、282 skip 的结果，按“先修真实缺陷和标准 C 语义，再扩跨 ABI/覆盖”的顺序提升测试通过率和诊断质量。
 ---
 
 # 测试结果提升计划
 
 > **状态（2026-10-31）：已完成（支持子集）。** `fcmp`/float 转换、VM 上限、
 > external data/函数指针、数学 intrinsic 和 CI/生成式差分已落地；full 支持集
-> **4144/4452 通过，308 skip（93.1%）**，另有 1098 个明确排除的非目标用例。
-> csuite、c-testsuite、TCC、GCC、CompCert smoke 在 Win64/Win32/ARM64 均 12/12。支持集和排除清单见
+> **4172/4454 通过，282 skip（93.7%）**，另有 1098 个明确排除的非目标用例。
+> csuite 14/14，c-testsuite、TCC、GCC、CompCert smoke 在 Win64/Win32/ARM64 均 12/12。支持集和排除清单见
 > `dev.md` §20 与 `tests/manifests/README.md`。
 
 ## 0. 当前基线
 
 | 套件 | 通过 | skip | 说明 |
 | --- | ---: | ---: | --- |
-| csuite | 12 | 0 | 四 ABI 各 12/12 |
+| csuite | 14 | 0 | 四 ABI 各 14/14 |
 | c-testsuite | 217 | 3 | 外部 data/向量/复杂全局初始化 |
-| TCC tests2 | 89 | 53 | 23 compile、32 mismatch |
+| TCC tests2 | 91 | 51 | 23 compile、27 mismatch、1 run |
 | chibicc | 14 | 27 | 20 compile、7 run |
 | libc-test | 40 | 35 | 29 mismatch、3 compile、3 runtime |
-| GCC torture execute | 1155 | 91 | 剩余运行缺陷；非目标用例已拆出 |
+| GCC torture execute | 1179 | 67 | 剩余运行缺陷；非目标用例已拆出 |
 | GCC torture compile | 1407 | 0 | 非目标编译用例已拆出 |
 | CompCert regression | 41 | 34 | 缺 expected 用例已拆出 |
 | LLVM UnitTests | 85 | 8 | 全部 compile 失败 |
@@ -28,8 +28,8 @@ overview: 根据当前 4144/4452 通过、308 skip 的结果，按“先修真�
 | CompCert c | 12 | 12 | benchmark 选中子集 |
 | CompCert compile | 30 | 4 | 无参考输出的编译子集 |
 | LLVM Regression/C | 935 | 0 | compile-supported 子集 |
-| libc regression | 49 | 20 | 选中子集 |
-| **合计** | **4144** | **308** | skip 占 6.9%；另有 1098 个明确排除 |
+| libc regression | 48 | 21 | 选中子集 |
+| **合计** | **4172** | **282** | skip 占 6.3%；另有 1098 个明确排除 |
 
 已识别的重点信号：
 
@@ -47,8 +47,8 @@ overview: 根据当前 4144/4452 通过、308 skip 的结果，按“先修真�
 - VM 上限提高：函数 512、帧 512、槽栈 8192、模块 2 MiB、plan 1024、参数 64。
 - external data + 函数地址：`stdout`/`t_status`/`strcmp`/`memcpy` 等可通过 CIPI data/`--lib` 解析。
 - 常见 LLVM 数学 intrinsic（fabs/round/ceil/floor/sqrt/fma/min/max 等）映射到 libc provider。
-- csuite 增加 NaN、float 转换用例；新增 GCC ieee、CompCert c、LLVM Regression/C 支持子集和 c-testsuite 跨 ABI smoke。
-- full 从 2803/1604 提升到 4144/308（支持集）；`make test-suites` 372/490；五套 cross smoke 各 12/12 × 3。
+- csuite 增加 NaN/float/varargs/setjmp 用例；新增 GCC ieee、CompCert c、LLVM Regression/C 支持子集和五套跨 ABI smoke。
+- full 从 2803/1604 提升到 4172/282（支持集）；`make test-suites` 376/492；五套 cross smoke 各 12/12 × 3。
 - CI nightly 改为 `make test-suites-nightly`（含 100-seed 差分）；runner 报告增加 `error_class`。
 
 ## 1. 原则
@@ -161,7 +161,7 @@ overview: 根据当前 4144/4452 通过、308 skip 的结果，按“先修真�
 
 ## 7. P1：跨 ABI 与自动链接
 
-- csuite 和 c-testsuite 上游 smoke 已在 Win64/Win32/ARM64 各 12/12；更大上游子集仍 native-only。
+- csuite 在 Win64/Win32/ARM64 各 14/14，c-testsuite/TCC/GCC/CompCert smoke 各 12/12；更大上游子集仍 native-only。
 - 为 TCC/chibicc/GCC/CompCert 建立 per-target manifest 子集；
 - 增加 target-specific expected 和 skip，不允许 compile 失败被 native 通过结果掩盖；
 - 自动链接断言：
@@ -235,8 +235,8 @@ overview: 根据当前 4144/4452 通过、308 skip 的结果，按“先修真�
 
 | 指标 | 当前 | 目标 |
 | --- | ---: | ---: |
-| full 通过率 | 4144/4452 (93.1%) | ≥72% 已达到，下一步 ≥80% |
-| skip 数 | 308 | <1200 已达到 |
+| full 通过率 | 4172/4454 (93.7%) | ≥72% 已达到，下一步 ≥80% |
+| skip 数 | 282 | <1200 已达到 |
 | GCC execute 运行失败 | 91 | 已减半；其余有分类 |
 | `fcmp une` skip | ~75 | 0（标准 C） |
 | `fptoui/uitofp` skip | ~20+ | 0（标准 C） |
@@ -281,9 +281,9 @@ make generate-diff-csmith
 
 ## 15. 完成证据（2026-10-31）
 
-- `make test-suites-full`：**4144/4452 通过，308 skip（93.1%）**；另有 1098 个 `.excluded` 非目标用例。
-- `make test-suites`：372/490；`make test` 通过。
-- Win64/Win32/ARM64：csuite 及 c-testsuite/TCC/GCC/CompCert smoke 各 12/12。
+- `make test-suites-full`：**4172/4454 通过，282 skip（93.7%）**；另有 1098 个 `.excluded` 非目标用例。
+- `make test-suites`：376/492；`make test` 通过。
+- Win64/Win32/ARM64：csuite 14/14 及 c-testsuite/TCC/GCC/CompCert smoke 各 12/12。
 - YARPGen 100 seeds：77 通过、23 明确 skip；Csmith 3 个已知失败 artifact 化。
 - fuzz：load 1000 次、exec 500 次，0 crash / 0 timeout。
 - 关键实现：`fcmp` 无序谓词、`fptoui/uitofp`、VM 上限、CIPI data/`ADDR_EXTERN`、数学 intrinsic 映射。

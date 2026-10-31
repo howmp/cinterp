@@ -1,4 +1,4 @@
-# refreshed after bitfield/fastcall work
+# refreshed after va_list/setjmp/argv fixes
 100_c99array-decls	compile: /home/admin/cl/build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
 101_cleanup	compile: cinterp: unsupported type <2 x float>
 102_alignas	compile: /home/admin/cl/build/suites/tcc/tests/tests2/102_alignas.c:4:14: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
@@ -9,7 +9,6 @@
 112_backtrace	mismatch: stdout mismatch
 113_btdll	mismatch: stdout mismatch
 114_bound_signal	mismatch: stdout mismatch
-115_bound_setjmp	mismatch: stdout mismatch
 116_bound_setjmp2	run: exit -11 != 0
 117_builtins	mismatch: stdout mismatch
 119_random_stuff	compile: /home/admin/cl/build/suites/tcc/tests/tests2/119_random_stuff.c:18:7: warning: ISO C does not allow indirection on operand of type 'void *' [-Wvoid-ptr-dereference]
@@ -34,7 +33,6 @@
 149_parameter_qualifier_errors	compile: /home/admin/cl/build/suites/tcc/tests/tests2/149_parameter_qualifier_errors.c:5:13: error: cannot assign to variable 'pointer' with const-qualified type 'int *const'
 150_return_qualifiers	compile: /home/admin/cl/build/suites/tcc/tests/tests2/150_return_qualifiers.c:12:5: error: conflicting types for 'const_return'
 151_atomic_header	compile: cinterp: unsupported type volatile
-31_args	mismatch: stdout mismatch
 34_array_assignment	compile: /home/admin/cl/build/suites/tcc/tests/tests2/34_array_assignment.c:16:6: error: array type 'int[4]' is not assignable
 35_sizeof	compile: /home/admin/cl/build/suites/tcc/tests/tests2/35_sizeof.c:8:34: warning: format specifies type 'int' but the argument has type 'unsigned long' [-Wformat]
 36_array_initialisers	mismatch: stdout mismatch
