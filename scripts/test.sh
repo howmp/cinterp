@@ -79,6 +79,19 @@ math_out="$("$RUNTIME" "$OUT/math.cib" 2>&1)"
 printf '%s\n' "$math_out" | grep -Fq "result: 8"
 echo "OK math -> 8"
 
+echo "== float32 arithmetic"
+python3 -m cinterp compile examples/float_math.c -o "$OUT/float_math.cib" >/dev/null
+float_out="$("$RUNTIME" "$OUT/float_math.cib" 2>&1)"
+printf '%s\n' "$float_out" | grep -Fq "result: 8"
+echo "OK float_math -> 8"
+
+echo "== float32 FFI"
+cc -shared -fPIC -O0 examples/ffi_float_helper.c -o "$OUT/libfloat_helpers.so"
+python3 -m cinterp compile examples/ffi_float.c -o "$OUT/ffi_float.cib" >/dev/null
+ffloat_out="$("$RUNTIME" --lib "$OUT/libfloat_helpers.so" "$OUT/ffi_float.cib" 2>&1)"
+printf '%s\n' "$ffloat_out" | grep -Fq "result: 5"
+echo "OK ffi_float -> 5"
+
 echo "== callback (qsort)"
 python3 -m cinterp compile examples/ffi_qsort.c -o "$OUT/ffi_qsort.cib" >/dev/null
 qsort_out="$("$RUNTIME" "$OUT/ffi_qsort.cib" 2>&1)"

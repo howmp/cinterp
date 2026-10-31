@@ -34,6 +34,15 @@ pub const OP_FSUB: u8 = 0x28;
 pub const OP_FMUL: u8 = 0x29;
 pub const OP_FDIV: u8 = 0x2A;
 pub const OP_FCMP: u8 = 0x2B;
+pub const OP_FADD32: u8 = 0x2C;
+pub const OP_FSUB32: u8 = 0x2D;
+pub const OP_FMUL32: u8 = 0x2E;
+pub const OP_FDIV32: u8 = 0x2F;
+pub const OP_FCMP32: u8 = 0x38;
+pub const OP_FPEXT: u8 = 0x39;
+pub const OP_FPTRUNC: u8 = 0x3A;
+pub const OP_FPTOSI32: u8 = 0x3B;
+pub const OP_SITOFP32: u8 = 0x3C;
 pub const OP_CMP_LT_U: u8 = 0x35;
 pub const OP_LOAD_LOCAL: u8 = 0x20;
 pub const OP_STORE_LOCAL: u8 = 0x21;
@@ -129,6 +138,26 @@ var callback_entries: [256]?CallbackEntry = [_]?CallbackEntry{null} ** 256;
 var callback_vm: ?*VM = null;
 
 extern const ci_cb_sysv_table: [256]*const anyopaque;
+
+fn f32FromValue(v: Value) f32 {
+    const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
+    return @bitCast(bits);
+}
+
+fn compareFloats(a: f64, b: f64, pred: u8) bool {
+    const unordered = std.math.isNan(a) or std.math.isNan(b);
+    return switch (pred) {
+        0 => !unordered and a == b,
+        1 => !unordered and a != b,
+        2 => !unordered and a < b,
+        3 => !unordered and a <= b,
+        4 => !unordered and a > b,
+        5 => !unordered and a >= b,
+        6 => !unordered,
+        7 => unordered,
+        else => false,
+    };
+}
 
 const RTLD_NOW: c_int = 2;
 const RTLD_GLOBAL: c_int = 0x100;
@@ -536,20 +565,55 @@ pub const VM = struct {
                     const a = try self.pop();
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    const unordered = std.math.isNan(fa) or std.math.isNan(fb);
-                    var r: bool = false;
-                    switch (pred) {
-                        0 => r = !unordered and fa == fb,
-                        1 => r = !unordered and fa != fb,
-                        2 => r = !unordered and fa < fb,
-                        3 => r = !unordered and fa <= fb,
-                        4 => r = !unordered and fa > fb,
-                        5 => r = !unordered and fa >= fb,
-                        6 => r = !unordered,
-                        7 => r = unordered,
-                        else => {},
-                    }
-                    try self.push(.{ .i = if (r) 1 else 0 });
+                    try self.push(.{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
+                },
+                OP_FADD32 => {
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.pushF32(f32FromValue(a) + f32FromValue(b));
+                },
+                OP_FSUB32 => {
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.pushF32(f32FromValue(a) - f32FromValue(b));
+                },
+                OP_FMUL32 => {
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.pushF32(f32FromValue(a) * f32FromValue(b));
+                },
+                OP_FDIV32 => {
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.pushF32(f32FromValue(a) / f32FromValue(b));
+                },
+                OP_FCMP32 => {
+                    const pred = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const fa: f64 = f32FromValue(a);
+                    const fb: f64 = f32FromValue(b);
+                    try self.push(.{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
+                },
+                OP_FPEXT => {
+                    const v = try self.pop();
+                    const fval: f64 = f32FromValue(v);
+                    try self.push(.{ .i = @bitCast(fval) });
+                },
+                OP_FPTRUNC => {
+                    const v = try self.pop();
+                    const fval: f64 = @bitCast(v.i);
+                    try self.pushF32(@floatCast(fval));
+                },
+                OP_FPTOSI32 => {
+                    const v = try self.pop();
+                    const fval = f32FromValue(v);
+                    try self.push(.{ .i = @intFromFloat(fval) });
+                },
+                OP_SITOFP32 => {
+                    const v = try self.pop();
+                    const fval: f32 = @floatFromInt(v.i);
+                    try self.pushF32(fval);
                 },
                 OP_LOAD_LOCAL => {
                     const idx = try readU16(code, &ip);
@@ -747,6 +811,11 @@ pub const VM = struct {
         if (self.sp >= MAX_STACK) return error.StackOverflow;
         self.values[self.sp] = v;
         self.sp += 1;
+    }
+
+    fn pushF32(self: *VM, f: f32) !void {
+        const bits: u32 = @bitCast(f);
+        try self.push(.{ .i = @intCast(bits) });
     }
 
     fn pop(self: *VM) !Value {

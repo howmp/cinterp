@@ -41,6 +41,15 @@ OP_FSUB = 0x28
 OP_FMUL = 0x29
 OP_FDIV = 0x2A
 OP_FCMP = 0x2B
+OP_FADD32 = 0x2C
+OP_FSUB32 = 0x2D
+OP_FMUL32 = 0x2E
+OP_FDIV32 = 0x2F
+OP_FCMP32 = 0x38
+OP_FPEXT = 0x39
+OP_FPTRUNC = 0x3A
+OP_FPTOSI32 = 0x3B
+OP_SITOFP32 = 0x3C
 OP_LOAD_LOCAL = 0x20
 OP_STORE_LOCAL = 0x21
 OP_JMP = 0x30
@@ -452,6 +461,20 @@ class Lowerer:
     def type_size(self, ty: str) -> int:
         return type_size_align(ty, self.structs)[0]
 
+    def emit_float_operand(self, text: str, ty: str) -> None:
+        stripped = text.strip()
+        if not re.search(r"[%@]", stripped) and re.fullmatch(
+            r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?", stripped
+        ):
+            value = float(stripped)
+            if ty == "float":
+                bits = struct.unpack("<I", struct.pack("<f", value))[0]
+            else:
+                bits = struct.unpack("<Q", struct.pack("<d", value))[0]
+            self.emit_const(bits)
+            return
+        self.emit_operand(text)
+
     def emit_arg(self, text: str) -> None:
         found = re.findall(r"@[\w.$]+", text)
         if found:
@@ -641,7 +664,10 @@ class Lowerer:
             size = self.type_size(ty)
             if size <= 0 or size > 8:
                 raise ValueError(f"aggregate store unsupported: {ty}")
-            self.emit_operand(value)
+            if ty in ("float", "double"):
+                self.emit_float_operand(value, ty)
+            else:
+                self.emit_operand(value)
             self.emit_pointer(ptr)
             self.emit_u8(OP_STORE_MEM)
             self.emit_u8(size)
@@ -667,17 +693,25 @@ class Lowerer:
         if m:
             if result is None:
                 raise ValueError(f"float arithmetic without result: {line}")
-            if m.group(2) != "double":
-                raise ValueError("float32 arithmetic is not supported")
+            ty = m.group(2)
             a, b = split_top(m.group(3), ",")
-            self.emit_operand(a)
-            self.emit_operand(b)
-            self.emit_u8({
-                "fadd": OP_FADD,
-                "fsub": OP_FSUB,
-                "fmul": OP_FMUL,
-                "fdiv": OP_FDIV,
-            }[m.group(1)])
+            self.emit_float_operand(a, ty)
+            self.emit_float_operand(b, ty)
+            ops = {
+                "double": {
+                    "fadd": OP_FADD,
+                    "fsub": OP_FSUB,
+                    "fmul": OP_FMUL,
+                    "fdiv": OP_FDIV,
+                },
+                "float": {
+                    "fadd": OP_FADD32,
+                    "fsub": OP_FSUB32,
+                    "fmul": OP_FMUL32,
+                    "fdiv": OP_FDIV32,
+                },
+            }
+            self.emit_u8(ops[ty][m.group(1)])
             self.store_slot(self.slot_for(result))
             return
 
@@ -685,10 +719,9 @@ class Lowerer:
         if m:
             if result is None:
                 raise ValueError(f"fneg without result: {line}")
-            if m.group(1) != "double":
-                raise ValueError("float32 arithmetic is not supported")
-            self.emit_operand(m.group(2))
-            self.emit_const(0x8000000000000000)
+            ty = m.group(1)
+            self.emit_float_operand(m.group(2), ty)
+            self.emit_const(0x8000000000000000 if ty == "double" else 0x80000000)
             self.emit_u8(OP_XOR)
             self.store_slot(self.slot_for(result))
             return
@@ -700,8 +733,8 @@ class Lowerer:
             if not m:
                 raise ValueError(f"bad fcmp: {line}")
             src_ty = m.group(2)
-            if src_ty != "double":
-                raise ValueError("float32 comparisons are not supported")
+            if src_ty not in ("double", "float"):
+                raise ValueError(f"unsupported fcmp type: {src_ty}")
             pred = m.group(1)
             pred_code = {
                 "oeq": 0,
@@ -716,9 +749,9 @@ class Lowerer:
             if pred_code is None:
                 raise ValueError(f"unsupported fcmp predicate: {pred}")
             a, b = split_top(m.group(3), ",")
-            self.emit_operand(a)
-            self.emit_operand(b)
-            self.emit_u8(OP_FCMP)
+            self.emit_float_operand(a, src_ty)
+            self.emit_float_operand(b, src_ty)
+            self.emit_u8(OP_FCMP if src_ty == "double" else OP_FCMP32)
             self.emit_u8(pred_code)
             self.store_slot(self.slot_for(result))
             return
@@ -794,16 +827,30 @@ class Lowerer:
             self.store_slot(self.slot_for(result))
             return
 
-        m = re.match(r"(trunc|zext|sext|fptosi|sitofp)\s+(\S+)\s+(.+?)\s+to\s+(\S+)$", rhs)
+        m = re.match(
+            r"(trunc|zext|sext|fptosi|sitofp|fpext|fptrunc)\s+(\S+)\s+(.+?)\s+to\s+(\S+)$",
+            rhs,
+        )
         if m:
             if result is None:
                 raise ValueError(f"cast without result: {line}")
             op, src_ty, value, dst_ty = m.group(1), m.group(2), m.group(3), m.group(4)
-            self.emit_operand(value)
+            if op in ("fptosi", "fptrunc", "fpext"):
+                self.emit_float_operand(value, src_ty)
+            else:
+                self.emit_operand(value)
             if op == "fptosi":
-                self.emit_u8(OP_FPTOSI)
+                self.emit_u8(OP_FPTOSI32 if src_ty == "float" else OP_FPTOSI)
             elif op == "sitofp":
-                self.emit_u8(OP_SITOFP)
+                self.emit_u8(OP_SITOFP32 if dst_ty == "float" else OP_SITOFP)
+            elif op == "fpext":
+                if src_ty != "float" or dst_ty != "double":
+                    raise ValueError(f"unsupported fpext {src_ty} -> {dst_ty}")
+                self.emit_u8(OP_FPEXT)
+            elif op == "fptrunc":
+                if src_ty != "double" or dst_ty != "float":
+                    raise ValueError(f"unsupported fptrunc {src_ty} -> {dst_ty}")
+                self.emit_u8(OP_FPTRUNC)
             elif not src_ty.startswith("i") or not dst_ty.startswith("i"):
                 raise ValueError(f"unsupported cast {op} {src_ty} -> {dst_ty}")
             else:
@@ -869,9 +916,12 @@ class Lowerer:
         if rhs == "ret void":
             self.emit_u8(OP_RET_VOID)
             return
-        m = re.match(r"ret\s+\S+\s+(.+)$", rhs)
+        m = re.match(r"ret\s+(\S+)\s+(.+)$", rhs)
         if m:
-            self.emit_operand(m.group(1))
+            if m.group(1) in ("float", "double"):
+                self.emit_float_operand(m.group(2), m.group(1))
+            else:
+                self.emit_operand(m.group(2))
             self.emit_u8(OP_RET)
             return
 

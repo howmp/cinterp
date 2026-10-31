@@ -521,7 +521,7 @@ cl/
 └── README.md
 ```
 
-> **v1 实际实现（2026-10-30）**：已落地 `compiler/src/cinterp/{llvm_ir/lower.py, ffi/plan.py, codegen/binary_writer.py, cli.py}`、`runtime/src/{vm.zig, main.zig, ffi/}`、`examples/`、`scripts/test.sh`；`make test` 通过。上方目录中的更多拆分文件是后续重构目标。v1 编译器已支持标量/控制流、线性内存数组/结构体/指针、union、memcpy/memset、globals/字符串、double 算术/比较，以及标量/指针/varargs FFI、MEMORY struct `byval`/`sret`、register-class S8/D16、mixed `{i64,double}` 聚合、静态 trampoline callback（qsort）；float32/bitfield、多 ABI 计划仍是后续项。
+> **v1 实际实现（2026-10-31 更新）**：已落地 `compiler/src/cinterp/{llvm_ir/lower.py, ffi/plan.py, codegen/binary_writer.py, cli.py}`、`runtime/src/{vm.zig, main.zig, ffi/}`、`examples/`、`scripts/test.sh`；`make test` 通过。上方目录中的更多拆分文件是后续重构目标。v1 编译器已支持标量/控制流、线性内存数组/结构体/指针、union、memcpy/memset、globals/字符串、float32/double 算术/比较/转换，以及标量/指针/varargs FFI、MEMORY struct `byval`/`sret`、register-class S8/D16、mixed `{i64,double}` 聚合、静态 trampoline callback（qsort）；`long double`/bitfield、多 ABI 计划仍是后续项。
 
 ## 12. 关键代码结构
 

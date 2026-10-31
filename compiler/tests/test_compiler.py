@@ -49,6 +49,14 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.ret_size, 16)
         self.assertEqual(plan.sse_count, 2)
 
+    def test_float_plan(self):
+        plan = build_sysv_plan("c_scale", "float", ["float"])
+        self.assertEqual([loc.kind for loc in plan.ret_locs], ["xmm0"])
+        self.assertEqual(plan.ret_size, 4)
+        self.assertEqual(plan.args[0].locs[0].kind, "xmm")
+        self.assertEqual(plan.args[0].locs[0].index, 0)
+        self.assertEqual(plan.sse_count, 1)
+
     def test_mixed_aggregate_return_plan(self):
         plan = build_sysv_plan("c_make_m", "{ i64, double }", ["i64", "double"])
         self.assertEqual([loc.kind for loc in plan.ret_locs], ["rax", "xmm0"])
