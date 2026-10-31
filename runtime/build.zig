@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
+    exe.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));
     exe.linkLibC();
     b.installArtifact(exe);
 
@@ -25,6 +26,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
+    tests.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));
     tests.linkLibC();
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run runtime unit tests");

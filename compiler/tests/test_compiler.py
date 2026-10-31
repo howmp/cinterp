@@ -2,7 +2,13 @@ import unittest
 
 from cinterp.codegen.binary_writer import write_package
 from cinterp.ffi.plan import PlanTable, build_sysv_plan, serialize_plans
-from cinterp.llvm_ir.lower import compile_text, parse_globals, parse_structs
+from cinterp.llvm_ir.lower import (
+    CallbackTable,
+    Function,
+    compile_text,
+    parse_globals,
+    parse_structs,
+)
 
 
 class PlanTests(unittest.TestCase):
@@ -42,6 +48,24 @@ class PlanTests(unittest.TestCase):
         self.assertEqual([loc.kind for loc in plan.ret_locs], ["xmm0", "xmm1"])
         self.assertEqual(plan.ret_size, 16)
         self.assertEqual(plan.sse_count, 2)
+
+    def test_callback_plan_table(self):
+        plans = PlanTable()
+        callbacks = CallbackTable()
+        fn = Function(
+            name="cmp",
+            ret="i32",
+            params=[("ptr", "a"), ("ptr", "b")],
+            body=[],
+        )
+        slot, func_index, plan_index = callbacks.add("cmp", fn, 3, plans)
+        self.assertEqual((slot, func_index, plan_index), (0, 3, 0))
+        plan = plans.plans[plan_index]
+        self.assertEqual(plan.name, "callback:cmp")
+        self.assertEqual(len(plan.args), 2)
+        self.assertEqual([loc.kind for loc in plan.ret_locs], ["rax"])
+        self.assertEqual(callbacks.add("cmp", fn, 3, plans), (0, 3, 0))
+        self.assertEqual(len(plans.plans), 1)
 
     def test_plan_serialization_and_package(self):
         table = PlanTable()

@@ -54,6 +54,7 @@ OP_ADDR_CONST = 0x65
 OP_SET_MEM_TOP = 0x66
 OP_CALL_NATIVE = 0x70
 OP_CALL_VARARG = 0x71
+OP_CREATE_CALLBACK = 0x72
 
 
 def split_top(s: str, sep: str = ",") -> list[str]:
@@ -313,6 +314,30 @@ class Function:
     local_count: int = 0
 
 
+class CallbackTable:
+    def __init__(self) -> None:
+        self.by_func: dict[str, tuple[int, int, int]] = {}
+        self.next_slot = 0
+
+    def add(self, name: str, fn: Function, func_index: int, plans: PlanTable) -> tuple[int, int, int]:
+        if name in self.by_func:
+            return self.by_func[name]
+        if self.next_slot >= 256:
+            raise ValueError("callback slot pool exhausted")
+        plan = build_sysv_plan(
+            "callback:" + name,
+            fn.ret,
+            [ptype for ptype, _pname in fn.params],
+            False,
+        )
+        plan_index = plans.add(plan)
+        slot = self.next_slot
+        self.next_slot += 1
+        entry = (slot, func_index, plan_index)
+        self.by_func[name] = entry
+        return entry
+
+
 class Lowerer:
     def __init__(
         self,
@@ -323,6 +348,8 @@ class Lowerer:
         global_data: bytes,
         decls: dict[str, tuple[str, list[str], bool]],
         plans: PlanTable,
+        functions_by_name: dict[str, Function],
+        callbacks: CallbackTable,
     ):
         self.fn = fn
         self.func_indices = func_indices
@@ -331,6 +358,8 @@ class Lowerer:
         self.global_data = global_data
         self.decls = decls
         self.plans = plans
+        self.functions_by_name = functions_by_name
+        self.callbacks = callbacks
         self.code = bytearray()
         self.slots: dict[str, int] = {}
         self.allocas: dict[str, int] = {}
@@ -412,6 +441,23 @@ class Lowerer:
 
     def type_size(self, ty: str) -> int:
         return type_size_align(ty, self.structs)[0]
+
+    def emit_arg(self, text: str) -> None:
+        found = re.findall(r"@[\w.$]+", text)
+        if found:
+            name = found[-1]
+            key = name[1:]
+            if key in self.functions_by_name and name not in self.globals:
+                fn = self.functions_by_name[key]
+                slot, func_index, plan_index = self.callbacks.add(
+                    key, fn, self.func_indices[key], self.plans
+                )
+                self.emit_u8(OP_CREATE_CALLBACK)
+                self.emit_u16(slot)
+                self.emit_u16(func_index)
+                self.emit_u16(plan_index)
+                return
+        self.emit_operand(text)
 
     def emit_pointer(self, text: str) -> None:
         text = text.strip()
@@ -819,7 +865,7 @@ class Lowerer:
                 )
                 plan_index = self.plans.add(plan)
                 for value in arg_values:
-                    self.emit_operand(value)
+                    self.emit_arg(value)
                 self.emit_u8(OP_CALL_VARARG if is_varargs else OP_CALL_NATIVE)
                 self.emit_u16(plan_index)
                 if ret_type != "void":
@@ -901,9 +947,21 @@ def compile_text(text: str, source_name: str = "<input>"):
     functions = parse_functions(text)
     indices = {fn.name: idx for idx, fn in enumerate(functions)}
     plans = PlanTable()
+    callbacks = CallbackTable()
+    functions_by_name = {fn.name: fn for fn in functions}
     for fn in functions:
         fn.index = indices[fn.name]
-        Lowerer(fn, indices, structs, globals_map, global_data, decls, plans).lower()
+        Lowerer(
+            fn,
+            indices,
+            structs,
+            globals_map,
+            global_data,
+            decls,
+            plans,
+            functions_by_name,
+            callbacks,
+        ).lower()
     module = serialize(functions)
     plan_bytes = plans.serialize()
     package = write_package(module, plan_bytes)

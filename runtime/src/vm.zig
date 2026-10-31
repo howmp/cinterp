@@ -47,6 +47,7 @@ pub const OP_ADDR_CONST: u8 = 0x65;
 pub const OP_SET_MEM_TOP: u8 = 0x66;
 pub const OP_CALL_NATIVE: u8 = 0x70;
 pub const OP_CALL_VARARG: u8 = 0x71;
+pub const OP_CREATE_CALLBACK: u8 = 0x72;
 
 pub const Value = extern union {
     i: i64,
@@ -93,6 +94,36 @@ comptime {
 }
 
 extern fn ci_abi_call_sysv64(frame: *SysV64Frame, target: *const anyopaque) callconv(.C) void;
+
+const CbFrame = extern struct {
+    slot: u64,          // 0
+    gpr: [6]u64,        // 8
+    xmm: [8][2]u64,     // 56
+    stack_args: [*]u8,  // 184
+    ret_rax: u64,       // 192
+    ret_rdx: u64,       // 200
+    ret_xmm0: [2]u64,   // 208
+    ret_xmm1: [2]u64,   // 224
+};
+
+comptime {
+    if (@offsetOf(CbFrame, "gpr") != 8) @compileError("bad cb gpr offset");
+    if (@offsetOf(CbFrame, "xmm") != 56) @compileError("bad cb xmm offset");
+    if (@offsetOf(CbFrame, "stack_args") != 184) @compileError("bad cb stack offset");
+    if (@offsetOf(CbFrame, "ret_rax") != 192) @compileError("bad cb ret_rax offset");
+    if (@offsetOf(CbFrame, "ret_xmm0") != 208) @compileError("bad cb ret_xmm0 offset");
+    if (@sizeOf(CbFrame) != 240) @compileError("bad cb frame size");
+}
+
+const CallbackEntry = struct {
+    func: usize,
+    plan: abi.CallPlan,
+};
+
+var callback_entries: [256]?CallbackEntry = [_]?CallbackEntry{null} ** 256;
+var callback_vm: ?*VM = null;
+
+extern const ci_cb_sysv_table: [256]*const anyopaque;
 
 const RTLD_NOW: c_int = 2;
 const RTLD_GLOBAL: c_int = 0x100;
@@ -301,13 +332,44 @@ pub const VM = struct {
         self.frame_count = 0;
         self.result = 0;
 
-        var base: usize = 0;
-        var current: usize = fi;
-        var ip: usize = 0;
-        const entry_fn = self.functions[current];
+        const entry_fn = self.functions[fi];
         const entry_locals: usize = entry_fn.local_count;
         self.sp = entry_locals;
         if (self.sp > MAX_STACK) return error.StackOverflow;
+
+        return self.executeLoop(fi, 0, 0);
+    }
+
+    pub fn runCallback(self: *VM, func_index: usize, args: []const Value) !i64 {
+        if (func_index >= self.func_count) return error.BadFunction;
+        const f = self.functions[func_index];
+        if (args.len != f.param_count) return error.BadArgCount;
+        const saved_sp = self.sp;
+        const saved_frames = self.frame_count;
+        const saved_result = self.result;
+        const base = saved_sp;
+        const locals: usize = f.local_count;
+        if (base + locals > MAX_STACK) return error.StackOverflow;
+        for (args, 0..) |v, i| self.values[base + i] = v;
+        var i: usize = args.len;
+        while (i < locals) : (i += 1) self.values[base + i] = .{ .i = 0 };
+        self.sp = base + locals;
+        const result = self.executeLoop(func_index, base, saved_frames) catch |err| {
+            self.sp = saved_sp;
+            self.frame_count = saved_frames;
+            self.result = saved_result;
+            return err;
+        };
+        self.sp = saved_sp;
+        self.frame_count = saved_frames;
+        self.result = saved_result;
+        return result;
+    }
+
+    fn executeLoop(self: *VM, start_fi: usize, start_base: usize, stop_frames: usize) !i64 {
+        var base: usize = start_base;
+        var current: usize = start_fi;
+        var ip: usize = 0;
 
         while (true) {
             const f = self.functions[current];
@@ -319,7 +381,7 @@ pub const VM = struct {
             switch (op) {
                 OP_RET, OP_RET_VOID => {
                     const v: Value = if (op == OP_RET) try self.pop() else .{ .i = 0 };
-                    if (self.frame_count == 0) {
+                    if (self.frame_count == stop_frames) {
                         self.result = v.i;
                         return v.i;
                     }
@@ -483,6 +545,24 @@ pub const VM = struct {
                     if (target > code.len) return error.BadJump;
                     const cond = try self.pop();
                     if (cond.i != 0) ip = target;
+                },
+                OP_CREATE_CALLBACK => {
+                    const slot = try readU16(code, &ip);
+                    const func = try readU16(code, &ip);
+                    const plan_idx = try readU16(code, &ip);
+                    if (slot >= callback_entries.len) return error.BadCallbackSlot;
+                    const fidx: usize = func;
+                    if (fidx >= self.func_count) return error.BadFunction;
+                    const store = self.plan_store orelse return error.NoPlans;
+                    const pidx: usize = plan_idx;
+                    const p = store.planAt(pidx) orelse return error.BadPlan;
+                    callback_entries[slot] = .{
+                        .func = fidx,
+                        .plan = store.callPlan(p),
+                    };
+                    callback_vm = self;
+                    const addr = @intFromPtr(ci_cb_sysv_table[slot]);
+                    try self.push(.{ .i = @bitCast(addr) });
                 },
                 OP_CALL_NATIVE, OP_CALL_VARARG => {
                     const idx = try readU16(code, &ip);
@@ -659,6 +739,40 @@ fn readRet(frame: *const SysV64Frame, plan: abi.CallPlan, ret: *[256]u8) void {
             .xmm1 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_xmm1)[0..n]),
             else => unreachable,
         }
+    }
+}
+
+fn readU64Ptr(ptr: [*]const u8) u64 {
+    return @as(*align(1) const u64, @ptrCast(ptr)).*;
+}
+
+pub export fn ci_callback_dispatch(slot: u64, frame: *CbFrame) callconv(.C) void {
+    if (slot >= callback_entries.len) return;
+    const entry = callback_entries[slot] orelse return;
+    const machine = callback_vm orelse return;
+    const n: usize = entry.plan.args.len;
+    if (n > 8) return;
+    var values: [8]Value = undefined;
+    for (entry.plan.args, 0..) |arg, i| {
+        const loc = arg.locs[0];
+        const bits: u64 = switch (loc.kind) {
+            .gpr => frame.gpr[@intCast(loc.index)],
+            .xmm => frame.xmm[@intCast(loc.index)][0],
+            .stack => readU64Ptr(frame.stack_args + @as(usize, loc.index)),
+            else => 0,
+        };
+        values[i] = .{ .u = bits };
+    }
+    const result = machine.runCallback(entry.func, values[0..n]) catch return;
+    if (entry.plan.ret_locs.len == 0) return;
+    const bits: u64 = @bitCast(result);
+    const ret = entry.plan.ret_locs[0];
+    switch (ret.kind) {
+        .rax => frame.ret_rax = bits,
+        .rdx => frame.ret_rdx = bits,
+        .xmm0 => frame.ret_xmm0[0] = bits,
+        .xmm1 => frame.ret_xmm1[0] = bits,
+        else => {},
     }
 }
 

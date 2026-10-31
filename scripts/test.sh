@@ -66,4 +66,10 @@ reg_out="$("$RUNTIME" --lib "$OUT/libregstruct_helpers.so" "$OUT/ffi_regstruct.c
 printf '%s\n' "$reg_out" | grep -Fq "result: 102"
 echo "OK ffi_regstruct -> 102"
 
+echo "== callback (qsort)"
+python3 -m cinterp compile examples/ffi_qsort.c -o "$OUT/ffi_qsort.cib" >/dev/null
+qsort_out="$("$RUNTIME" "$OUT/ffi_qsort.cib" 2>&1)"
+printf '%s\n' "$qsort_out" | grep -Fq "result: 1"
+echo "OK ffi_qsort -> 1"
+
 echo "all tests passed"

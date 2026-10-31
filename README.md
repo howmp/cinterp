@@ -66,10 +66,13 @@ The compiler currently supports:
 - register-class small structs: coerced 8-byte (S8) and 16-byte double-HFA
   aggregate returns (D16), including `extractvalue` and `fptosi` (see
   `examples/ffi_regstruct.c`)
+- callbacks: a VM function passed as a C function pointer becomes a static
+  trampoline; the dispatcher re-enters the VM without unwinding the outer
+  frame (see `examples/ffi_qsort.c`)
 
 Not yet in the compiler (the runtime engines and spikes validate the ABI):
-callbacks, mixed-class register aggregates beyond the two-eightbyte return
-cases, bitfields, float arithmetic, `long double`.
+mixed-class register aggregates beyond the two-eightbyte return cases,
+bitfields, float arithmetic, `long double`.
 
 ## Binary formats
 
@@ -111,7 +114,7 @@ runtime/               Zig VM/runtime (shipped)
   src/ffi/             plan loader, ABI loc types, asm engines
   src/main.zig         cinterp-run CLI
 examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
-                       MEMORY struct byval/sret and register-class S8/D16 FFI
+                       MEMORY/register-class struct FFI, qsort callback
 scripts/test.sh        integration suite
 spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
 plan.md, dev.md        implementation plan and architecture/decisions

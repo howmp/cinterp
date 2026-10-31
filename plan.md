@@ -11,7 +11,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 
 已完成：
 
-- **v1 实现（Linux x64）**：`compiler/`（C→CIVM、CIPL FFI 计划、CIPKG）+ `runtime/`（Zig VM、线性内存、SysV FFI、C ABI、`--lib`）+ `examples/`；`make test` 通过（runtime 2、compiler 8、端到端 9），含 MEMORY `byval`/`sret` 与 S8/D16 register-class struct FFI。
+- **v1 实现（Linux x64）**：`compiler/`（C→CIVM、CIPL FFI 计划、CIPKG）+ `runtime/`（Zig VM、线性内存、SysV FFI、C ABI、callback trampoline、`--lib`）+ `examples/`；`make test` 通过（runtime 2、compiler 9、端到端 10），含 MEMORY/register-class struct FFI 与 qsort callback。
 - **x86-64 SysV 固定汇编引擎**：`spike/asm_abi_call` 5/5，`ReleaseSmall` 8.7K。
 - **前端 CallPlan 生成器（x86-64 SysV 原型）**：`spike/callplan_gen` 从 clang LLVM IR 生成 15 个计划，4/4，`ReleaseSmall` 8.7K。
 - **计划二进制序列化 + loader**：`spike/callplan_gen` 的 `plans.bin` 995 字节/15 计划；Zig loader round-trip、名称查找、解码后调用、错误路径全部通过；总计 6/6。
@@ -28,7 +28,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 
 下一步：
 
-- **编译器侧 mixed-class struct FFI / callback**：MEMORY `byval`/`sret`、coerced S8、双 XMM D16 已集成；mixed-class 聚合与 callback 字节码/计划待做。
+- **编译器侧 mixed-class struct FFI**：MEMORY `byval`/`sret`、coerced S8、双 XMM D16、qsort callback 已集成；mixed-class 聚合待做。
 - **多 ABI 计划生成**：Win64/Win32/ARM64 的 compiler plan builder 与 runtime 选择。
 - **C11 扩展**：bitfield（v1 排除）、float/`long double`、c-testsuite/chibicc 子集。
 - **M11 加固/发布**：ABI 边界、体积、错误路径、CI/发布检查。
@@ -155,9 +155,9 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 
 - `compiler/`：Python 包 + `cinterp compile`；LLVM IR 降级、线性内存、globals/字符串、CIPL FFI 计划、CIPKG 包。
 - `runtime/`：Zig VM、线性内存、`ci_vm_*` C ABI、SysV 固定汇编 FFI 引擎、`dlsym`/`libc` 解析、CIPKG 加载。
-- `examples/`：hello、arrays、structs、puts、printf、snprintf、malloc/free、MEMORY `byval`/`sret`、register-class S8/D16 struct FFI。
-- `make test`：runtime 2 单测 + compiler 8 单测 + 9 个端到端用例通过；`ffi_structs=28`、`ffi_regstruct=102`。
-- 后续：mixed-class register aggregates、callback 集成、Win64/Win32/ARM64 计划生成、bitfield/float、c-testsuite。
+- `examples/`：hello、arrays、structs、puts、printf、snprintf、malloc/free、MEMORY/register-class struct FFI、qsort callback。
+- `make test`：runtime 2 单测 + compiler 9 单测 + 10 个端到端用例通过；`ffi_structs=28`、`ffi_regstruct=102`、`ffi_qsort=1`。
+- 后续：mixed-class register aggregates、Win64/Win32/ARM64 计划生成、bitfield/float、c-testsuite。
 
 ## 4. Spike 计划
 
@@ -350,7 +350,8 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - [x] examples + 集成测试（`make test`）
 - [x] 编译器侧 MEMORY struct `byval`/`sret` FFI 计划
 - [x] register-class S8（coerced i64）与 D16（双 XMM 聚合返回）
-- [ ] mixed-class register aggregate / callback 字节码/计划集成
+- [x] callback 静态 trampoline + 可重入 VM（qsort）
+- [ ] mixed-class register aggregate
 - [ ] Win64/Win32/ARM64 计划生成与运行时选择
 - [ ] float/bitfield/c-testsuite
 - [ ] M11 加固/发布
@@ -392,6 +393,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - **2026-10-30**：S9 线性内存/数组/结构体/指针/union/memcpy/memset/globals/字符串通过（sample1..12 12/12，21K）。
 - **2026-10-30**：完成 S12（ARM64 AAPCS64，qemu 6/6，12K）。
 - **2026-10-30**：S9 剩余扩展：bitfield（v1 排除）、float/`long double`、外部调用、c-testsuite。
-- **2026-10-30**：v1 Linux x64 实现落地：`compiler/` + `runtime/` + `examples/`；`make test`（runtime 2、compiler 8、端到端 9）通过。
+- **2026-10-30**：v1 Linux x64 实现落地：`compiler/` + `runtime/` + `examples/`；`make test`（runtime 2、compiler 9、端到端 10）通过。
 - **2026-10-30**：编译器侧 MEMORY struct `byval`/`sret` FFI + runtime `--lib` 加载；`ffi_structs` 结果 28。
 - **2026-10-30**：register-class S8（coerced i64）+ D16（双 XMM 聚合返回，extractvalue/fptosi）；`ffi_regstruct` 结果 102。
+- **2026-10-30**：callback 静态 trampoline + 可重入 VM（executeLoop/runCallback）；qsort 示例结果 1。
