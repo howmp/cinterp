@@ -41,6 +41,7 @@ echo "== Win64"
 (cd runtime && zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSmall)
 cp runtime/zig-out/bin/cinterp-run.exe "$OUT/cinterp-run64.exe"
 for name in "${USUAL[@]}"; do compile x86_64-windows "$name"; done
+compile x86_64-windows winapi
 for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper ffi_longdouble_helper ffi_edges_helper ffi_hfa_helper ffi_hfa_stack_helper packed_helper; do
     zig cc -target x86_64-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/lib${h}64.dll" "examples/$h.c"
@@ -66,11 +67,13 @@ win_run cinterp-run64.exe ffi_edges-x86_64-windows.cib libffi_edges_helper64.dll
 win_run cinterp-run64.exe ffi_hfa-x86_64-windows.cib libffi_hfa_helper64.dll 120
 win_run cinterp-run64.exe ffi_hfa_stack-x86_64-windows.cib libffi_hfa_stack_helper64.dll 45
 win_run cinterp-run64.exe packed-x86_64-windows.cib libpacked_helper64.dll 7
+win_run cinterp-run64.exe winapi-x86_64-windows.cib "" 7
 
 echo "== Win32"
 (cd runtime && zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSmall)
 cp runtime/zig-out/bin/cinterp-run.exe "$OUT/cinterp-run32.exe"
 for name in "${USUAL[@]}"; do compile i686-windows "$name"; done
+compile i686-windows winapi
 for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper ffi_longdouble_helper ffi_edges_helper ffi_hfa_helper ffi_hfa_stack_helper packed_helper; do
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/lib${h}32.dll" "examples/$h.c"
@@ -98,6 +101,7 @@ win_run cinterp-run32.exe ffi_hfa-i686-windows.cib libffi_hfa_helper32.dll 120
 win_run cinterp-run32.exe ffi_hfa_stack-i686-windows.cib libffi_hfa_stack_helper32.dll 45
 win_run cinterp-run32.exe packed-i686-windows.cib libpacked_helper32.dll 7
 win_run cinterp-run32.exe ffi_stdcall-i686-windows.cib libffi_stdcall_helper32.dll 60
+win_run cinterp-run32.exe winapi-i686-windows.cib "" 7
 
 echo "== ARM64"
 (cd runtime && zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSmall)

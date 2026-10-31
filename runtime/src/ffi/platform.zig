@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("abi.zig");
+const link_loader = @import("link_loader.zig");
 
 pub const Kind = enum(u8) { sysv = 1, win64 = 2, win32 = 3, aapcs64 = 4 };
 
@@ -20,6 +21,25 @@ else
 
 pub const abi_id: u8 = @intFromEnum(abi_kind);
 pub const callback_supported = true;
+pub const os_id: u8 = if (builtin.os.tag == .windows) 2 else 1;
+pub const arch_id: u8 = switch (builtin.cpu.arch) {
+    .x86_64 => 1,
+    .x86 => 2,
+    .aarch64 => 3,
+    else => 0,
+};
+pub const ptr_bits: u8 = @bitSizeOf(usize);
+pub const runtime_version: u16 = 1;
+pub const runtime_features: u64 = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) |
+    (if (builtin.cpu.arch == .aarch64) @as(u64, 1 << 1) else @as(u64, 1 << 0));
+
+pub fn validateTarget(target: link_loader.TargetInfo) !void {
+    if (target.arch != arch_id or target.os != os_id or target.abi != abi_id or
+        target.ptr_bits != ptr_bits or target.endian != 1)
+        return error.TargetMismatch;
+    if ((target.features & ~runtime_features) != 0) return error.UnsupportedFeature;
+    if (target.min_runtime > runtime_version) return error.RuntimeTooOld;
+}
 
 pub const SysVFrame = extern struct {
     gpr: [6]u64,

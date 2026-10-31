@@ -1,28 +1,64 @@
 # `.cib` 文件结构
 
-`.cib` 是 `cinterp compile` 生成的**发布包**，外层格式为 `CIPKG`，内部由：
+`.cib` 是 `cinterp compile` 生成的**发布包**。当前外层格式为 `CIPKG` v2，内部由四个 section 组成：
 
 1. `CIVM`：字节码模块（函数表 + 每个函数的 code）；
-2. `CIPL`：FFI/callback 计划表（每个外部符号的参数/返回位置）。
+2. `CIPL`：FFI/callback 计划表（每个外部符号的参数/返回位置）；
+3. `CIPM`：目标声明（架构、OS、ABI、指针宽度、端序、特性、链接数据库版本）；
+4. `CIPI`：外部符号链接表（plan → provider 库/符号/别名/架构/最低 OS）。
 
-运行时按“包 → 模块 → 函数 → 计划 → 固定汇编引擎”的顺序工作。本文描述的是**当前实现**的二进制格式；代码是最终事实来源：
+运行时按“包 → 目标校验 → 模块 → 计划 → import 校验 → 固定汇编引擎”的顺序工作。`CIPKG` v1（无 CIPM/CIPI）仍然可读。本文描述的是**当前实现**的二进制格式；代码是最终事实来源：
 
 - `compiler/src/cinterp/codegen/binary_writer.py`：`CIPKG`
 - `compiler/src/cinterp/llvm_ir/lower.py`：CIVM、opcode、globals 初始化
 - `compiler/src/cinterp/ffi/plan.py`：CIPL、`Loc`/`ArgPlan`/`CallPlan`
-- `runtime/src/vm.zig`：CIVM 解析、opcode 执行、C ABI
+- `compiler/src/cinterp/link/target.py`：CIPM
+- `compiler/src/cinterp/link/imports.py`：CIPI
+- `compiler/src/cinterp/link/cstdapi.py` / `winmd.py`：C 标准库/Windows API 自动链接
+- `runtime/src/vm.zig`：CIVM 解析、opcode 执行、C ABI、provider 解析
 - `runtime/src/ffi/plan_loader.zig`：CIPL 解析
-- `runtime/src/ffi/platform.zig`：ABI/frame/marshal 选择
+- `runtime/src/ffi/link_loader.zig`：CIPM/CIPI 解析
+- `runtime/src/ffi/platform.zig`：ABI/frame/marshal 选择与目标校验
 
 ## 1. 通用约定
 
 - 所有多字节整数/浮点位模式均为**小端**。
 - 没有对齐 padding、checksum、签名或压缩。
 - `CIVM` 是虚拟机字节码，不是宿主 CPU 机器码；`CIPKG`/CIPL 的 ABI id 指示计划对应的宿主 ABI。
-- 计划表与运行时目标 ABI 必须一致；否则 `loadPlans` 返回 `BadAbi`。
+- v2 包的 CIPM 目标必须与运行时一致；否则在解析模块/计划前返回 `TargetMismatch`。计划表与运行时 ABI 仍必须一致（`BadAbi`）。
+- CIPI 的 plan 索引必须指向本包 CIPL 中的外部计划；运行时加载时校验。
 - 所有二进制长度按实际字节数写入，读取器会拒绝截断、尾随字节和越界计数。
 
 ## 2. CIPKG 外层
+
+### 2.1 v2（当前）
+
+```
+offset  size  field
+0       5     magic = "CIPKG"
+5       1     version = 2
+6       1     flags            # bit0=has_target, bit1=has_imports
+7       2     header_size = 25 # u16 LE
+9       4     module_len (u32 LE)
+13      4     plan_len   (u32 LE)
+17      4     meta_len   (u32 LE)
+21      4     import_len (u32 LE)
+25      module_len       CIVM module bytes
+...     plan_len         CIPL plan table bytes
+...     meta_len         CIPM target section
+...     import_len       CIPI import section
+```
+
+约束：
+
+- `header_size` 当前必须为 25；section 顺序固定。
+- `25 + module_len + plan_len + meta_len + import_len` 必须精确等于文件长度；不允许 padding。
+- `meta_len` 至少包含完整的 CIPM v1（29 字节头 + 字符串）。
+- `import_len` 可以为 0；编译器在无外部符号时写 10 字节空 CIPI 头，不是省略。
+- 运行时模块上限 `MAX_MODULE = 262144` 字节；CLI 读取包文件上限 16 MiB。
+- v2 在加载模块前执行目标校验；CIPI 在计划加载后校验 plan 索引。
+
+### 2.2 v1（兼容）
 
 ```
 offset  size  field
@@ -35,12 +71,95 @@ offset  size  field
 15+module_len plan_len  CIPL plan table bytes
 ```
 
-约束：
+v1 没有 CIPM/CIPI；运行时根据 CIPL 的 `abi_id` 做旧式校验，并保留旧的全局符号搜索/`--lib` 行为。旧包不触发自动 provider 链接。
 
-- `module_len`、`plan_len` 必须与剩余字节精确匹配；不允许 padding。
-- 运行时模块上限 `MAX_MODULE = 262144` 字节。
-- CLI 读取包文件上限 16 MiB（`cinterp-run`），加载器还会按模块/计划自身限制检查。
-- 计划表即使为空也写入 10 字节 CIPL 头。
+### 2.3 CIPM：目标声明（v1）
+
+```
+offset size field
+0      4    magic = "CIPM"
+4      1    version = 1
+5      2    header_size = 29 (u16 LE)
+7      1    arch           # 1=x86_64, 2=x86, 3=aarch64
+8      1    os             # 1=linux, 2=windows
+9      1    abi            # 1=sysv, 2=win64, 3=win32, 4=aapcs64
+10     1    ptr_bits       # 32/64
+11     1    endian         # 1=little
+12     1    flags
+13     8    features (u64 LE)
+21     2    min_runtime (u16)
+23     2    triple_len
+25     2    link_db_len
+27     2    producer_len
+29     triple_len       canonical target triple（UTF-8）
+...    link_db_len      "cstdapi@<commit>;winmd@<commit>"
+...    producer_len     "cinterp 0.1.0"
+```
+
+- `features` 位：bit0=f80、bit1=f128、bit2=callback、bit3=varargs、bit4=auto-link、bit5=stdcall。运行时按位检查，缺失返回 `UnsupportedFeature`。
+- `min_runtime` 高于运行时版本时返回 `RuntimeTooOld`。
+- `triple` 用于诊断；快速校验使用 arch/os/abi/ptr_bits/endian。
+- `link_db` 记录生成 CIPI 时使用的 cstdapi/winmd 上游版本；没有 import 时可以为空。
+
+### 2.4 CIPI：外部符号链接表（v1）
+
+```
+offset size field
+0      4    magic = "CIPI"
+4      1    version = 1
+5      1    flags
+6      2    entry_count (u16)
+8      2    reserved = 0
+10     entry[]
+```
+
+每个 entry：
+
+```
+2     plan_index       # CIPL 计划索引；0xffff 预留给 data 符号
+1     kind             # 0=function, 1=data（data 暂未实现）
+1     flags            # bit0=required, bit1=lazy, bit2=allow_fallback, bit3=allow_override
+1     callconv         # 0=cdecl, 1=stdcall/winapi
+1     arch_mask        # bit0=x86_64, bit1=x86, bit2=aarch64; 0=all
+2     min_os           # 0=unknown; Windows 编码为 (major<<8)|minor
+1     name_len
+N     name             # 逻辑符号名（plan 名，可能含 Win32 修饰）
+1     provider_count
+provider[]:
+  1   kind             # 0=system library name, 1=SONAME/DLL name, 2=path（自动链接禁用）
+  1   name_len
+  N   name             # e.g. libc.so.6 / libm.so.6 / ucrtbase.dll / user32.dll
+  1   symbol_len
+  N   symbol           # provider 内真实符号，例如 _snprintf / GetTickCount64
+  2   ordinal          # 0=按名；非 0=Windows ordinal
+  1   version_len
+  N   version          # 预留（GLIBC_2.x / API set 版本）
+```
+
+- `plan_index` 绑定 CIPL；同一符号多次调用可以有多条 entry，运行时按 plan 精确匹配。
+- provider 按顺序尝试；成功后缓存库 handle 和符号地址。
+- 自动生成的 provider 只能是系统库名/allowlist；运行时会拒绝包含 `/`、`\` 或 `:` 的自动 provider 名，避免 CIB 指定任意路径。显式 `--lib` 仍允许用户路径。
+- `arch_mask` 与 `min_os` 在加载时校验；不匹配返回 `ImportArchMismatch` / `ImportUnavailable`。
+- `kind=data` 与 `ordinal` 已预留；当前自动链接只生成 function entry，ordinal 解析在 Windows 已支持。
+
+### 2.5 运行时符号解析顺序
+
+对有 CIPI entry 的计划：
+
+1. 若 entry 允许 override，先搜索用户 `--lib` 加载的库（逆序）。
+2. 按 CIPI provider 顺序 `dlopen`/`LoadLibraryA` 并 `dlsym`/`GetProcAddress`；缓存成功结果。
+3. 若 entry 允许 fallback，再走旧的进程默认 → `--lib` → CRT 搜索。
+4. 否则返回 `SymbolNotFound`。
+
+没有 CIPI entry 的计划（旧 v1 包或未收录的自定义符号）仍走旧搜索路径。`--safe` 在解析前直接拒绝 `CALL_NATIVE`/`CALL_VARARG`。
+
+### 2.6 自动链接数据库
+
+编译器按 target 自动生成 CIPI，只写实际使用的外部符号：
+
+- **C 标准库**：`compiler/src/cinterp/link/cstdapi.generated.json` 由 `tools/gen_cstdapi.py` 从 cstdapi 生成；Linux 候选 `libc.so.6`/`libm.so.6`，Windows 候选 `ucrtbase.dll`/`msvcrt.dll`/`ntdll.dll`，包含 `_snprintf` 等别名。
+- **Windows API**：`compiler/src/cinterp/link/winmd.generated.json.gz` 由 `tools/gen_winmd.py` 从 winmd 生成；name → DLL/callconv/min_os/arch_mask，运行期按 DLL 自动加载。
+- `--no-auto-link` 关闭生成；未命中的自定义符号继续使用 `--lib`/旧 fallback。
 
 ## 3. CIVM 模块（v1）
 
@@ -302,23 +421,24 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 
 ## 6. 完整示例：`hello.cib`
 
-运行 `cinterp compile examples/hello.c -o build/hello.cib` 后（78 字节）：
+运行 `cinterp compile examples/hello.c -o build/hello.cib --no-auto-link` 后（159 字节，CIPKG v2）：
 
 ```
 43 49 50 4b 47        CIPKG
-01                    version 1
-00                    reserved
+02                    version 2
+03                    flags = has_target | has_imports
+19 00                 header_size = 25
 35 00 00 00           module_len = 53
 0a 00 00 00           plan_len = 10
+3d 00 00 00           meta_len = 61
+0a 00 00 00           import_len = 10
 
-43 49 56 4d           CIVM
+43 49 56 4d           CIVM 模块（内容与 v1 相同）
 01                    version 1
 01                    arch 1
 01 00                 func_count = 1
 00 00                 reserved
-
-04                    name_len = 4
-6d 61 69 6e           "main"
+04 6d 61 69 6e         name_len=4, "main"
 00 00                 param_count = 0
 01 00                 local_count = 1
 1e 00 00 00           code_len = 30
@@ -335,9 +455,38 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 01                    abi_id 1 (SysV)
 00 00                 plan_count = 0
 00 00                 reserved
+
+43 49 50 4d           CIPM
+01                    version 1
+1d 00                 header_size = 29
+01                    arch = x86_64
+01                    os = linux
+01                    abi = sysv
+40                    ptr_bits = 64
+01                    endian = little
+00                    flags
+3d 00 00 00 00 00 00 00  features = f80|callback|varargs|auto-link|stdcall
+01 00                 min_runtime = 1
+13 00                 triple_len = 19
+00 00                 link_db_len = 0
+0d 00                 producer_len = 13
+"x86_64-pc-linux-gnu"
+"cinterp 0.1.0"
+
+43 49 50 49           CIPI
+01                    version 1
+00                    flags
+00 00                 entry_count = 0
+00 00                 reserved
 ```
 
-该包没有外部调用，所以 CIPL 只包含 10 字节头。
+该包没有外部调用，所以 CIPI 只有 10 字节头。带自动链接的包会在 CIPI 中追加 provider 记录；可用 `--dump-imports` 查看，例如：
+
+```
+>>> cinterp-run --dump-target --dump-imports --load-only build/ffi_printf.cib
+target: x86_64-pc-linux-gnu arch=1 os=1 abi=1 ptr=64 endian=1 features=0x3d link_db=cstdapi@...
+import[plan 0] printf: libc.so.6:printf libm.so.6:printf
+```
 
 ## 7. 检查与验证
 
@@ -345,11 +494,11 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 # 查看十六进制
 xxd -g1 build/hello.cib
 
-# 查看编译器生成函数/计划摘要
-PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o build/printf.cib --dump
+# 查看编译器生成函数/计划/import 摘要
+PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o build/printf.cib --dump --dump-imports
 
-# 只加载/校验，不执行
-./runtime/zig-out/bin/cinterp-run --load-only build/printf.cib
+# 只加载/校验，不执行；同时查看目标/import 元数据
+./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib
 
 # safe 模式：禁止原生调用/宿主越界内存操作（fuzz 用）
 ./runtime/zig-out/bin/cinterp-run --safe build/hello.cib
@@ -358,13 +507,14 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o buil
 ./runtime/zig-out/bin/cinterp-run build/hello.cib main
 ```
 
-运行时加载失败会返回错误名（`BadPackage`、`BadMagic`、`BadVersion`、`BadAbi`、`Truncated`、`TrailingBytes`、`BadPlan` 等），CLI 输出 `load failed` / `run failed`。
+运行时加载失败会返回错误名（`BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageHeader`、`TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`BadAbi`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`Truncated`、`TrailingBytes`、`BadPlan` 等），CLI 输出 `load failed` / `run failed`。
 
 ## 8. 限制与兼容性
 
-- `CIVM` 当前 v1，`CIPKG` 当前 v1，`CIPL` 当前 v3（接受 v2）。
-- `CIVM` 函数数上限 8、函数名有效上限 32、模块上限 262144 字节；槽栈 1024、帧 64、线性内存 1 MiB。
+- `CIVM` 当前 v1；`CIPKG` 当前 v2（接受 v1）；`CIPL` 当前 v3（接受 v2）；`CIPM`/`CIPI` 当前 v1。
+- `CIVM` 函数数上限 8、函数名有效上限 32、模块上限 262144 字节；槽栈 1024、帧 64、线性内存 1 MiB（显式 16 字节对齐）。
 - `CIPL` 计划上限 256、每计划参数 16、每参数 loc 8、名称有效上限 32；FFI arg/stack/ret 缓冲区各 4096 字节。
-- 没有目标 triple 字段；计划表只有 ABI id，应用必须用匹配目标构建的运行时加载。
+- CIPM 目标必须匹配运行时；v1 包没有目标 triple，只能依赖 CIPL ABI 和调用方正确选择运行时。
+- CIPI 上限 256 entry、每 entry 8 provider、名称/符号 64 字节、版本 32 字节；自动 provider 只允许库名，不允许 CIB 携带任意路径。
 - 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。`--safe` 只用于 fuzz，不允许原生调用和越界 VM 内存访问。
-- 原生指针/外部数据符号仍依赖宿主运行时；`CIPKG` 本身不携带 `.so`/`.dll` 依赖。
+- 自动链接当前覆盖函数符号；外部 data 符号（`errno`/`stdout` 等）、向量、复杂聚合全局初始化仍不在范围内。`CIPKG` 本身不携带 `.so`/`.dll` 二进制。

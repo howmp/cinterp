@@ -15,8 +15,11 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..codegen.binary_writer import write_package
+from ..codegen.binary_writer import write_package, write_package_v2
 from ..ffi.plan import PlanTable, build_plan, build_sysv_plan
+from ..link import cstdapi, winmd
+from ..link.imports import ImportTable
+from ..link.target import Target, target_for
 
 OP_RET = 0x01
 OP_RET_VOID = 0x02
@@ -1621,7 +1624,20 @@ def serialize(functions: list[Function]) -> bytes:
     return bytes(out)
 
 
-def compile_text(text: str, source_name: str = "<input>", abi: str = "sysv", ptr_size: int = 8):
+def compile_text(
+    text: str,
+    source_name: str = "<input>",
+    abi: str = "sysv",
+    ptr_size: int = 8,
+    target: Target | None = None,
+    imports: ImportTable | None = None,
+    cib_version: int = 2,
+    auto_link: bool = True,
+):
+    if target is None:
+        target = target_for(abi, ptr_size)
+    if imports is None:
+        imports = ImportTable()
     structs = parse_structs(text)
     globals_map, global_data, global_relocs = parse_globals_ex(text, structs, ptr_size)
     decls = parse_decls(text)
@@ -1648,7 +1664,13 @@ def compile_text(text: str, source_name: str = "<input>", abi: str = "sysv", ptr
         ).lower()
     module = serialize(functions)
     plan_bytes = plans.serialize()
-    package = write_package(module, plan_bytes)
+    if cib_version == 1:
+        package = write_package(module, plan_bytes)
+    else:
+        if auto_link:
+            target = cstdapi.apply(target, plans, imports)
+            target = winmd.apply(target, plans, imports)
+        package = write_package_v2(module, plan_bytes, target.serialize(), imports.serialize())
     return package, module, plan_bytes, functions, plans
 
 

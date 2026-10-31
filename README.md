@@ -6,12 +6,13 @@ through a fixed assembly ABI engine; there is no libffi, no `@call` stub matrix,
 and no runtime code generation / executable memory.
 
 - **Compiler** (Python, build-time): `clang -S -emit-llvm -O0`, LLVM IR → CIVM
-  bytecode, FFI `CallPlan` table, `CIPKG` package.
+  bytecode, FFI `CallPlan` table, and a `CIPKG` v2 package with target metadata
+  (`CIPM`) and external-symbol link metadata (`CIPI`).
 - **Runtime** (Zig 0.13): stack VM with linear memory, C ABI (`ci_vm_*`),
   compile-time ABI selection, fixed assembly engines for SysV x86-64,
   Win64, Win32 cdecl/stdcall and AArch64 AAPCS64, native symbol resolution
-  (`dlopen`/`dlsym` on Unix, `LoadLibraryA`/`GetProcAddress` on Windows), and
-  static callback pools on every ABI.
+  (`dlopen`/`dlsym` on Unix, `LoadLibraryA`/`GetProcAddress` on Windows),
+  automatic provider loading from `CIPI`, and static callback pools on every ABI.
 - **Targets**: Linux x64, Windows x64, Windows x86, Linux AArch64. Build with
   `--target` on the compiler and `-Dtarget` on the runtime.
 
@@ -38,6 +39,9 @@ cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so
 PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_structs.c -o build/ffi_structs.cib
 ./runtime/zig-out/bin/cinterp-run --lib build/libstruct_helpers.so build/ffi_structs.cib
 # result: 28
+
+# inspect target/import metadata
+./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib
 
 # versions
 PYTHONPATH=compiler/src python3 -m cinterp --version
@@ -86,22 +90,38 @@ set `C_TESTSUITE_DIR` to point at an external directory.
 
 ## Validation and trust
 
-The runtime validates package lengths, function/plan counts, plan argument
-counts, ABI location indices, and marshal offsets/sizes before invoking native
-code; malformed packages fail cleanly. `cinterp-run --load-only` validates a
-package without executing it; `make fuzz` mutates/truncates seed packages and
-checks for crashes. C pointers to native allocations are necessarily trusted,
-so run untrusted packages under an OS sandbox.
+The runtime validates package lengths, target metadata (arch/OS/ABI/pointer
+width/features), CIPI plan/provider references, function/plan counts, plan
+argument counts, ABI location indices, and marshal offsets/sizes before
+invoking native code; malformed packages fail cleanly. `cinterp-run
+--load-only` validates a package without executing it; `make fuzz`
+mutates/truncates seed packages and checks for crashes. Automatic providers
+must be library names (no paths) and are loaded from the system loader. C
+pointers to native allocations are necessarily trusted, so run untrusted
+packages under an OS sandbox.
+
+Format reference: [`docs/cib.md`](docs/cib.md) covers CIPKG v2, CIPM, CIPI,
+CIPL and the opcode table.
 
 ## Compiler
 
 ```bash
-PYTHONPATH=compiler/src python3 -m cinterp compile source.c -o out.cib [--dump] [--keep-ir] [--target TARGET]
+PYTHONPATH=compiler/src python3 -m cinterp compile source.c -o out.cib \
+  [--dump] [--dump-imports] [--keep-ir] [--target TARGET] \
+  [--cib-version 1|2] [--no-auto-link] [--link-db DIR]
 ```
 
-`--dump` prints functions and FFI plans; `--keep-ir` keeps the generated LLVM IR
-next to the package. Targets: `x86_64-linux` (default native), `x86_64-windows`,
-`i686-windows`, `aarch64-linux`.
+`--dump` prints functions and FFI plans; `--dump-imports` prints CIB provider
+bindings; `--keep-ir` keeps the generated LLVM IR next to the package.
+`--cib-version 1` emits legacy packages without CIPM/CIPI. `--no-auto-link`
+disables automatic C-standard-library/Windows-API binding. `--link-db DIR`
+overrides the generated cstdapi/winmd databases. Targets: `x86_64-linux`
+(default native), `x86_64-windows`, `i686-windows`, `aarch64-linux`.
+
+The compiler automatically links used C standard library symbols on all
+targets (libc/libm, UCRT/MSVCRT/NTDLL) and Windows APIs on Windows targets
+(via the vendored winmd index); no `--lib` is required for those. Custom
+libraries still use `--lib` and take precedence over CIB providers.
 
 The compiler currently supports:
 
@@ -147,9 +167,14 @@ Windows CRT `long double` printf output matches the native MinGW runtime
   initialized by code emitted at the start of `main` for globals/strings.
 - `CIPL` v3: FFI plan table (magic/version/ABI, named `CallPlan`s, arg/ret locs,
   stack/sret/sse/ret_size).
-- `CIPKG`: package = `CIPKG` v1 + module length + plan length + module + plans.
+- `CIPKG` v2: 25-byte header + `CIVM` + `CIPL` + `CIPM` target metadata +
+  `CIPI` import table. Legacy v1 packages remain loadable.
+- `CIPM`: arch/OS/ABI/pointer width/endian/features/triple/min-runtime/link-db.
+- `CIPI`: plan index → provider library, real symbol/alias, ordinal, callconv,
+  architecture mask and minimum OS.
 
-Detailed byte layout, opcode table, CIPL v3 fields and an annotated `hello.cib` are in [docs/cib.md](./docs/cib.md).
+Detailed byte layout, opcode table, CIPL/CIPM/CIPI fields and an annotated
+`hello.cib` are in [docs/cib.md](./docs/cib.md).
 
 ## Runtime
 
@@ -166,9 +191,11 @@ ci_vm_run, ci_vm_last_error
 ```
 
 The VM is single-threaded, reentrant at the host C ABI boundary, uses a linear
-memory for stack/global data, and resolves native symbols through the process,
-loaded `--lib` libraries, and the platform C runtime. Static callback
-trampolines are available for SysV x64, Win64, Win32 and AArch64. `--safe`
+memory for stack/global data. For v2 packages it resolves native symbols
+through CIPI providers (with `--lib` as a user override); unlisted custom
+symbols fall back to the process, loaded `--lib` libraries and the platform C
+runtime. Static callback trampolines are available for SysV x64, Win64, Win32
+and AArch64. `--safe`
 disables native calls and restricts memory operations to the VM linear memory
 for bytecode fuzzing; `--load-only` validates a package without executing it.
 
@@ -179,6 +206,7 @@ compiler/              Python package (build-time compiler)
   src/cinterp/
     llvm_ir/lower.py   LLVM IR parser/lowerer (CIVM + plans)
     ffi/plan.py        CallPlan model, per-ABI plan builders, CIPL serializer
+    link/              CIPM target metadata, CIPI serializer, cstdapi/winmd databases
     codegen/           CIPKG writer
     cli.py             cinterp compile
 docs/cib.md            binary package format reference
@@ -186,6 +214,7 @@ runtime/               Zig VM/runtime (shipped)
   src/vm.zig           VM, linear memory, C ABI, callback dispatcher
   src/ffi/platform.zig compile-time ABI/frame/marshal/invoke selection
   src/ffi/native.zig   dlopen/LoadLibrary symbol resolution
+  src/ffi/link_loader.zig  CIPM/CIPI parser and target/import validation
   src/ffi/asm/         SysV, Win64, Win32, AArch64 engines
   src/main.zig         cinterp-run CLI
 examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,

@@ -5,6 +5,11 @@ overview: 扩展 CIB：声明目标架构/平台，内嵌外部符号链接元�
 
 # CIB 架构声明与外部符号自动链接
 
+> **状态（2026-10-31）：已完成。** CIPKG v2/CIPM/CIPI 已实现；Phase 1
+> cstdapi 和 Phase 2 winmd 自动链接已在真实 Win64/Win32、Linux x64 和
+> qemu AArch64 上验证。完成细节和验证命令同步到 `dev.md` §19.8 与
+> `docs/cib.md`。
+
 ## 0. 目标
 
 在 `.cib` 中加入两类新数据：
@@ -286,18 +291,28 @@ compiler/src/cinterp/link/cstdapi.generated.json
 - Windows API 的 `min_os`/arch 过滤在编译期和运行期各做一次；缺失时报错而非猜测。
 - 仍不引入 libffi、JIT 或动态可执行内存；provider 加载只影响符号来源。
 
-## 8. 开放决策
+## 8. 决策记录（已确认）
 
-1. CIPKG v2 section 顺序/header 字段是否采用本文布局，还是把 CIPM/CIPI 作为可选 TLV section？
-2. 显式 `--lib` 与 CIB provider 的优先级（当前 proposal：`--lib` 优先覆盖）。
-3. Phase 1 未匹配标准库符号：编译期错误，还是保留旧 fallback 并警告？
-4. Windows provider 选择：ucrtbase 优先还是 msvcrt 优先；是否按 Windows 版本动态选择？
-5. winmd 索引用 JSON/zstd、SQLite 还是自定义二进制；是否把按名索引拆成多个文件以控制仓库体积。
-6. Windows API 签名（winmd args/ret）是否只做交叉校验，还是也用于参数 ABI 自动修正？
-7. `data` 符号（`errno`/`stdout`）是否纳入 Phase 1/2，还是单独 Phase 3。
+1. CIPKG v2 采用固定 25B 头 + CIVM/CIPL/CIPM/CIPI 顺序；`header_size` 预留扩展。
+2. 显式 `--lib` 优先于 CIB provider，便于用户覆盖/测试。
+3. Phase 1 命中的标准库符号自动写 import；未命中的自定义符号保留旧 fallback/`--lib`；cstdapi 明确不可用的符号编译期报错。
+4. Windows CRT provider 顺序为 `ucrtbase.dll` → `msvcrt.dll` → `ntdll.dll`；保留 `_snprintf`/`_vsnprintf` 别名。
+5. winmd 索引采用确定性 gzip JSON（132KB，18,083 API），只把实际使用符号写入 CIB。
+6. winmd 的 args/ret 当前不参与 ABI 计划生成；只取 name→DLL/callconv/min_os/arch_mask，ABI 仍由 clang IR 决定。
+7. `CIPI.kind=data` 和 ordinal 字段已预留；本轮自动链接只生成函数符号，外部 data 符号仍不在范围。
+8. `--link-db DIR` 可覆盖 cstdapi/winmd 生成数据库；`--no-auto-link` 关闭自动链接。
 
 ## 9. 完成定义
 
 - Phase 1 完成：四个现有目标上，C 标准库示例无需 `--lib` 自动链接；CIPKG v2 + CIPM + CIPI 通过 round-trip/错误路径/真实运行；旧 v1 兼容；文档更新。
 - Phase 2 完成：Windows x64/x86（及 ARM64 如 CI 可用）代表性 API 自动从 winmd DLL 解析；stdcall/cdecl、alias/ordinal、min_os/arch 校验；错误 provider 有诊断；文档/CI 更新。
 - 只有实际使用的 import 进入 CIB；CIB 体积预算和 fuzz 覆盖新 section。
+
+## 10. 完成证据
+
+- `make test`：21 compiler 单测、4 runtime 单测、端到端/负路径全部通过。
+- `scripts/test_cross.sh`：Win64 20 / Win32 21 / ARM64 19 用例通过；真实 Windows 包括 `winapi` 自动链接。
+- Win64/Win32 `winapi` 覆盖 `GetTickCount64`、`GetSystemMetrics`、`GetModuleHandleA`、`wsprintfA`（cdecl/varargs）。
+- `cinterp-run --dump-target --dump-imports --load-only` 可检查 CIPM/CIPI；v1 包兼容、目标不匹配返回 `TargetMismatch`。
+- `--no-auto-link` 回退旧搜索，`--lib` 覆盖 provider；自动 provider 拒绝路径。
+- 生成数据：`cstdapi.generated.json`（upstream `abba9c4`）、`winmd.generated.json.gz`（upstream `9b80278`）。

@@ -12,9 +12,11 @@ pub fn main() !void {
     };
     defer vm.ci_vm_destroy(machine);
 
-    const usage = "usage: cinterp-run [--lib path]... [--load-only] [--safe] <package.cib> [entry]\n";
+    const usage = "usage: cinterp-run [--lib path]... [--load-only] [--safe] [--dump-target] [--dump-imports] <package.cib> [entry]\n";
     var load_only = false;
     var safe_mode = false;
+    var dump_target = false;
+    var dump_imports = false;
     var i: usize = 1;
     while (i < args.len) {
         if (std.mem.eql(u8, args[i], "--version")) {
@@ -32,6 +34,16 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, args[i], "--safe")) {
             safe_mode = true;
+            i += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, args[i], "--dump-target")) {
+            dump_target = true;
+            i += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, args[i], "--dump-imports")) {
+            dump_imports = true;
             i += 1;
             continue;
         }
@@ -67,6 +79,28 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
+    if (dump_target) {
+        if (machine.target) |t| {
+            std.debug.print("target: {s} arch={d} os={d} abi={d} ptr={d} endian={d} features=0x{x} link_db={s}\n", .{
+                t.triple[0..t.triple_len], t.arch, t.os, t.abi, t.ptr_bits, t.endian, t.features, t.link_db[0..t.link_db_len],
+            });
+        } else {
+            std.debug.print("target: legacy-v1 (inferred)\n", .{});
+        }
+    }
+    if (dump_imports) {
+        var ii: usize = 0;
+        while (ii < machine.imports.count) : (ii += 1) {
+            const e = &machine.imports.entries[ii];
+            std.debug.print("import[plan {d}] {s}:", .{ e.plan_index, e.name[0..e.name_len] });
+            var pi: usize = 0;
+            while (pi < e.provider_count) : (pi += 1) {
+                const pr = &e.providers[pi];
+                std.debug.print(" {s}:{s}", .{ pr.name[0..pr.name_len], pr.symbol[0..pr.symbol_len] });
+            }
+            std.debug.print("\n", .{});
+        }
+    }
     if (safe_mode) _ = vm.ci_vm_set_safe(machine, 1);
     if (load_only) return;
 

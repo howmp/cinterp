@@ -8,14 +8,9 @@ from pathlib import Path
 
 from .llvm_ir.lower import compile_text
 from .ffi.plan import UnsupportedFfi
-
-
-TARGETS = {
-    "x86_64-linux": ("x86_64-pc-linux-gnu", "sysv", 8),
-    "x86_64-windows": ("x86_64-pc-windows-gnu", "win64", 8),
-    "i686-windows": ("i686-pc-windows-gnu", "win32", 4),
-    "aarch64-linux": ("aarch64-linux-gnu", "aapcs64", 8),
-}
+from .link import cstdapi, winmd
+from .link.imports import ImportTable
+from .link.target import DEFAULT_TARGET, TARGETS
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -30,10 +25,17 @@ def _build_parser() -> argparse.ArgumentParser:
     comp.add_argument("--target", choices=sorted(TARGETS), default=None)
     comp.add_argument("--keep-ir", action="store_true")
     comp.add_argument("--dump", action="store_true")
+    comp.add_argument("--dump-imports", action="store_true")
+    comp.add_argument("--cib-version", type=int, choices=(1, 2), default=2)
+    comp.add_argument("--no-auto-link", action="store_true")
+    comp.add_argument("--link-db", default=None, help="directory containing cstdapi.generated.json and winmd.generated.json.gz")
     return parser
 
 
 def _compile(args: argparse.Namespace) -> int:
+    if args.link_db:
+        cstdapi.set_database(args.link_db)
+        winmd.set_database(args.link_db)
     src = Path(args.source)
     if not src.is_file():
         print(f"cinterp: no such file: {src}", file=sys.stderr)
@@ -41,9 +43,10 @@ def _compile(args: argparse.Namespace) -> int:
     out = Path(args.output) if args.output else src.with_suffix(".cib")
     with tempfile.TemporaryDirectory(prefix="cinterp-") as td:
         ll = Path(td) / (src.stem + ".ll")
+        target = TARGETS[args.target] if args.target else DEFAULT_TARGET
         cmd = [args.clang]
         if args.target:
-            cmd.append("--target=" + TARGETS[args.target][0])
+            cmd.append("--target=" + target.triple)
         cmd += [
             "-S",
             "-emit-llvm",
@@ -67,12 +70,16 @@ def _compile(args: argparse.Namespace) -> int:
             kept.write_text(ir_text)
 
     try:
-        abi = "sysv"
-        ptr_size = 8
-        if args.target:
-            _triple, abi, ptr_size = TARGETS[args.target]
+        imports = ImportTable()
         package, module, plan_bytes, functions, plans = compile_text(
-            ir_text, str(src), abi=abi, ptr_size=ptr_size
+            ir_text,
+            str(src),
+            abi=target.abi,
+            ptr_size=target.ptr_bits // 8,
+            target=target,
+            imports=imports,
+            cib_version=args.cib_version,
+            auto_link=not args.no_auto_link,
         )
     except (UnsupportedFfi, ValueError) as exc:
         print(f"cinterp: {exc}", file=sys.stderr)
@@ -85,13 +92,18 @@ def _compile(args: argparse.Namespace) -> int:
         return 1
     print(
         f"{out}: {len(module)}B module, {len(plan_bytes)}B plans, "
-        f"{len(functions)} functions, {len(plans.plans)} external plans"
+        f"{len(functions)} functions, {len(plans.plans)} external plans, "
+        f"target={target.name}, cib=v{args.cib_version}, imports={len(imports.entries)}"
     )
     if args.dump:
         for fn in functions:
             print(f"  {fn.name}: params={len(fn.params)} locals={fn.local_count} code={len(fn.code)}")
         for i, plan in enumerate(plans.plans):
             print(f"  plan[{i}] {plan.name}: args={len(plan.args)} ret={len(plan.ret_locs)} stack={plan.stack_size}")
+    if args.dump_imports:
+        for entry in imports.entries:
+            providers = ", ".join(f"{p.name}:{p.symbol}" for p in entry.providers)
+            print(f"  import[plan {entry.plan_index}] {entry.name}: {providers or '(unresolved)'}")
     return 0
 
 

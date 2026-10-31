@@ -4,6 +4,7 @@ const abi = @import("ffi/abi.zig");
 const plan_loader = @import("ffi/plan_loader.zig");
 const platform = @import("ffi/platform.zig");
 const native = @import("ffi/native.zig");
+const link_loader = @import("ffi/link_loader.zig");
 
 pub const MAX_FUNCS: usize = 8;
 pub const MAX_NAME: usize = 32;
@@ -95,6 +96,17 @@ pub const OP_F128_FROM_F32: u8 = 0x8B;
 pub const OP_F128_TO_F32: u8 = 0x8C;
 pub const OP_ALLOCA_DYN: u8 = 0x8D;
 
+fn readU16At(bytes: []const u8, off: usize) u16 {
+    return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
+}
+
+fn readU32At(bytes: []const u8, off: usize) u32 {
+    return @as(u32, bytes[off]) |
+        (@as(u32, bytes[off + 1]) << 8) |
+        (@as(u32, bytes[off + 2]) << 16) |
+        (@as(u32, bytes[off + 3]) << 24);
+}
+
 pub const Value = extern union {
     i: i64,
     u: u64,
@@ -179,14 +191,18 @@ pub const VM = struct {
     func_count: usize = 0,
     values: [MAX_STACK]Value = undefined,
     sp: usize = 0,
-    mem: [1024 * 1024]u8 = undefined,
+    mem: [1024 * 1024]u8 align(16) = undefined,
     mem_top: usize = 0,
     plan_store: ?*plan_loader.Store = null,
+    target: ?link_loader.TargetInfo = null,
+    imports: link_loader.Table = .{},
+    import_handles: [link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS]?*anyopaque = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS),
     libc_handle: ?*anyopaque = null,
     libraries: [8]?*anyopaque = [_]?*anyopaque{null} ** 8,
     library_count: usize = 0,
     symbol_buf: [256]u8 = undefined,
-    ret_buf: [4096]u8 = undefined,
+    path_buf: [256]u8 = undefined,
+    ret_buf: [4096]u8 align(16) = undefined,
     frames: [MAX_FRAMES]Frame = undefined,
     frame_count: usize = 0,
     result: i64 = 0,
@@ -230,20 +246,68 @@ pub const VM = struct {
     pub fn loadPackage(self: *VM, bytes: []const u8) !void {
         if (bytes.len < 15) return error.BadPackage;
         if (!std.mem.eql(u8, bytes[0..5], "CIPKG")) return error.BadPackageMagic;
-        if (bytes[5] != 1) return error.BadPackageVersion;
-        const module_len = @as(u32, bytes[7]) |
-            (@as(u32, bytes[8]) << 8) |
-            (@as(u32, bytes[9]) << 16) |
-            (@as(u32, bytes[10]) << 24);
-        const plan_len = @as(u32, bytes[11]) |
-            (@as(u32, bytes[12]) << 8) |
-            (@as(u32, bytes[13]) << 16) |
-            (@as(u32, bytes[14]) << 24);
+        const version = bytes[5];
+        if (version == 1) {
+            const module_len = readU32At(bytes, 7);
+            const plan_len = readU32At(bytes, 11);
+            const m: usize = module_len;
+            const p: usize = plan_len;
+            if (15 + m + p != bytes.len) return error.BadPackageSize;
+            self.target = null;
+            self.imports = .{};
+            try self.loadModuleBytes(bytes[15 .. 15 + m]);
+            try self.loadPlans(bytes[15 + m .. 15 + m + p]);
+            return;
+        }
+        if (version != 2) return error.BadPackageVersion;
+        if (bytes.len < 25) return error.BadPackage;
+        const header_size = readU16At(bytes, 7);
+        if (header_size != 25) return error.BadPackageHeader;
+        const module_len = readU32At(bytes, 9);
+        const plan_len = readU32At(bytes, 13);
+        const meta_len = readU32At(bytes, 17);
+        const import_len = readU32At(bytes, 21);
         const m: usize = module_len;
         const p: usize = plan_len;
-        if (15 + m + p != bytes.len) return error.BadPackageSize;
-        try self.loadModuleBytes(bytes[15 .. 15 + m]);
-        try self.loadPlans(bytes[15 + m .. 15 + m + p]);
+        const mt: usize = meta_len;
+        const im: usize = import_len;
+        if (25 + m + p + mt + im != bytes.len) return error.BadPackageSize;
+        const meta = bytes[25 + m + p .. 25 + m + p + mt];
+        const target = try link_loader.decodeTarget(meta);
+        try platform.validateTarget(target);
+        const import_bytes = bytes[25 + m + p + mt .. 25 + m + p + mt + im];
+        const imports = try link_loader.decodeImports(import_bytes);
+        try self.loadModuleBytes(bytes[25 .. 25 + m]);
+        try self.loadPlans(bytes[25 + m .. 25 + m + p]);
+        try self.validateImports(&imports);
+        self.target = target;
+        self.imports = imports;
+    }
+
+    fn validateImports(self: *VM, imports: *const link_loader.Table) !void {
+        const store = self.plan_store orelse return error.NoPlans;
+        const total: usize = imports.count;
+        var i: usize = 0;
+        while (i < total) : (i += 1) {
+            const entry = &imports.entries[i];
+            if (entry.plan_index != 0xffff and entry.plan_index >= store.count)
+                return error.BadImportPlan;
+            if (entry.provider_count == 0 and (entry.flags & 1) != 0)
+                return error.BadImportProvider;
+            if (entry.arch_mask != 0) {
+                const bit: u8 = switch (platform.arch_id) {
+                    1 => 1,
+                    2 => 2,
+                    3 => 4,
+                    else => 0,
+                };
+                if ((entry.arch_mask & bit) == 0) return error.ImportArchMismatch;
+            }
+            if (entry.min_os != 0 and platform.os_id == 2) {
+                const current = native.windowsVersion();
+                if (current != 0 and current < entry.min_os) return error.ImportUnavailable;
+            }
+        }
     }
 
     fn searchSymbol(self: *VM, cname: [*:0]const u8) ?*const anyopaque {
@@ -272,11 +336,68 @@ pub const VM = struct {
         return self.searchSymbol(cname);
     }
 
-    fn resolveNative(self: *VM, name: []const u8) !*const anyopaque {
+    fn cachedProvider(self: *VM, plan_index: u16, provider_index: usize, name: []const u8) !?*anyopaque {
+        const slot: usize = @as(usize, plan_index) * link_loader.MAX_PROVIDERS + provider_index;
+        if (slot >= self.import_handles.len) return null;
+        if (self.import_handles[slot]) |handle| return handle;
+        if (name.len >= self.path_buf.len) return error.PathTooLong;
+        @memcpy(self.path_buf[0..name.len], name);
+        self.path_buf[name.len] = 0;
+        const cpath: [*:0]const u8 = @ptrCast(&self.path_buf[0]);
+        const handle = native.load(cpath) orelse return null;
+        self.import_handles[slot] = handle;
+        return handle;
+    }
+
+    fn loadImported(self: *VM, plan_index: u16, entry_index: usize, entry: *const link_loader.ImportEntry) !?*const anyopaque {
+        _ = entry_index;
+        var pi: usize = 0;
+        const count: usize = entry.provider_count;
+        while (pi < count) : (pi += 1) {
+            const provider = &entry.providers[pi];
+            if (provider.kind != 0 and provider.kind != 1) continue;
+            const lib_name = provider.name[0..provider.name_len];
+            if (lib_name.len == 0 or std.mem.indexOfAny(u8, lib_name, "/\\:") != null) continue;
+            const handle = try self.cachedProvider(plan_index, pi, lib_name) orelse continue;
+            if (provider.ordinal != 0) {
+                if (native.symbolOrdinal(handle, provider.ordinal)) |sym| return sym;
+                continue;
+            }
+            const sym_name = provider.symbol[0..provider.symbol_len];
+            if (sym_name.len >= self.symbol_buf.len) return error.SymbolTooLong;
+            @memcpy(self.symbol_buf[0..sym_name.len], sym_name);
+            self.symbol_buf[sym_name.len] = 0;
+            const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+            if (native.symbol(handle, cname)) |sym| return sym;
+        }
+        return null;
+    }
+
+    fn resolveNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
         if (name.len >= self.symbol_buf.len) return error.SymbolTooLong;
         @memcpy(self.symbol_buf[0..name.len], name);
         self.symbol_buf[name.len] = 0;
         const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+
+        if (self.imports.indexOfPlan(plan_index)) |entry_index| {
+            const entry = &self.imports.entries[entry_index];
+            // Explicit --lib libraries are the user's override and win over CIB providers.
+            if ((entry.flags & 0x8) != 0) {
+                var li: usize = self.library_count;
+                while (li > 0) {
+                    li -= 1;
+                    if (self.libraries[li]) |handle| {
+                        if (native.symbol(handle, cname)) |sym| return sym;
+                    }
+                }
+            }
+            if (try self.loadImported(plan_index, entry_index, entry)) |sym| return sym;
+            if ((entry.flags & 0x4) == 0) return error.SymbolNotFound;
+            // loadImported reuses symbol_buf; restore the logical name for fallback.
+            @memcpy(self.symbol_buf[0..name.len], name);
+            self.symbol_buf[name.len] = 0;
+        }
+
         if (self.searchSymbol(cname)) |sym| return sym;
         if (native.alias(name)) |alt| {
             const alias_name = std.mem.span(alt);
@@ -300,7 +421,7 @@ pub const VM = struct {
 
     fn invokeFfi(self: *VM, plan: abi.CallPlan, target: *const anyopaque) !void {
         try platform.validate(plan);
-        var arg_block: [4096]u8 = [_]u8{0} ** 4096;
+        var arg_block: [4096]u8 align(16) = [_]u8{0} ** 4096;
         var sret_ptr: ?*anyopaque = null;
 
         var i: usize = plan.args.len;
@@ -338,7 +459,7 @@ pub const VM = struct {
         platform.marshal(&frame, plan, &arg_block, &stack_buf);
         platform.invoke(&frame, target);
 
-        var ret_block: [4096]u8 = [_]u8{0} ** 4096;
+        var ret_block: [4096]u8 align(16) = [_]u8{0} ** 4096;
         platform.readRet(&frame, plan, &ret_block);
 
         if (plan.sret) {
@@ -885,7 +1006,7 @@ pub const VM = struct {
                     const p = store.planAt(i) orelse return error.BadPlan;
                     const plan = store.callPlan(p);
                     const n: usize = p.name_len;
-                    const target = try self.resolveNative(p.name[0..n]);
+                    const target = try self.resolveNative(idx, p.name[0..n]);
                     try self.invokeFfi(plan, target);
                 },
                 OP_ADDR_CONST => {

@@ -22,7 +22,7 @@
 - **C11 范围**：核心 C11 + 结构体 FFI。
 - **FFI**：不链接 libffi，不使用 `@call` 桩矩阵，不申请动态可执行内存；编译期生成 FFI ABI 计划，运行时用固定汇编引擎执行；callback 用静态 trampoline 池 + 反向计划。
 - **ABI 顺序**：Linux x64 → Windows x64 → Windows x86 → Linux ARM64（已完成）。
-- **Callback 池**：固定 256 槽；当前仅 SysV x86-64 接入，其他 ABI 是剩余工作。
+- **Callback 池**：固定 256 槽；SysV x86-64、Win64、Win32、AArch64 均已接入并通过交叉测试。
 - **编译器发布方式**：仅构建期使用；发布物是 Zig 运行时 + 字节码。
 
 ## 3. 核心功能
@@ -38,11 +38,11 @@
 ### 3.2 运行时 VM（Zig）
 
 - **字节码解释器**：栈式 VM，固定 8 字节栈槽。
-- **动态符号链接**：Linux 用 `dlopen`/`dlsym`，Windows 用 `LoadLibraryA`/`GetProcAddress`；`--lib` 加载的句柄会被搜索后再回退到 CRT。
+- **动态符号链接**：Linux 用 `dlopen`/`dlsym`，Windows 用 `LoadLibraryA`/`GetProcAddress`。v2 包从 CIPI 按 plan 选择 provider 库/符号/别名，自动加载 CRT 或 Windows DLL；显式 `--lib` 优先覆盖，未收录的自定义符号仍走旧搜索。
 - **FFI 桥接**：
   - Zig 侧按 ABI 计划把 VM 值搬进 `ABIFrame`（GPR/XMM/栈/sret）。
   - 每个 ABI 一段固定汇编引擎，负责装载寄存器/栈、调用目标、捕获返回值。
-  - 回调用静态 trampoline 池捕获参数，Zig dispatcher 按反向计划调用 VM 函数；目前仅 SysV。
+  - 回调用静态 trampoline 池捕获参数，Zig dispatcher 按反向计划调用 VM 函数；SysV/Win64/Win32/AArch64 均已接入。
   - 不链接 libffi，不使用 `@call` 桩，不产生动态可执行内存。
 - **C ABI 导出**：运行时导出 `ci_vm_*` 纯 C ABI，可被 cffi、C/C++、其他语言直接调用。
 - **跨平台**：Linux x64（SysV）、Windows x64、Windows x86、Linux ARM64（AArch64）由编译期 `ffi/platform.zig` 选择 frame/引擎/loader。
@@ -74,7 +74,7 @@
 | --- | --- | --- |
 | x86-64 System V | 已实现 | Linux x64；`call_x86_64_sysv.S` |
 | x86-64 Microsoft | 已实现 | Windows x64；`call_x86_64_win64.S` |
-| x86 Microsoft 32-bit | 已实现（cdecl） | Windows x86；`call_x86_win32.S`；stdcall 计划待补 |
+| x86 Microsoft 32-bit | 已实现（cdecl + stdcall） | Windows x86；`call_x86_win32.S`；`CIPL conv` 支持 stdcall |
 | AArch64 AAPCS64 | 已实现 | Linux ARM64；`call_arm64_aapcs.S`；x0-x7/v0-v7 |
 
 ## 5. 总体架构
@@ -526,7 +526,7 @@ cl/
 └── README.md
 ```
 
-> **v1 实际实现（2026-10-31 更新）**：已落地 `compiler/src/cinterp/{llvm_ir/lower.py, ffi/plan.py, codegen/binary_writer.py, cli.py}`、`runtime/src/{vm.zig, main.zig, ffi/}`、`examples/`、`scripts/test.sh`；`make test` 通过。上方目录中的更多拆分文件是后续重构目标。v1 编译器/运行时已支持 SysV x64、Win64、Win32 与 AArch64 AAPCS64：标量/控制流、线性内存、globals/字符串、float32/double、bitfield、标量/指针/varargs FFI、MEMORY/register/mixed struct、Win64/Win32 sret/byval、AAPCS64 HFA；callback trampoline 目前仅 SysV。`long double` 已按 16B 存储/64-bit 精度支持（FFI/printf 未覆盖）；c-testsuite 子集 9/9；fuzz/CI 已接入（load-only fuzz + GitHub Actions）。
+> **当前实现（2026-10-31 更新）**：已落地 `compiler/src/cinterp/{llvm_ir/lower.py, ffi/plan.py, link/, codegen/binary_writer.py, cli.py}`、`runtime/src/{vm.zig, main.zig, ffi/}`、`examples/`、`scripts/test.sh`；`make test` 通过。上方目录中的更多拆分文件是后续重构目标。当前编译器/运行时支持 SysV x64、Win64、Win32 与 AArch64 AAPCS64：标量/控制流、线性内存、globals/字符串、float32/double、bitfield、标量/指针/varargs FFI、MEMORY/register/mixed struct、Win64/Win32 sret/byval、AAPCS64 HFA；callback trampoline 覆盖全部四种 ABI。`long double` 使用 x86 f80 / AArch64 f128 精确表示并接入 FFI/printf；c-testsuite 支持集 217/217（3 skip）；fuzz/CI/自动链接已接入。
 
 ## 12. 关键代码结构
 
@@ -725,7 +725,7 @@ make differential    # clang 原生 vs cinterp 返回值差分
 make bench           # 每用例平均运行时间
 make size-cross      # 四个目标 ReleaseSmall 体积
 make release-artifacts
-HOST=user@windows ./scripts/test_cross.sh   # 58 个跨 ABI 用例
+HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 ```
 
 测试分层：
@@ -820,13 +820,13 @@ HOST=user@windows ./scripts/test_cross.sh   # 58 个跨 ABI 用例
   - 所有参数在栈上，4B 对齐；byval 结构体复制原始字节；sret 隐藏指针在栈首。
   - i64 返回值合并为单个 8B `rax` ret loc（EAX:EDX）；否则 VM 会把 ret_locs>1 误判为聚合指针。
   - float 从 ST0 读取后转换为 f32；double 直接读 8B；`ret_x87` 由计划自动设置。
-  - 编译器只生成 cdecl 计划；stdcall 引擎字段存在但计划未暴露。
+  - 编译器可按 `CIPL conv` 生成 cdecl 或 stdcall 计划；stdcall 已通过真实 Win32 测试。
   - 修复引擎恢复前未丢弃 target/conv 两个临时栈槽的问题；该 bug 在优化构建中破坏 EBX/ESI/EDI。
 - **AAPCS64**
   - HFA 参数/≤2 向量返回走 v0/v1；`[2 x double]` 参数、`%struct.D2` 返回、16B 聚合 store 已覆盖。
   - 大结构体通过指针/sret；x8 保存 sret；栈 16B 对齐。
 - **SysV**
-  - 既有 SysV 行为保持；`platform.zig` 抽象后 callback 仍仅 SysV 链接。
+  - 既有 SysV 行为保持；callback trampoline 覆盖 SysV/Win64/Win32/AArch64。
 - **Windows 符号解析**
   - `--lib` 加载的 DLL 也会参与 `GetProcAddress` 搜索，再回退到 msvcrt/ucrtbase；`snprintf` 在 Windows 上回退到 `_snprintf`。
   - helper DLL 用 `zig cc -shared -Wl,--export-all-symbols` 导出符号。
@@ -842,15 +842,15 @@ HOST=user@windows ./scripts/test_cross.sh   # 58 个跨 ABI 用例
 
 | 目标 | 运行环境 | 用例数 | 结果 |
 | --- | --- | --- | --- |
-| SysV x86-64 | native Linux | 20 端到端 + 3 runtime + 15 compiler 单测 | 通过 |
-| Win64 | Windows SSH（真实） | 19 | 通过 |
-| Win32 | Windows SSH（WoW64） | 20 | 通过 |
+| SysV x86-64 | native Linux | 20 端到端 + 4 runtime + 21 compiler 单测 | 通过 |
+| Win64 | Windows SSH（真实） | 20（含 `winapi`） | 通过 |
+| Win32 | Windows SSH（WoW64） | 21（含 stdcall + `winapi`） | 通过 |
 | ARM64 | qemu-aarch64 + aarch64 sysroot | 19 | 通过 |
 | c-testsuite 上游支持集 | native Linux | 217（3 skip） | 通过 |
 | fuzz load-only | native Linux | 200 变异 | 0 crash |
 | fuzz-exec safe | native Linux | 500 变异 | 0 crash / 0 timeout |
 | 差分测试 | native Linux | 7 | 通过 |
-| `make size-cross` | native 构建 | 4 目标 | 72,568 / 78,848 / 95,744 / 84,520 B，均 <128K |
+| `make size-cross` | native 构建 | 4 目标 | 79,000 / 84,992 / 101,376 / 90,984 B，均 <128K |
 | `make release-artifacts` | native 构建 | 4 目标 | `cinterp-0.1.0-*.tar.gz` |
 | `make bench` | native Linux | 7 用例 | 已记录平均运行时间 |
 
@@ -861,8 +861,8 @@ make fuzz
 make fuzz-exec
 make differential
 make bench
-make size                 # native runtime 72,568B；qsort.cib 460B
-make size-cross           # sysv 72,568 / win64 78,848 / win32 95,744 / arm64 84,520
+make size                 # native runtime 79,000B；qsort.cib 646B
+make size-cross           # sysv 79,000 / win64 84,992 / win32 101,376 / arm64 90,984
 make release-artifacts
 HOST=admin@192.168.153.132 ./scripts/test_cross.sh
 ```
@@ -886,7 +886,18 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 19.7 计划完成状态
 
 - **无未完成计划项**：多 ABI、精确 long double、跨 ABI callback、ABI 边界、上游 c-testsuite 支持集、fuzz/差分/CI、性能/体积/发布打包均完成。
+- **2026-10-31 新增完成**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。
 - **明确范围外**：外部数据符号（`stdout`/`errno`）、向量类型、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV `i128`/向量参数、HFA callback >2 向量、long double callback；这些不是当前 C/ABI 子集的计划项。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
 - **信任模型**：恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
-- 交付物与验证数字见 19.5；不再维护单独的 plan/checklist 文件。
+- 交付物与验证数字见 19.5；本轮 `plan.md` 保留为已完成的目标声明/自动链接计划记录。
+
+### 19.8 目标声明与外部符号自动链接（2026-10-31）
+
+- **CIPKG v2**：25B 头 + CIVM/CIPL/CIPM/CIPI 四段；v1 仍可加载。CIPM 声明 arch/os/abi/ptr/endian/features/triple/min_runtime/link-db；加载时先校验目标。
+- **CIPM/CIPI**：`runtime/src/ffi/link_loader.zig` 解析；CIPI entry 绑定 CIPL plan 索引，携带 provider、真实符号/别名、ordinal、callconv、arch_mask、min_os。
+- **运行期解析**：`--lib` 显式覆盖 → CIPI provider（缓存 handle）→ 可选旧 fallback；自动 provider 只接受库名，拒绝路径分隔符。Windows `min_os` 用 `RtlGetVersion` 校验。
+- **Phase 1 cstdapi**：`tools/gen_cstdapi.py` 生成 `cstdapi.generated.json`（844KB，upstream `abba9c4`）；Linux `libc.so.6`/`libm.so.6`，Windows `ucrtbase.dll`/`msvcrt.dll`/`ntdll.dll`，含 `_snprintf` 兼容别名。
+- **Phase 2 winmd**：`tools/gen_winmd.py` 生成 `winmd.generated.json.gz`（132KB，18,083 API，upstream `9b80278`）；name→DLL/callconv/min_os/arch_mask，按 DLL 自动加载。
+- **对齐修复**：新增 VM 字段导致 Zig 重排 `mem`/`ret_buf`，Win64 struct FFI 的 byval 指针未对齐触发 trap；已给 `mem`/`ret_buf`/FFI 缓冲显式 `align(16)`。这是本轮唯一影响既有 ABI 的回归。
+- **验证**：`make test`（21 compiler + 4 runtime + 端到端/负路径）、`scripts/test_cross.sh`（Win64 20、Win32 21、ARM64 19）、真实 Windows `winapi`（GetTickCount64/GetSystemMetrics/GetModuleHandleA/wsprintfA）均通过。

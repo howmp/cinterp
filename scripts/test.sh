@@ -185,3 +185,42 @@ python3 -m cinterp --version 2>&1 | grep -Fq "cinterp 0.1.0"
 echo "OK version"
 
 echo "all tests passed"
+
+echo "== CIB v2 target/import metadata"
+python3 -m cinterp compile examples/ffi_printf.c -o "$OUT/ffi_printf.cib" --dump-imports >"$OUT/imports.txt"
+grep -Fq "target=x86_64-linux" "$OUT/imports.txt"
+grep -Fq "import[plan " "$OUT/imports.txt"
+"$RUNTIME" --dump-target --dump-imports --load-only "$OUT/ffi_printf.cib" >"$OUT/imports-runtime.txt" 2>&1
+grep -Fq "target: x86_64-pc-linux-gnu" "$OUT/imports-runtime.txt"
+grep -Fq "printf: libc.so.6:printf" "$OUT/imports-runtime.txt"
+echo "OK CIPM/CIPI metadata"
+
+python3 -m cinterp compile examples/hello.c --target x86_64-windows -o "$OUT/hello-win.cib" >/dev/null
+if "$RUNTIME" "$OUT/hello-win.cib" >"$OUT/target-mismatch.txt" 2>&1; then
+    echo "FAIL target mismatch was accepted" >&2
+    exit 1
+fi
+grep -Fq "TargetMismatch" "$OUT/target-mismatch.txt"
+echo "OK target mismatch rejected"
+
+python3 -m cinterp compile examples/hello.c --cib-version 1 -o "$OUT/hello-v1.cib" >/dev/null
+v1_out="$("$RUNTIME" "$OUT/hello-v1.cib" 2>&1)"
+printf '%s\n' "$v1_out" | grep -Fq "result: 42"
+echo "OK legacy CIPKG v1"
+
+python3 -m cinterp compile examples/ffi_printf.c --no-auto-link -o "$OUT/ffi_printf-nolink.cib" --dump-imports >"$OUT/nolink.txt"
+grep -Fq "imports=0" "$OUT/nolink.txt"
+nolink_out="$("$RUNTIME" "$OUT/ffi_printf-nolink.cib" 2>&1)"
+printf '%s\n' "$nolink_out" | grep -Fq "result: 0"
+echo "OK --no-auto-link fallback"
+
+python3 -m cinterp compile examples/ffi_printf.c -o "$OUT/ffi_printf-linkdb.cib" --link-db compiler/src/cinterp/link --dump-imports >"$OUT/linkdb.txt"
+grep -Fq "imports=1" "$OUT/linkdb.txt"
+echo "OK --link-db override"
+
+if "$RUNTIME" --safe "$OUT/ffi_printf.cib" >"$OUT/safe-import.txt" 2>&1; then
+    echo "FAIL --safe accepted native call" >&2
+    exit 1
+fi
+grep -Fq "SafeMode" "$OUT/safe-import.txt"
+echo "OK --safe rejects imported call"
