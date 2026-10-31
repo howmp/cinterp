@@ -913,7 +913,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **工具/诊断**：`--dump-imports`（编译器和运行时）、`--dump-target`、`--load-only`；运行时错误名区分 `TargetMismatch`、`UnsupportedFeature`、`BadImportPlan`、`ImportArchMismatch`、`ImportUnavailable`。
 - **边界**：外部 data 符号、向量、复杂聚合全局初始化、Win64 vectorcall/COM、Win32 fastcall/thiscall 等仍不在自动链接范围；cstdapi/winmd 只是链接元数据，不替代 C 头文件或 ABI 计划。
 
-## 20. C 测试集基础设施（2026-10-31）
+## 20. C 测试集基础设施（2026-10-31，支持集已完成）
 
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。

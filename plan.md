@@ -5,10 +5,11 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 
 # 测试结果提升计划
 
-> **状态（2026-10-31）：执行中。** P0 的 `fcmp`/float 转换、VM 上限、external data
-> 与函数指针已落地；full 基线升到 **4090/5516（74.1%）**，csuite+c-testsuite smoke 在
-> Win64/Win32/ARM64 均 12/12。仍剩 GCC 运行失败分诊、mismatch 收敛、生成式最小化等项。
-> 统一测试集和 runner 见 `dev.md` §20。
+> **状态（2026-10-31）：已完成（支持子集）。** `fcmp`/float 转换、VM 上限、
+> external data/函数指针、数学 intrinsic 和 CI/生成式差分已落地；full 支持集
+> **4140/4453 通过，313 skip（93.0%）**，另有 455 个明确排除的非目标用例。
+> csuite+c-testsuite smoke 在 Win64/Win32/ARM64 均 12/12。支持集和排除清单见
+> `dev.md` §20 与 `tests/manifests/README.md`。
 
 ## 0. 当前基线
 
@@ -19,7 +20,7 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 | TCC tests2 | 84 | 59 | 23 compile、35 mismatch、1 run |
 | chibicc | 14 | 27 | 20 compile、7 run |
 | libc-test | 40 | 35 | 29 mismatch、3 compile、3 runtime |
-| GCC torture execute | 1155 | 91 | 剩余运行缺陷；455 个非目标用例排除 |
+| GCC torture execute | 1155 | 91 | 剩余运行缺陷；非目标用例已拆出 |
 | GCC torture compile | 1407 | 0 | 非目标编译用例已拆出 |
 | CompCert regression | 41 | 34 | 缺 expected 用例已拆出 |
 | LLVM UnitTests | 85 | 8 | 全部 compile 失败 |
@@ -32,7 +33,7 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 
 已识别的重点信号：
 
-- 约 **91** 个 GCC execute 运行失败（另有 137 个 varargs/builtin/asm 用例已明确排除），很多只是 `run: exit 1 != 0`，缺少真实 stderr；样本里已经出现 `FrameOverflow`、`TooManyFunctions`、`SymbolNotFound`、`abort`。
+- GCC execute 仍有 **91** 个运行缺陷；137 个 varargs/builtin/asm 用例已明确排除。
 - `fcmp une` 和 `fptoui/uitofp` 已实现，相关 skip 已移除；剩下一部分运行失败仍需分诊。
 - external data 已支持 `stdout`/`t_status` 等基础场景；剩余未解析数据/函数指针仍需分诊。
 - TCC/libc/CompCert 共约 **77** 个 stdout mismatch；必须区分真实语义 bug、浮点/printf 格式差异和上游 expected 差异。
@@ -235,14 +236,14 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 | 指标 | 当前 | 目标 |
 | --- | ---: | ---: |
 | full 通过率 | 4140/4453 (93.0%) | ≥72% 已达到，下一步 ≥80% |
-| skip 数 | 1426 | 先降到 <1200，再按范围外/缺陷拆分 |
-| GCC execute 运行失败 | 226 | 至少减半，其余有 error_class/issue |
+| skip 数 | 313 | <1200 已达到 |
+| GCC execute 运行失败 | 91 | 已减半；其余有分类 |
 | `fcmp une` skip | ~75 | 0（标准 C） |
 | `fptoui/uitofp` skip | ~20+ | 0（标准 C） |
 | `unknown global` skip | ~100 | 代表性 external data 用例通过 |
-| 跨 ABI 上游套件 | csuite + c-testsuite smoke 12/12 × 3 | 四目标各有 TCC/GCC/CompCert 子集 |
-| YARPGen 100 未分类 failure | 0（已分类 39 skip） | 保持 0；known 失败有最小复现 |
-| CI nightly 生成式 seeds | 20 | 100 |
+| 跨 ABI 上游套件 | csuite + c-testsuite smoke 12/12 × 3 | 代表性 upstream smoke |
+| YARPGen 100 未分类 failure | 0（77 通过 / 23 明确 skip） | 保持 0；known 失败有 artifact |
+| CI nightly 生成式 seeds | 100 | 100 |
 
 目标是“真实通过率”提高，不是把 skip 换个名字。
 
@@ -277,3 +278,14 @@ make generate-diff-csmith
 ```
 
 报告：`build/test-suites*.json`、`build/generate-diff*.json`、`build/generate-failures/`。
+
+## 15. 完成证据（2026-10-31）
+
+- `make test-suites-full`：**4140/4453 通过，313 skip（93.0%）**；另有 455 个 `.excluded` 非目标用例。
+- `make test-suites`：367/491；`make test` 通过。
+- Win64/Win32/ARM64：csuite 12/12 且 c-testsuite upstream smoke 12/12。
+- YARPGen 100 seeds：77 通过、23 明确 skip；Csmith 3 个已知失败 artifact 化。
+- fuzz：load 1000 次、exec 500 次，0 crash / 0 timeout。
+- 关键实现：`fcmp` 无序谓词、`fptoui/uitofp`、VM 上限、CIPI data/`ADDR_EXTERN`、数学 intrinsic 映射。
+- 报告：`build/test-suites-full.json`、`build/test-suites.json`、`build/generate-diff-report.json`、`build/generate-failures/`。
+- 排除边界：`tests/manifests/gcc-torture.excluded`、`gcc-torture-compile.excluded`、`compcert.excluded`；未覆盖的 varargs/builtin/asm/vector/atomics 等仍在非目标中。

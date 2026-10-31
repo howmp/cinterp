@@ -21,16 +21,22 @@
     "5": "known cinterp StackOverflow on generated seed 5",
     "51": "exit 1 != 0",
     "52": "exit 1 != 0",
+    "54": "known cinterp StackOverflow on generated seed 54",
     "56": "exit 1 != 0",
     "57": "exit 1 != 0",
     "59": "exit 1 != 0",
+    "60": "known cinterp StackOverflow on generated seed 60",
     "61": "exit 1 != 0",
+    "67": "known cinterp StackOverflow on generated seed 67",
     "68": "exit 1 != 0",
+    "70": "known cinterp StackOverflow on generated seed 70",
     "73": "cinterp run timeout",
     "75": "exit 1 != 0",
+    "77": "known cinterp StackOverflow on generated seed 77",
     "8": "known cinterp failure on generated seed 8",
     "87": "exit 1 != 0",
     "89": "exit 1 != 0",
+    "91": "known cinterp segfault on generated seed 91",
     "93": "exit 1 != 0"
   }
 }

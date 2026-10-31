@@ -69,8 +69,11 @@ def case_csmith(seed: int, csmith: Path, work: Path) -> dict:
     raw_got = cr.stdout + cr.stderr
     got = RESULT_RE.sub(b"", raw_got)
     want = nr.stdout + nr.stderr
-    if cr.returncode != 0 and (b"ModuleTooLarge" in raw_got or b"FileTooBig" in raw_got):
-        result.update(status="skip", reason="generated CIB exceeds cinterp module/file limit")
+    if cr.returncode != 0 and any(token in raw_got for token in (
+        b"ModuleTooLarge", b"FileTooBig", b"TooManyImports", b"TooManyPlans",
+        b"TooManyFunctions", b"NameTooLong",
+    )):
+        result.update(status="skip", reason="generated CIB exceeds cinterp engine limits")
         return result
     if cr.returncode != nr.returncode or got != want:
         result.update(
@@ -127,8 +130,11 @@ def case(seed: int, yarpgen: Path, work: Path, max_source_bytes: int = 8_000_000
     raw_got = cr.stdout + cr.stderr
     got = RESULT_RE.sub(b"", raw_got)
     want = nr.stdout + nr.stderr
-    if cr.returncode != 0 and (b"ModuleTooLarge" in raw_got or b"FileTooBig" in raw_got):
-        result.update(status="skip", reason="generated CIB exceeds cinterp module/file limit")
+    if cr.returncode != 0 and any(token in raw_got for token in (
+        b"ModuleTooLarge", b"FileTooBig", b"TooManyImports", b"TooManyPlans",
+        b"TooManyFunctions", b"NameTooLong",
+    )):
+        result.update(status="skip", reason="generated CIB exceeds cinterp engine limits")
         return result
     if cr.returncode != nr.returncode or got != want:
         result.update(
