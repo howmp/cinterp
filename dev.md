@@ -1,6 +1,6 @@
 # C 解释器架构与关键决策
 
-> 剩余工作见 [plan.md](./plan.md)；本文记录已实现的架构、决策、ABI 细节、已知边界与验证方法。
+> 本文记录已实现的架构、决策、ABI 细节、已知边界、验证证据和范围外项。
 
 ## 1. 产品概述
 
@@ -775,7 +775,7 @@ HOST=user@windows ./scripts/test_cross.sh   # 58 个跨 ABI 用例
 - **ARM64 AAPCS64 可行**：qemu-aarch64 下通过整数、混合、HFA、栈参数、sret（S12，6/6，12K）。
 - **C11 内存/全局模型可行**：VM 线性内存 + ALLOCA/LOAD_MEM/STORE_MEM + GEP；数组、结构体、指针、union、memcpy/memset、globals/字符串通过（S9 部分，sample1..12 12/12，21K）；bitfield/float/c-testsuite 待扩展。
 - **`@call` 矩阵已放弃**：早期 `ffi_struct_call`/`varargs_call` spike 保留为 ABI 行为参考；256 桩矩阵（63K/固定前缀）不再采用。
-- 各 spike 的目标/结果保留在 `spike/*/README.md`；剩余工作见 [plan.md](./plan.md)。
+- 各 spike 的目标/结果保留在 `spike/*/README.md`；当前实现状态与验证证据见第 19 节。
 
 ## 18. 参考实现
 
@@ -847,8 +847,11 @@ HOST=user@windows ./scripts/test_cross.sh   # 58 个跨 ABI 用例
 | ARM64 | qemu-aarch64 + aarch64 sysroot | 19 | 通过 |
 | c-testsuite 上游支持集 | native Linux | 217（3 skip） | 通过 |
 | fuzz load-only | native Linux | 200 变异 | 0 crash |
-| fuzz-exec safe | native Linux | 300 变异 | 0 crash |
+| fuzz-exec safe | native Linux | 500 变异 | 0 crash / 0 timeout |
 | 差分测试 | native Linux | 7 | 通过 |
+| `make size-cross` | native 构建 | 4 目标 | 72,568 / 78,848 / 95,744 / 84,520 B，均 <128K |
+| `make release-artifacts` | native 构建 | 4 目标 | `cinterp-0.1.0-*.tar.gz` |
+| `make bench` | native Linux | 7 用例 | 已记录平均运行时间 |
 
 ```bash
 make test
@@ -878,4 +881,11 @@ zig build -Dtarget=aarch64-linux-gnu
 - HFA callback >2 向量、long double callback、Win64 vectorcall/COM、Win32 fastcall/thiscall、SysV i128/vector：明确范围外。
 - Windows CRT `%Lf` 与原生 MinGW 一致，不额外提供格式化 shim。
 - safe 字节码 fuzz 目前只在 native 运行时执行；其他 ABI 的完整执行 fuzz 依赖对应 runner。
-- 具体已完成/验证项见第 19 节；本文件不再维护实施 checklist。
+
+### 19.7 计划完成状态
+
+- **无未完成计划项**：多 ABI、精确 long double、跨 ABI callback、ABI 边界、上游 c-testsuite 支持集、fuzz/差分/CI、性能/体积/发布打包均完成。
+- **明确范围外**：外部数据符号（`stdout`/`errno`）、向量类型、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV `i128`/向量参数、HFA callback >2 向量、long double callback；这些不是当前 C/ABI 子集的计划项。
+- **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
+- **信任模型**：恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
+- 交付物与验证数字见 19.5；不再维护单独的 plan/checklist 文件。

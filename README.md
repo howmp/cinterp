@@ -190,7 +190,7 @@ examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free
                        float32 FFI, bitfields
 scripts/test.sh        integration suite
 spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
-plan.md, dev.md        implementation plan and architecture/decisions
+dev.md                 architecture, decisions, ABI details, boundaries
 ```
 
-See `dev.md` for the architecture and `plan.md` for milestone/spike history.
+See `dev.md` for architecture, implementation decisions, ABI details, validation evidence and known boundaries.
