@@ -12,6 +12,16 @@ build() {
         *windows*) src="runtime/zig-out/bin/cinterp-run.exe" ;;
         *) src="runtime/zig-out/bin/cinterp-run" ;;
     esac
+    if file "$src" | grep -q 'ELF'; then
+        case "$target" in
+            aarch64-*) oc=aarch64-linux-gnu-objcopy ;;
+            x86_64-*) oc=objcopy ;;
+            *) oc="" ;;
+        esac
+        if [ -n "$oc" ] && command -v "$oc" >/dev/null 2>&1; then
+            "$oc" --remove-section=.eh_frame --remove-section=.eh_frame_hdr "$src"
+        fi
+    fi
     local dest="$OUT/cinterp-$VERSION-$name"
     mkdir -p "$dest"
     cp "$src" "$dest/"

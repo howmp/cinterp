@@ -4,6 +4,7 @@ all: test
 
 runtime:
 	cd runtime && zig build -Doptimize=ReleaseSmall
+	./scripts/strip_elf.sh
 
 debug-runtime:
 	cd runtime && zig build -Doptimize=Debug

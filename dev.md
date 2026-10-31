@@ -861,7 +861,7 @@ make fuzz
 make fuzz-exec
 make differential
 make bench
-make size                 # native runtime 91,264B；qsort.cib 646B
+make size                 # native runtime 87,000B；qsort.cib 646B
 make size-cross           # static sysv 77,544 / win64 85,504 / win32 101,888 / arm64 88,824
 make release-artifacts
 HOST=admin@192.168.153.132 ./scripts/test_cross.sh
@@ -926,6 +926,6 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 20.1 Runtime 构建档位
 
 - `make debug-runtime` / `zig build -Doptimize=Debug`：保留 unwind tables、frame pointer、error tracing 和 panic 栈回溯；约 8.8 MiB（含调试符号）。
-- `make runtime` / `zig build -Doptimize=ReleaseSmall`：关闭 unwind tables、frame pointer、error tracing，strip 符号；保留必要的 CLI/VM 错误码和简短错误信息，移除崩溃栈回溯和详细运行时诊断。
-- 当前 ReleaseSmall：native dynamic Linux x64 91,264B；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
+- `make runtime`：ReleaseSmall 关闭 unwind tables、frame pointer、error tracing，strip 符号，并对 ELF 额外移除 `.eh_frame`/`.eh_frame_hdr`；保留必要的 CLI/VM 错误码和简短错误信息，移除崩溃栈回溯和详细运行时诊断。
+- 当前 ReleaseSmall：native dynamic Linux x64 87,000B（裁 `.eh_frame` 后）；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
 - 发布产物使用 ReleaseSmall；调试/定位崩溃使用 Debug 或 ReleaseSafe。`--dump-target`/`--dump-imports` 等包检查命令仍保留，便于诊断 CIB 内容。
