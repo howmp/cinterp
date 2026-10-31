@@ -1,4 +1,4 @@
-# regenerated after P0/P1 semantics and external-data changes
+# regenerated after P0/P1 semantic changes
 03_struct	mismatch: stdout mismatch
 100_c99array-decls	compile: /home/admin/cl/build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
 101_cleanup	compile: cinterp: unsupported type <2 x float>

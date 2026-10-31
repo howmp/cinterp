@@ -1,4 +1,4 @@
-# regenerated after P0/P1 semantics and external-data changes
+# regenerated after P0/P1 semantic changes
 20000412-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20000412-3.c:14:10: error: call to undeclared function 'f'; ISO C99 and later do not support implicit...
 20000412-6	run: exit -6 != 0
 20000519-1	run: exit 1 != 0
@@ -283,15 +283,15 @@ pr103052	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-to
 pr103376	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr103376.c:6:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
 pr103405	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr103405.c:25:3: error: function definition is not allowed here
 pr105613	compile: cinterp: bad parameter: '<2 x i64> noundef %v.coerce'
-pr105777	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr105777.c:3:10: fatal error: '../../gcc.dg/tree-ssa/pr105777.c' file not found
+pr105777	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr105777.c:3:
 pr105984	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr105984.c:8:8: error: use of unknown builtin '__builtin_mul_overflow_p' [-Wimplicit-function-declara...
 pr108292	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr108292.c:12:33: error: address of vector element requested
 pr108498-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr108498-1.c:64:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
 pr108498-2	run: exit -6 != 0
 pr108789	run: exit 1 != 0
 pr109040	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr109040.c:19:3: warning: AVX vector argument of type 'V' (vector of 16 'unsigned short' values) with...
-pr109938	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr109938.c:4:10: fatal error: '../../gcc.dg/tree-ssa/pr109938.c' file not found
-pr109986	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr109986.c:4:10: fatal error: '../../gcc.dg/tree-ssa/pr109986.c' file not found
+pr109938	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr109938.c:4:
+pr109986	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr109986.c:4:
 pr110166-1	run: exit -6 != 0
 pr110252-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr110252-2.c:1:32: warning: unknown attribute '__noipa__' ignored [-Wunknown-attributes]
 pr110817-1	compile: cinterp: unsupported type <1 x i64>
@@ -325,7 +325,7 @@ pr27285	compile: cinterp: unknown global @__const.main.x
 pr28651	run: exit -6 != 0
 pr28865	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr28865.c:3:20: error: initialization of flexible array member is not allowed
 pr28982b	compile: cinterp: bad alloca size 262144 for %struct.big
-pr30314	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr30314.c:3:10: fatal error: '../../gcc.dg/tree-ssa/pr30314.c' file not found
+pr30314	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr30314.c:3:
 pr31448	run: exit -6 != 0
 pr31448-2	run: exit -6 != 0
 pr32244-1	run: exit -6 != 0
@@ -475,7 +475,6 @@ pr94591	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-tor
 pr97325	run: exit 1 != 0
 pr97386-1	run: exit 1 != 0
 pr97386-2	run: exit -6 != 0
-pr98304-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr98304-2.c:3:10: fatal error: '../../gcc.dg/pr98304-1.c' file not found
 pr98366	run: exit -6 != 0
 pr98474	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr98474.c:11:17: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
 printf-chk-1	run: exit 1 != 0

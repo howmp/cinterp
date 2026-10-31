@@ -1,4 +1,4 @@
-# regenerated after P0/P1 semantics and external-data changes
+# regenerated after P0/P1 semantic changes
 20000105-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20000105-1.c:6:2: error: use of unknown builtin '__builtin_exit' [-Wimplicit-function-declaration]
 20000120-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20000120-2.c:16:1: error: redefinition of a 'extern inline' function 'odd' is not supported in C99 mode
 20000326-2	compile: cinterp: unsupported instruction: indirectbr ptr undef, [label %here]
@@ -57,9 +57,7 @@
 20040817-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20040817-1.c:14:9: error: call to undeclared function 'bar1'; ISO C99 and later do not support implic...
 20041119-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20041119-1.c:5:34: error: register 'r14' unsuitable for global register variables on this target
 20050119-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20050119-1.c:8:3: error: function definition is not allowed here
-20050122-1	compile: cinterp: unknown global @foo
 20050122-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20050122-2.c:11:17: error: function definition is not allowed here
-20050202-1	compile: cinterp: unknown global @foo
 20050215-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20050215-1.c:5:6: error: redefinition of a 'extern inline' function 'f2' is not supported in C99 mode
 20050215-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20050215-2.c:8:6: error: redefinition of a 'extern inline' function 'f2' is not supported in C99 mode
 20050215-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20050215-3.c:9:6: error: redefinition of a 'extern inline' function 'f2' is not supported in C99 mode
@@ -73,9 +71,7 @@
 20071117-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20071117-1.c:7:13: error: use of unknown builtin '__builtin_stack_save' [-Wimplicit-function-declarat...
 20080114-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !31
 20080704-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20080704-1.c:14:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support...
-20080721-1	compile: cinterp: unknown global @foo
 20080910-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20080910-1.c:38:2: error: call to undeclared function 'addlit'; ISO C99 and later do not support impl...
-20081108-1	compile: cinterp: unknown global @f
 20090917-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20090917-1.c:42:11: warning: comparison between pointer and integer ('loop_p' (aka 'int *') and 'int'...
 20091215-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20091215-1.c:9:7: warning: passing arguments to 'bar' without a prototype is deprecated in all versio...
 20100915-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20100915-1.c:39:7: error: call to undeclared function 'buffer_uptodate'; ISO C99 and later do not sup...
@@ -280,7 +276,6 @@ dblbug	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-tort
 dce-inline-asm-1	compile: cinterp: unsupported instruction: call void asm " ", "=*X,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i32) %t1), !srcloc !25
 dce-inline-asm-2	compile: cinterp: unsupported instruction: call void asm " ", "=*X,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i32) %a.addr), !srcloc !19
 dead	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/dead.c:3:6: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not suppor...
-debugvlafunction-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/debugvlafunction-1.c:9:1: warning: non-void function does not return a value [-Wreturn-type]
 delay	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/delay.c:3:9: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not suppo...
 di	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/di.c:4:1: warning: a function definition without a prototype is deprecated in all versions of C and i...
 dic	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/dic.c:1:1: warning: return type of 'main' is not 'int' [-Wmain-return-type]
@@ -313,7 +308,6 @@ layout	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-tort
 limits-blockid	compile: Traceback (most recent call last):
 limits-declparen	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/limits-declparen.c:15:5: fatal error: bracket nesting level exceeded maximum of 256
 limits-exprparen	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/limits-exprparen.c:15:14: fatal error: bracket nesting level exceeded maximum of 256
-limits-externalid	compile: Traceback (most recent call last):
 limits-fnargs	compile: Traceback (most recent call last):
 limits-fndefn	compile: Traceback (most recent call last):
 limits-structnest	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/limits-structnest.c:21:1: fatal error: bracket nesting level exceeded maximum of 256
@@ -388,7 +382,6 @@ pr111442-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-
 pr111699-1	compile: cinterp: unsupported type <8 x i8>
 pr111911-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr111911-1.c:4:28: warning: overflow in expression; result is -2'147'483'648 with type 'int' [-Winteg...
 pr111911-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr111911-2.c:3:10: error: unknown type name 'bool'
-pr113221-1	compile: cinterp: unknown global @bar
 pr113603	compile: cinterp: unsupported type <{ [100 x i32], <{ i32, [99 x i32] }>, [98 x [100 x i32]] }>
 pr115143-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr115143-2.c:8:33: error: expected ')'
 pr115143-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr115143-3.c:8:33: error: expected ')'
@@ -407,7 +400,6 @@ pr18903	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-tor
 pr19121	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr19121.c:11:7: error: call to undeclared library function 'strchr' with type 'char *(const char *, i...
 pr21356	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %a1, label %a2, label %a1]
 pr21728	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr21728.c:7:3: error: function definition is not allowed here
-pr21840	compile: cinterp: unknown global @fn_show_state
 pr22269	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr22269.c:4:5: error: second parameter of 'main' (argument array) must be of type 'char **'
 pr22398	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr22398.c:2:18: error: use of unknown builtin '__builtin_exit' [-Wimplicit-function-declaration]
 pr25224	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %L170, label %L180]
@@ -421,7 +413,6 @@ pr28865	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-tor
 pr29128	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %lb_allocate_heap_zero_III, label %lb_allocate_init_tIy, label %lb_allocate_zero_tt]
 pr29201	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr29201.c:52:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support im...
 pr30984	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr30984.c:8:2: error: indirect goto in function with no address-of-label expressions
-pr32139	compile: cinterp: unknown global @foo
 pr32919	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %do_form_unknown, label %do_flag_plus, label %do_form_float]
 pr33133	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr33133.c:49:7: error: call to undeclared library function 'memcpy' with type 'void *(void *, const v...
 pr33614	compile: cinterp: unsupported type <2 x float>
@@ -431,14 +422,10 @@ pr34856	compile: cinterp: unsupported type <4 x i32>
 pr35006	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr35006.c:15:3: error: function definition is not allowed here
 pr35318	compile: cinterp: unsupported instruction: %1 = call { double, double } asm sideeffect "", "=r|r,=r|r,%0|0,m|r,~{dirflag},~{fpsr},~{flags}"(double %0, i32 8), !srcloc !22
 pr35432	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr35432.c:10:11: warning: expression result unused [-Wunused-value]
-pr36141	compile: cinterp: unknown global @ffi_closure_unix
 pr36154	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr36154.c:10:10: error: call to undeclared library function 'memcmp' with type 'int (const void *, co...
 pr37381	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr37381.c:50:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support im...
 pr37395	compile: cinterp: unsupported instruction: %0 = call i32 asm sideeffect "", "=r,~{dirflag},~{fpsr},~{flags}"(), !srcloc !21
-pr37418-1	compile: cinterp: unknown global @f
 pr37418-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr37418-2.c:2:1: warning: 'volatile' qualifier on function type 'ft' (aka 'void (int)') has unspecifi...
-pr37418-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr37418-3.c:2:6: warning: 'const' attribute on function returning 'void'; attribute ignored [-Wignore...
-pr37418-4	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr37418-4.c:2:1: warning: 'const' qualifier on function type 'ft' (aka 'void (int)') has unspecified ...
 pr37669	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr37669.c:11:44: error: use of unknown builtin '__builtin_va_arg_pack' [-Wimplicit-function-declaration]
 pr37913	compile: cinterp: unsupported operand: 'undef'
 pr38360	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr38360.c:8:3: error: call to undeclared function 'fputs'; ISO C99 and later do not support implicit ...
@@ -452,7 +439,6 @@ pr39928-1	compile: cinterp: bad parameter: '<4 x float> noundef %d'
 pr39928-2	compile: cinterp: bad parameter: '<2 x float> noundef %d.coerce'
 pr40291	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr40291.c:7:10: error: call to undeclared library function 'memcmp' with type 'int (const void *, con...
 pr40556	compile: cinterp: bad alloca size 0 for %struct.A
-pr40753	compile: cinterp: unknown global @ffi_closure_LINUX64
 pr41182-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr41182-1.c:6:11: error: call to undeclared library function 'strlen' with type 'unsigned long (const...
 pr42398	compile: cinterp: unsupported instruction: %0 = call i32 asm sideeffect "", "=r,~{dirflag},~{fpsr},~{flags}"(), !srcloc !24
 pr42559	compile: cinterp: unsupported instruction: indirectbr ptr undef, [label %jumplabel]
@@ -495,7 +481,6 @@ pr55921	compile: cinterp: bad parameter: '<2 x float> noundef %r.coerce'
 pr56405	compile: cinterp: unsupported instruction: call void asm sideeffect "", "=*m,*m,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i16) inttoptr (i64 4097 to ptr), ptr elementtype(i16) inttopt...
 pr58164	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr58164.c:8:3: error: indirect goto in function with no address-of-label expressions
 pr60502	compile: cinterp: unsupported type <16 x i8>
-pr60556	compile: cinterp: unknown global @g
 pr63282	compile: cinterp: unsupported instruction: callbr void asm sideeffect "", "!i,!i,~{dirflag},~{fpsr},~{flags}"()
 pr65241	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr65241.c:11:13: warning: enumeration values 'A', 'B', and 'D' not handled in switch [-Wswitch]
 pr65680	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr65680.c:19:30: warning: implicit truncation from 'int' to a one-bit wide bit-field changes value fr...
@@ -522,8 +507,6 @@ pr84136	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-tor
 pr84960	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr84960.c:8:15: warning: remainder by zero is undefined [-Wdivision-by-zero]
 pr85945	compile: cinterp: unsupported type <4 x float>
 pr88347	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr88347.c:4:10: fatal error: '../../gcc.target/powerpc/ppc-switch-2.c' file not found
-pr88423	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr88423.c:5:10: fatal error: '../../gcc.dg/20030309-1.c' file not found
-pr89663-2	compile: cinterp: unknown global @irint
 pr90139	compile: cinterp: unsupported type <1 x float>
 pr90275	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr90275.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp...
 pr92231	compile: cinterp: unsupported instruction: %call = call i32 getelementptr inbounds (i8, ptr @bar, i64 4096)()
@@ -535,7 +518,6 @@ pr94488	compile: cinterp: unsupported type <2 x i64>
 pr96426	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr96426.c:11:3: warning: expression result unused [-Wunused-value]
 pr96796	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr96796.c:24:23: warning: passing arguments to 'func_50' without a prototype is deprecated in all ver...
 pr96998	compile: cinterp: unsupported instruction: %2 = call i32 asm "", "=Q,~{dirflag},~{fpsr},~{flags}"(), !srcloc !38
-pr97576	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr97576.c:8:22: warning: unknown attribute 'simd' ignored [-Wunknown-attributes]
 pr98087	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr98087.c:8:3: error: use of unknown builtin '__builtin_clear_padding' [-Wimplicit-function-declaration]
 pr98096	compile: cinterp: unsupported instruction: %1 = callbr i32 asm "# $0 $2", "=r,0,!i,~{dirflag},~{fpsr},~{flags}"(i32 %0)
 pr99225	compile: cinterp: unsupported type <4 x i32>

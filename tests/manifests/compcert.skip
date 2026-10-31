@@ -1,4 +1,4 @@
-# regenerated after P0/P1 semantics and external-data changes
+# regenerated after P0/P1 semantic changes
 NaNs	mismatch: stdout mismatch
 alias	mismatch: stdout mismatch
 alignas	compile: /home/admin/cl/build/suites/CompCert/test/regression/alignas.c:25:10: error: size of array element of type 'int16' (aka 'int') (4 bytes) isn't a multiple of its alignment (16 by...

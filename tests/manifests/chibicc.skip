@@ -1,4 +1,4 @@
-# regenerated after P0/P1 semantics and external-data changes
+# regenerated after P0/P1 semantic changes
 alignof	run: exit 1 != 0
 alloca	compile: In file included from /home/admin/cl/build/suites/chibicc/test/alloca.c:1:
 asm	compile: In file included from /home/admin/cl/build/suites/chibicc/test/asm.c:1:

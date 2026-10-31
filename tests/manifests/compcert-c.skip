@@ -1,4 +1,4 @@
-# generated from initial CompCert c benchmark probe
+# regenerated after P0/P1 semantic changes
 aes	mismatch: stdout mismatch
 almabench	mismatch: stdout mismatch
 binarytrees	mismatch: stdout mismatch

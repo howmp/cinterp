@@ -1,4 +1,4 @@
-# generated from initial libc regression probe
+# regenerated after P0/P1 semantic changes
 daemon-failure	mismatch: stdout mismatch
 dn_expand-empty	mismatch: stdout mismatch
 dn_expand-ptr-0	mismatch: stdout mismatch
@@ -6,8 +6,7 @@ flockfile-list	mismatch: stdout mismatch
 fpclassify-invalid-ld80	mismatch: stdout mismatch
 malloc-brk-fail	mismatch: stdout mismatch
 pthread_atfork-errno-clobber	mismatch: stdout mismatch
-pthread_cancel-sem_wait	run: exit -11 != 0
-pthread_cond-smasher	run: exit -11 != 0
+pthread_cond-smasher	mismatch: stdout mismatch
 pthread_cond_wait-cancel_ignored	mismatch: stdout mismatch
 pthread_exit-cancel	mismatch: stdout mismatch
 pthread_exit-dtor	mismatch: stdout mismatch
@@ -17,5 +16,6 @@ regex-ere-backref	mismatch: stdout mismatch
 regex-escaped-high-byte	mismatch: stdout mismatch
 setvbuf-unget	timeout: run timeout
 sigaltstack	run: exit -11 != 0
-tls_get_new-dtv	mismatch: stdout mismatch
+tls_get_new-dtv	run: exit -11 != 0
 tls_get_new-dtv_dso	mismatch: stdout mismatch
+pthread_cancel-sem_wait	runtime: known intermittent segfault; quarantine

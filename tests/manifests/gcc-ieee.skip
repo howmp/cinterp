@@ -1,4 +1,4 @@
-# generated from initial ieee probe
+# regenerated after P0/P1 semantic changes
 bfloat16-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/bfloat16-builtin-issignaling-1.c:21:
 builtin-issignaling-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !65
 cdivchkd	run: exit 1 != 0

@@ -1,4 +1,4 @@
-# regenerated after P0/P1 semantics and external-data changes
+# regenerated after P0/P1 semantic changes
 argv	mismatch: stdout mismatch
 clocale_mbfuncs	mismatch: stdout mismatch
 crypt	mismatch: stdout mismatch
@@ -14,7 +14,7 @@ pthread_cancel-points	run: exit -11 != 0
 pthread_cond	run: exit -11 != 0
 pthread_mutex	run: exit -11 != 0
 pthread_mutex_pi	mismatch: stdout mismatch
-sem_init	mismatch: stdout mismatch
+pthread_robust	mismatch: stdout mismatch
 snprintf	mismatch: stdout mismatch
 spawn	mismatch: stdout mismatch
 sscanf	mismatch: stdout mismatch
@@ -33,4 +33,4 @@ tls_init_dso	mismatch: stdout mismatch
 tls_local_exec	mismatch: stdout mismatch
 vfork	mismatch: stdout mismatch
 wcstol	mismatch: stdout mismatch
-pthread_robust	runtime: known intermittent segfault; quarantine
+sem_init	runtime: known intermittent segfault; quarantine
