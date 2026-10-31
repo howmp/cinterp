@@ -56,6 +56,9 @@ make test
 
 # release-size check (runtime < 128K, qsort package < 4K)
 make release-check
+
+# package/plan fuzz smoke (load-only, no bytecode execution)
+make fuzz
 ```
 
 `make test` runs runtime/compiler unit tests, all end-to-end examples, and
@@ -67,8 +70,10 @@ external c-testsuite directory (tests without `// expect: N` are skipped).
 
 The runtime validates package lengths, function/plan counts, plan argument
 counts, ABI location indices, and marshal offsets/sizes before invoking native
-code; malformed packages fail cleanly. C pointers to native allocations are
-necessarily trusted, so run untrusted packages under an OS sandbox.
+code; malformed packages fail cleanly. `cinterp-run --load-only` validates a
+package without executing it; `make fuzz` mutates/truncates seed packages and
+checks for crashes. C pointers to native allocations are necessarily trusted,
+so run untrusted packages under an OS sandbox.
 
 ## Compiler
 

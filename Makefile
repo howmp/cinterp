@@ -1,4 +1,4 @@
-.PHONY: all test runtime compiler-test integration size release-check cross-test c-testsuite clean
+.PHONY: all test runtime compiler-test integration size release-check cross-test c-testsuite fuzz clean
 
 all: test
 
@@ -31,6 +31,9 @@ cross-test:
 
 c-testsuite: runtime
 	./scripts/c_testsuite.sh
+
+fuzz: runtime
+	python3 scripts/fuzz.py --iterations 200
 
 clean:
 	rm -rf build compiler/src/cinterp/__pycache__ compiler/tests/__pycache__

@@ -12,7 +12,8 @@ pub fn main() !void {
     };
     defer vm.ci_vm_destroy(machine);
 
-    const usage = "usage: cinterp-run [--lib path]... <package.cib> [entry]\n";
+    const usage = "usage: cinterp-run [--lib path]... [--load-only] <package.cib> [entry]\n";
+    var load_only = false;
     var i: usize = 1;
     while (i < args.len) {
         if (std.mem.eql(u8, args[i], "--version")) {
@@ -22,6 +23,11 @@ pub fn main() !void {
         if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
             std.debug.print("{s}", .{usage});
             return;
+        }
+        if (std.mem.eql(u8, args[i], "--load-only")) {
+            load_only = true;
+            i += 1;
+            continue;
         }
         if (!std.mem.eql(u8, args[i], "--lib")) break;
         i += 1;
@@ -54,6 +60,8 @@ pub fn main() !void {
         std.debug.print("cinterp-run: load failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(machine))});
         std.process.exit(1);
     }
+
+    if (load_only) return;
 
     const result = vm.ci_vm_run(machine, entry);
     if (result == -1) {

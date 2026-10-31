@@ -1,0 +1,21 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: sudo apt-get update && sudo apt-get install -y clang python3 make
+      - run: make test
+      - run: make c-testsuite
+      - run: make size
+      - run: python3 scripts/fuzz.py --iterations 50
+      - name: cross-compile runtime
+        run: |
+          cd runtime
+          zig build -Dtarget=x86_64-windows-gnu
+          zig build -Dtarget=x86-windows-gnu
+          zig build -Dtarget=aarch64-linux-gnu

@@ -360,7 +360,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - [x] M11 基础加固：plan/package 边界校验、错误路径、CLI version/help
 - [x] M11 体积检查：`make size`（runtime 40K、qsort.cib 460B）；README 沙箱说明
 - [x] M11 本地发布检查：`make release-check`、package 截断 smoke
-- [ ] fuzz / 外部 CI
+- [x] fuzz（`make fuzz` 200 变异 0 crash）+ GitHub Actions CI
 
 ## 6. 风险与阻塞
 
@@ -410,6 +410,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - **2026-10-31（周六）**：M11 基础加固——plan 数量/ABI 位置/offset/size 校验，错误路径测试（缺失输入、坏 package、未知符号），`--version`/`--help`。
 - **2026-10-31（周六）**：`make size`/`make release-check`；ReleaseSmall runtime 40K、hello.cib 78B、qsort.cib 460B。
 - **2026-10-31（周六）**：package 截断 smoke（0/4/5/14/15/30/100 字节）全部干净失败，无崩溃。
+- **2026-10-31（周六）**：`--load-only` + package/plan fuzz（200 变异 0 crash）+ GitHub Actions CI。
 - **2026-10-31（周六）**：c-testsuite 子集 harness（9/9）+ `select` 降级。
 - **2026-10-31（周六）**：long double 支持（16B 存储、64-bit 精度）；`longdouble=8`。
 - **2026-10-31（周六）**：多 ABI 落地——compiler `--target`、Win64/Win32/AAPCS64 plan builder、runtime `ffi/platform.zig`/`ffi/native.zig`、Win64/Win32/ARM64 frame/engine；交叉测试 33/33（Win64 11、Win32 11、ARM64 11）。
