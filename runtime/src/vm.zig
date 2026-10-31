@@ -1,6 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const abi = @import("ffi/abi.zig");
 const plan_loader = @import("ffi/plan_loader.zig");
+const platform = @import("ffi/platform.zig");
+const native = @import("ffi/native.zig");
 
 pub const MAX_FUNCS: usize = 8;
 pub const MAX_NAME: usize = 32;
@@ -81,34 +84,6 @@ pub const Frame = struct {
     func: usize,
 };
 
-const SysV64Frame = extern struct {
-    gpr: [6]u64,
-    xmm: [8][2]u64,
-    sse_count: u8,
-    _pad: [7]u8,
-    stack: [*]u8,
-    stack_size: usize,
-    sret: ?*anyopaque,
-    ret_rax: u64,
-    ret_rdx: u64,
-    ret_xmm0: [2]u64,
-    ret_xmm1: [2]u64,
-};
-
-comptime {
-    if (@offsetOf(SysV64Frame, "gpr") != 0) @compileError("bad sysv gpr offset");
-    if (@offsetOf(SysV64Frame, "xmm") != 48) @compileError("bad sysv xmm offset");
-    if (@offsetOf(SysV64Frame, "sse_count") != 176) @compileError("bad sysv sse offset");
-    if (@offsetOf(SysV64Frame, "stack") != 184) @compileError("bad sysv stack offset");
-    if (@offsetOf(SysV64Frame, "stack_size") != 192) @compileError("bad sysv stack_size offset");
-    if (@offsetOf(SysV64Frame, "sret") != 200) @compileError("bad sysv sret offset");
-    if (@offsetOf(SysV64Frame, "ret_rax") != 208) @compileError("bad sysv ret_rax offset");
-    if (@offsetOf(SysV64Frame, "ret_xmm0") != 224) @compileError("bad sysv ret_xmm0 offset");
-    if (@sizeOf(SysV64Frame) != 256) @compileError("bad sysv frame size");
-}
-
-extern fn ci_abi_call_sysv64(frame: *SysV64Frame, target: *const anyopaque) callconv(.C) void;
-
 const CbFrame = extern struct {
     slot: u64,          // 0
     gpr: [6]u64,        // 8
@@ -121,12 +96,14 @@ const CbFrame = extern struct {
 };
 
 comptime {
-    if (@offsetOf(CbFrame, "gpr") != 8) @compileError("bad cb gpr offset");
-    if (@offsetOf(CbFrame, "xmm") != 56) @compileError("bad cb xmm offset");
-    if (@offsetOf(CbFrame, "stack_args") != 184) @compileError("bad cb stack offset");
-    if (@offsetOf(CbFrame, "ret_rax") != 192) @compileError("bad cb ret_rax offset");
-    if (@offsetOf(CbFrame, "ret_xmm0") != 208) @compileError("bad cb ret_xmm0 offset");
-    if (@sizeOf(CbFrame) != 240) @compileError("bad cb frame size");
+    if (builtin.cpu.arch == .x86_64 and builtin.os.tag != .windows) {
+        if (@offsetOf(CbFrame, "gpr") != 8) @compileError("bad cb gpr offset");
+        if (@offsetOf(CbFrame, "xmm") != 56) @compileError("bad cb xmm offset");
+        if (@offsetOf(CbFrame, "stack_args") != 184) @compileError("bad cb stack offset");
+        if (@offsetOf(CbFrame, "ret_rax") != 192) @compileError("bad cb ret_rax offset");
+        if (@offsetOf(CbFrame, "ret_xmm0") != 208) @compileError("bad cb ret_xmm0 offset");
+        if (@sizeOf(CbFrame) != 240) @compileError("bad cb frame size");
+    }
 }
 
 const CallbackEntry = struct {
@@ -136,8 +113,6 @@ const CallbackEntry = struct {
 
 var callback_entries: [256]?CallbackEntry = [_]?CallbackEntry{null} ** 256;
 var callback_vm: ?*VM = null;
-
-extern const ci_cb_sysv_table: [256]*const anyopaque;
 
 fn f32FromValue(v: Value) f32 {
     const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
@@ -158,11 +133,6 @@ fn compareFloats(a: f64, b: f64, pred: u8) bool {
         else => false,
     };
 }
-
-const RTLD_NOW: c_int = 2;
-const RTLD_GLOBAL: c_int = 0x100;
-extern fn dlopen(path: [*:0]const u8, mode: c_int) ?*anyopaque;
-extern fn dlsym(handle: ?*anyopaque, name: [*:0]const u8) ?*anyopaque;
 
 pub const VM = struct {
     module_buf: [MAX_MODULE]u8 = undefined,
@@ -192,6 +162,10 @@ pub const VM = struct {
 
     pub fn loadPlans(self: *VM, bytes: []const u8) !void {
         const new_store = try plan_loader.decode(std.heap.page_allocator, bytes);
+        if (new_store.abi_id != platform.abi_id) {
+            std.heap.page_allocator.destroy(new_store);
+            return error.BadAbi;
+        }
         if (self.plan_store) |old| std.heap.page_allocator.destroy(old);
         self.plan_store = new_store;
     }
@@ -209,7 +183,7 @@ pub const VM = struct {
         @memcpy(self.symbol_buf[0..path.len], path);
         self.symbol_buf[path.len] = 0;
         const cpath: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
-        const handle = dlopen(cpath, RTLD_NOW | RTLD_GLOBAL) orelse return error.LibraryNotFound;
+        const handle = native.load(cpath) orelse return error.LibraryNotFound;
         self.libraries[self.library_count] = handle;
         self.library_count += 1;
     }
@@ -233,23 +207,44 @@ pub const VM = struct {
         try self.loadPlans(bytes[15 + m .. 15 + m + p]);
     }
 
+    fn searchSymbol(self: *VM, cname: [*:0]const u8) ?*const anyopaque {
+        if (native.symbol(null, cname)) |sym| return sym;
+        var li: usize = self.library_count;
+        while (li > 0) {
+            li -= 1;
+            if (self.libraries[li]) |handle| {
+                if (native.symbol(handle, cname)) |sym| return sym;
+            }
+        }
+        if (self.libc_handle == null) {
+            self.libc_handle = native.defaultC();
+        }
+        if (self.libc_handle) |handle| {
+            if (native.symbol(handle, cname)) |sym| return sym;
+        }
+        return null;
+    }
+
     fn resolveNative(self: *VM, name: []const u8) !*const anyopaque {
         if (name.len >= self.symbol_buf.len) return error.SymbolTooLong;
         @memcpy(self.symbol_buf[0..name.len], name);
         self.symbol_buf[name.len] = 0;
         const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
-        if (dlsym(null, cname)) |sym| return sym;
-        if (self.libc_handle == null) {
-            self.libc_handle = dlopen("libc.so.6", RTLD_NOW);
-        }
-        if (self.libc_handle) |handle| {
-            if (dlsym(handle, cname)) |sym| return sym;
+        if (self.searchSymbol(cname)) |sym| return sym;
+        if (native.alias(name)) |alt| {
+            const alias_name = std.mem.span(alt);
+            if (alias_name.len < self.symbol_buf.len) {
+                @memcpy(self.symbol_buf[0..alias_name.len], alias_name);
+                self.symbol_buf[alias_name.len] = 0;
+                const acname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+                if (self.searchSymbol(acname)) |sym| return sym;
+            }
         }
         return error.SymbolNotFound;
     }
 
     fn invokeFfi(self: *VM, plan: abi.CallPlan, target: *const anyopaque) !void {
-        try validatePlan(plan);
+        try platform.validate(plan);
         var arg_block: [256]u8 = [_]u8{0} ** 256;
         var sret_ptr: ?*anyopaque = null;
 
@@ -260,37 +255,36 @@ pub const VM = struct {
             const loc = arg.locs[0];
             if (loc.kind == .sret) {
                 const v = try self.pop();
-                sret_ptr = @ptrFromInt(v.u);
+                sret_ptr = @ptrCast(pointerFromU64(v.u));
                 continue;
             }
             const off: usize = @intCast(loc.offset);
             if (arg.is_struct) {
                 const v = try self.pop();
                 if (v.u == 0) return error.NullStruct;
-                const src: [*]const u8 = @ptrFromInt(v.u);
+                const src: [*]const u8 = @ptrCast(pointerFromU64(v.u));
                 const n: usize = @intCast(arg.size);
                 @memcpy(arg_block[off..][0..n], src[0..n]);
             } else {
                 const v = try self.pop();
-                @as(*align(1) u64, @ptrCast(&arg_block[off])).* = v.u;
+                const n: usize = @intCast(loc.size);
+                const bits: u64 = v.u;
+                @memcpy(arg_block[off..][0..n], std.mem.asBytes(&bits)[0..n]);
             }
         }
 
-        var stack_buf: [256]u8 align(16) = undefined;
-        var frame: SysV64Frame = std.mem.zeroes(SysV64Frame);
-        frame.stack = &stack_buf;
-        frame.stack_size = plan.stack_size;
-        frame.sse_count = plan.sse_count;
-        if (plan.sret) {
+        var stack_buf: [256]u8 align(16) = [_]u8{0} ** 256;
+        var frame: platform.Frame = std.mem.zeroes(platform.Frame);
+        if (plan.sret and sret_ptr == null) {
             const rs: usize = @intCast(plan.ret_size);
             if (rs > self.ret_buf.len) return error.ReturnTooLarge;
-            frame.sret = sret_ptr orelse @ptrCast(&self.ret_buf);
         }
-        marshal(&frame, plan, &arg_block, &stack_buf);
-        ci_abi_call_sysv64(&frame, target);
+        platform.configure(&frame, plan, &self.ret_buf, &stack_buf, sret_ptr);
+        platform.marshal(&frame, plan, &arg_block, &stack_buf);
+        platform.invoke(&frame, target);
 
         var ret_block: [256]u8 = [_]u8{0} ** 256;
-        readRet(&frame, plan, &ret_block);
+        platform.readRet(&frame, plan, &ret_block);
 
         if (plan.sret) {
             // sret calls in C are void; the callee wrote through the caller's pointer.
@@ -305,7 +299,8 @@ pub const VM = struct {
             const rs: usize = @intCast(plan.ret_size);
             if (rs > self.ret_buf.len) return error.ReturnTooLarge;
             @memcpy(self.ret_buf[0..rs], ret_block[0..rs]);
-            try self.push(.{ .i = @bitCast(@intFromPtr(&self.ret_buf)) });
+            const ret_addr: u64 = @intCast(@intFromPtr(&self.ret_buf));
+            try self.push(.{ .i = @bitCast(ret_addr) });
         } else {
             try self.push(.{ .i = 0 });
         }
@@ -680,8 +675,9 @@ pub const VM = struct {
                         .plan = store.callPlan(p),
                     };
                     callback_vm = self;
-                    const addr = @intFromPtr(ci_cb_sysv_table[slot]);
-                    try self.push(.{ .i = @bitCast(addr) });
+                    const addr = platform.callbackTable(slot) orelse return error.UnsupportedCallback;
+                    const addr64: u64 = @intCast(@intFromPtr(addr));
+                    try self.push(.{ .i = @bitCast(addr64) });
                 },
                 OP_CALL_NATIVE, OP_CALL_VARARG => {
                     const idx = try readU16(code, &ip);
@@ -713,13 +709,13 @@ pub const VM = struct {
                     if (start + n > self.mem.len) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
-                    const addr = @intFromPtr(&self.mem[start]);
+                    const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
                     try self.push(.{ .i = @bitCast(addr) });
                 },
                 OP_LOAD_MEM => {
                     const size = try readU8(code, &ip);
                     const v = try self.pop();
-                    const addr: u64 = @bitCast(v.i);
+                    const addr: usize = addressFromBits(v.i);
                     switch (size) {
                         1 => {
                             const p: *align(1) const u8 = @ptrFromInt(addr);
@@ -747,7 +743,7 @@ pub const VM = struct {
                     const size = try readU8(code, &ip);
                     const av = try self.pop();
                     const vv = try self.pop();
-                    const addr: u64 = @bitCast(av.i);
+                    const addr: usize = addressFromBits(av.i);
                     const bits: u64 = @bitCast(vv.i);
                     switch (size) {
                         1 => @as(*align(1) u8, @ptrFromInt(addr)).* = @truncate(bits),
@@ -763,8 +759,8 @@ pub const VM = struct {
                     const dst_v = try self.pop();
                     if (len_v.i < 0) return error.BadMemorySize;
                     const len: usize = @intCast(len_v.i);
-                    const dst: [*]u8 = @ptrFromInt(@as(u64, @bitCast(dst_v.i)));
-                    const src: [*]const u8 = @ptrFromInt(@as(u64, @bitCast(src_v.i)));
+                    const dst: [*]u8 = @ptrFromInt(addressFromBits(dst_v.i));
+                    const src: [*]const u8 = @ptrFromInt(addressFromBits(src_v.i));
                     @memcpy(dst[0..len], src[0..len]);
                 },
                 OP_MEMSET => {
@@ -773,7 +769,7 @@ pub const VM = struct {
                     const dst_v = try self.pop();
                     if (len_v.i < 0) return error.BadMemorySize;
                     const len: usize = @intCast(len_v.i);
-                    const dst: [*]u8 = @ptrFromInt(@as(u64, @bitCast(dst_v.i)));
+                    const dst: [*]u8 = @ptrFromInt(addressFromBits(dst_v.i));
                     const byte: u8 = @truncate(@as(u64, @bitCast(val_v.i)));
                     @memset(dst[0..len], byte);
                 },
@@ -830,87 +826,12 @@ fn readU64(buf: *const [256]u8, off: usize) u64 {
     return @as(*align(1) const u64, @ptrCast(&buf[off])).*;
 }
 
-pub fn validatePlan(plan: abi.CallPlan) !void {
-    if (plan.args.len > 16) return error.BadPlan;
-    if (plan.ret_locs.len > 8) return error.BadPlan;
-    if (plan.stack_size > 256) return error.BadPlan;
-    if (plan.ret_size > 256) return error.BadPlan;
-    if (plan.sse_count > 8) return error.BadPlan;
-
-    for (plan.args) |arg| {
-        if (arg.locs.len == 0) return error.BadPlan;
-        if (arg.size > 256) return error.BadPlan;
-        for (arg.locs) |loc| {
-            const off: usize = loc.offset;
-            const n: usize = loc.size;
-            if (off + n > 256) return error.BadPlan;
-            switch (loc.kind) {
-                .gpr => {
-                    if (loc.index >= 6 or n > 8 or off + 8 > 256) return error.BadPlan;
-                },
-                .xmm => {
-                    if (loc.index >= 8 or n > 16) return error.BadPlan;
-                },
-                .stack => {
-                    const idx: usize = loc.index;
-                    if (idx + n > 256) return error.BadPlan;
-                },
-                .sret => {},
-                else => return error.BadPlan,
-            }
-        }
-    }
-
-    for (plan.ret_locs) |loc| {
-        const off: usize = loc.offset;
-        const n: usize = loc.size;
-        if (off + n > 256) return error.BadPlan;
-        switch (loc.kind) {
-            .rax, .rdx => {
-                if (n > 8) return error.BadPlan;
-            },
-            .xmm0, .xmm1 => {
-                if (n > 16) return error.BadPlan;
-            },
-            else => return error.BadPlan,
-        }
-    }
+fn pointerFromU64(v: u64) *anyopaque {
+    return @ptrFromInt(@as(usize, @intCast(v)));
 }
 
-fn marshal(frame: *SysV64Frame, plan: abi.CallPlan, args: *const [256]u8, stack_buf: *[256]u8) void {
-    for (plan.args) |arg| {
-        for (arg.locs) |loc| {
-            const off: usize = @intCast(loc.offset);
-            const n: usize = @intCast(loc.size);
-            switch (loc.kind) {
-                .gpr => frame.gpr[@intCast(loc.index)] = readU64(args, off),
-                .xmm => {
-                    const dst = std.mem.asBytes(&frame.xmm[@intCast(loc.index)]);
-                    @memcpy(dst[0..n], args[off..][0..n]);
-                },
-                .stack => {
-                    const idx: usize = @intCast(loc.index);
-                    @memcpy(stack_buf[idx..][0..n], args[off..][0..n]);
-                },
-                .sret => frame.gpr[0] = @intFromPtr(frame.sret.?),
-                else => unreachable,
-            }
-        }
-    }
-}
-
-fn readRet(frame: *const SysV64Frame, plan: abi.CallPlan, ret: *[256]u8) void {
-    for (plan.ret_locs) |loc| {
-        const off: usize = @intCast(loc.offset);
-        const n: usize = @intCast(loc.size);
-        switch (loc.kind) {
-            .rax => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_rax)[0..n]),
-            .rdx => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_rdx)[0..n]),
-            .xmm0 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_xmm0)[0..n]),
-            .xmm1 => @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.ret_xmm1)[0..n]),
-            else => unreachable,
-        }
-    }
+fn addressFromBits(v: i64) usize {
+    return @intCast(@as(u64, @bitCast(v)));
 }
 
 fn readU64Ptr(ptr: [*]const u8) u64 {
@@ -918,10 +839,11 @@ fn readU64Ptr(ptr: [*]const u8) u64 {
 }
 
 pub export fn ci_callback_dispatch(slot: u64, frame: *CbFrame) callconv(.C) void {
-    if (slot >= callback_entries.len) return;
-    const entry = callback_entries[slot] orelse return;
+    const s: usize = @intCast(slot);
+    if (s >= callback_entries.len) return;
+    const entry = callback_entries[s] orelse return;
     const machine = callback_vm orelse return;
-    validatePlan(entry.plan) catch return;
+    platform.validate(entry.plan) catch return;
     const n: usize = entry.plan.args.len;
     if (n > 8) return;
     var values: [8]Value = undefined;

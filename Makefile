@@ -1,4 +1,4 @@
-.PHONY: all test runtime compiler-test integration size release-check clean
+.PHONY: all test runtime compiler-test integration size release-check cross-test clean
 
 all: test
 
@@ -25,6 +25,9 @@ size: runtime
 	@test "$$(stat -c%s build/ffi_qsort.cib)" -lt 4096
 
 release-check: test size
+
+cross-test:
+	./scripts/test_cross.sh
 
 clean:
 	rm -rf build compiler/src/cinterp/__pycache__ compiler/tests/__pycache__

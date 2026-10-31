@@ -10,6 +10,14 @@ from .llvm_ir.lower import compile_text
 from .ffi.plan import UnsupportedFfi
 
 
+TARGETS = {
+    "x86_64-linux": ("x86_64-pc-linux-gnu", "sysv", 8),
+    "x86_64-windows": ("x86_64-pc-windows-gnu", "win64", 8),
+    "i686-windows": ("i686-pc-windows-gnu", "win32", 4),
+    "aarch64-linux": ("aarch64-linux-gnu", "aapcs64", 8),
+}
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cinterp", description="C interpreter compiler")
     parser.add_argument("--version", action="version", version="cinterp 0.1.0")
@@ -19,6 +27,7 @@ def _build_parser() -> argparse.ArgumentParser:
     comp.add_argument("source")
     comp.add_argument("-o", "--output")
     comp.add_argument("--clang", default="clang")
+    comp.add_argument("--target", choices=sorted(TARGETS), default=None)
     comp.add_argument("--keep-ir", action="store_true")
     comp.add_argument("--dump", action="store_true")
     return parser
@@ -32,8 +41,10 @@ def _compile(args: argparse.Namespace) -> int:
     out = Path(args.output) if args.output else src.with_suffix(".cib")
     with tempfile.TemporaryDirectory(prefix="cinterp-") as td:
         ll = Path(td) / (src.stem + ".ll")
-        cmd = [
-            args.clang,
+        cmd = [args.clang]
+        if args.target:
+            cmd.append("--target=" + TARGETS[args.target][0])
+        cmd += [
             "-S",
             "-emit-llvm",
             "-O0",
@@ -56,7 +67,13 @@ def _compile(args: argparse.Namespace) -> int:
             kept.write_text(ir_text)
 
     try:
-        package, module, plan_bytes, functions, plans = compile_text(ir_text, str(src))
+        abi = "sysv"
+        ptr_size = 8
+        if args.target:
+            _triple, abi, ptr_size = TARGETS[args.target]
+        package, module, plan_bytes, functions, plans = compile_text(
+            ir_text, str(src), abi=abi, ptr_size=ptr_size
+        )
     except (UnsupportedFfi, ValueError) as exc:
         print(f"cinterp: {exc}", file=sys.stderr)
         return 1

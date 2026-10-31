@@ -7,11 +7,12 @@ and no runtime code generation / executable memory.
 
 - **Compiler** (Python, build-time): `clang -S -emit-llvm -O0`, LLVM IR → CIVM
   bytecode, FFI `CallPlan` table, `CIPKG` package.
-- **Runtime** (Zig 0.13): stack VM with linear memory, C ABI (`ci_vm_*`), SysV
-  x86-64 FFI marshaler, fixed `call_x86_64_sysv.S` engine, `dlopen`/`dlsym`
-  symbol resolution.
-- **Targets**: v1 Linux x64. The repo also contains the validated Win64, Win32
-  and AArch64 engines/spike harnesses under `spike/` and `runtime/src/ffi/asm/`.
+- **Runtime** (Zig 0.13): stack VM with linear memory, C ABI (`ci_vm_*`),
+  compile-time ABI selection, fixed assembly engines for SysV x86-64,
+  Win64, Win32 cdecl and AArch64 AAPCS64, and native symbol resolution
+  (`dlopen`/`dlsym` on Unix, `LoadLibraryA`/`GetProcAddress` on Windows).
+- **Targets**: Linux x64, Windows x64, Windows x86, Linux AArch64. Build with
+  `--target` on the compiler and `-Dtarget` on the runtime.
 
 ## Quick start
 
@@ -41,6 +42,12 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_structs.c -o bui
 PYTHONPATH=compiler/src python3 -m cinterp --version
 ./runtime/zig-out/bin/cinterp-run --version
 
+# cross-target packages (build the runtime with the matching -Dtarget)
+PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c \
+  --target x86_64-windows -o build/hello-win64.cib
+cd runtime && zig build -Dtarget=x86_64-windows-gnu && cd ..
+# HOST=user@windows-box make cross-test   # Win64/Win32/ARM64 suite
+
 # full test suite
 make test
 
@@ -61,11 +68,12 @@ necessarily trusted, so run untrusted packages under an OS sandbox.
 ## Compiler
 
 ```bash
-PYTHONPATH=compiler/src python3 -m cinterp compile source.c -o out.cib [--dump] [--keep-ir]
+PYTHONPATH=compiler/src python3 -m cinterp compile source.c -o out.cib [--dump] [--keep-ir] [--target TARGET]
 ```
 
 `--dump` prints functions and FFI plans; `--keep-ir` keeps the generated LLVM IR
-next to the package.
+next to the package. Targets: `x86_64-linux` (default native), `x86_64-windows`,
+`i686-windows`, `aarch64-linux`.
 
 The compiler currently supports:
 
@@ -117,8 +125,9 @@ ci_vm_run, ci_vm_last_error
 ```
 
 The VM is single-threaded, reentrant at the host C ABI boundary, uses a linear
-memory for stack/global data, and resolves native symbols through
-`dlsym(RTLD_DEFAULT)` with a `libc.so.6` fallback.
+memory for stack/global data, and resolves native symbols through the process,
+loaded `--lib` libraries, and the platform C runtime. Static callback
+trampolines are currently available on the SysV x86-64 engine.
 
 ## Repository layout
 
@@ -126,12 +135,14 @@ memory for stack/global data, and resolves native symbols through
 compiler/              Python package (build-time compiler)
   src/cinterp/
     llvm_ir/lower.py   LLVM IR parser/lowerer (CIVM + plans)
-    ffi/plan.py        CallPlan model, SysV plan builder, CIPL serializer
+    ffi/plan.py        CallPlan model, per-ABI plan builders, CIPL serializer
     codegen/           CIPKG writer
     cli.py             cinterp compile
 runtime/               Zig VM/runtime (shipped)
-  src/vm.zig           VM, linear memory, FFI marshaler, C ABI
-  src/ffi/             plan loader, ABI loc types, asm engines
+  src/vm.zig           VM, linear memory, C ABI, callback dispatcher
+  src/ffi/platform.zig compile-time ABI/frame/marshal/invoke selection
+  src/ffi/native.zig   dlopen/LoadLibrary symbol resolution
+  src/ffi/asm/         SysV, Win64, Win32, AArch64 engines
   src/main.zig         cinterp-run CLI
 examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
                        MEMORY/register/mixed struct FFI, qsort callback, math,

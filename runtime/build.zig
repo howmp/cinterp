@@ -10,8 +10,17 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
-    exe.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));
+    const t = target.result;
+    if (t.os.tag == .windows and t.cpu.arch == .x86_64) {
+        exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_win64.S"));
+    } else if (t.os.tag == .windows and t.cpu.arch == .x86) {
+        exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_win32.S"));
+    } else if (t.cpu.arch == .aarch64) {
+        exe.addAssemblyFile(b.path("src/ffi/asm/call_arm64_aapcs.S"));
+    } else {
+        exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
+        exe.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));
+    }
     exe.linkLibC();
     b.installArtifact(exe);
 
@@ -25,8 +34,16 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    tests.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
-    tests.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));
+    if (t.os.tag == .windows and t.cpu.arch == .x86_64) {
+        tests.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_win64.S"));
+    } else if (t.os.tag == .windows and t.cpu.arch == .x86) {
+        tests.addAssemblyFile(b.path("src/ffi/asm/call_x86_win32.S"));
+    } else if (t.cpu.arch == .aarch64) {
+        tests.addAssemblyFile(b.path("src/ffi/asm/call_arm64_aapcs.S"));
+    } else {
+        tests.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
+        tests.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));
+    }
     tests.linkLibC();
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run runtime unit tests");

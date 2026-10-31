@@ -1,7 +1,14 @@
 import unittest
 
 from cinterp.codegen.binary_writer import write_package
-from cinterp.ffi.plan import PlanTable, build_sysv_plan, serialize_plans
+from cinterp.ffi.plan import (
+    PlanTable,
+    build_aapcs64_plan,
+    build_sysv_plan,
+    build_win32_plan,
+    build_win64_plan,
+    serialize_plans,
+)
 from cinterp.llvm_ir.lower import (
     CallbackTable,
     Function,
@@ -80,6 +87,63 @@ class PlanTests(unittest.TestCase):
         self.assertEqual([loc.kind for loc in plan.ret_locs], ["rax"])
         self.assertEqual(callbacks.add("cmp", fn, 3, plans), (0, 3, 0))
         self.assertEqual(len(plans.plans), 1)
+
+    def test_win64_positional_registers(self):
+        plan = build_win64_plan(
+            "c_mix", "i32", ["i32", "double", "i32", "double"]
+        )
+        self.assertEqual(
+            [(a.locs[0].kind, a.locs[0].index) for a in plan.args],
+            [("gpr", 0), ("xmm", 1), ("gpr", 2), ("xmm", 3)],
+        )
+        self.assertEqual([loc.kind for loc in plan.ret_locs], ["rax"])
+
+    def test_win64_sret_shifts_both_register_files(self):
+        plan = build_win64_plan(
+            "c_make_m", "void", ["ptr", "i32", "double"],
+            sret_idx=0, sret_size=16,
+        )
+        self.assertEqual(
+            [(a.locs[0].kind, a.locs[0].index) for a in plan.args],
+            [("sret", 0), ("gpr", 1), ("xmm", 2)],
+        )
+        self.assertTrue(plan.sret)
+
+    def test_win32_stack_and_returns(self):
+        plan = build_win32_plan("f", "i64", ["i32", "double"], ptr_size=4)
+        self.assertEqual([loc.kind for loc in plan.ret_locs], ["rax"])
+        self.assertEqual(plan.ret_locs[0].size, 8)
+        self.assertEqual(
+            [(a.locs[0].kind, a.locs[0].index) for a in plan.args],
+            [("stack", 0), ("stack", 4)],
+        )
+        fp = build_win32_plan("g", "float", ["float"], ptr_size=4)
+        self.assertEqual([loc.kind for loc in fp.ret_locs], ["xmm0"])
+        self.assertEqual(fp.ret_locs[0].size, 4)
+
+    def test_aapcs64_hfa_and_sret(self):
+        plan = build_aapcs64_plan(
+            "c_hfa", "double", ["[2 x double]"],
+            structs={}, ptr_size=8,
+        )
+        self.assertEqual(
+            [(loc.kind, loc.index) for loc in plan.args[0].locs],
+            [("xmm", 0), ("xmm", 1)],
+        )
+        hfa_ret = build_aapcs64_plan(
+            "c_hfa_ret", "%struct.D2", [],
+            structs={"%struct.D2": ["double", "double"]}, ptr_size=8,
+        )
+        self.assertEqual(
+            [(loc.kind, loc.size) for loc in hfa_ret.ret_locs],
+            [("xmm0", 8), ("xmm1", 8)],
+        )
+        sret = build_aapcs64_plan(
+            "big", "void", ["ptr", "i64"],
+            sret_idx=0, sret_size=24, structs={}, ptr_size=8,
+        )
+        self.assertEqual(sret.args[0].locs[0].kind, "sret")
+        self.assertEqual(sret.args[1].locs[0].kind, "gpr")
 
     def test_plan_serialization_and_package(self):
         table = PlanTable()

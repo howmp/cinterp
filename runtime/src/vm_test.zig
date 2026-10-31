@@ -1,6 +1,7 @@
 const std = @import("std");
 const vm = @import("vm.zig");
 const abi = @import("ffi/abi.zig");
+const platform = @import("ffi/platform.zig");
 
 fn putU16(buf: []u8, p: *usize, v: u16) void {
     buf[p.*] = @truncate(v);
@@ -64,10 +65,10 @@ test "plan validation rejects bad ABI locations" {
     var args = [_]abi.ArgPlan{.{ .locs = &arg_locs, .size = 8, .alignment = 8 }};
     const plan = abi.CallPlan{ .args = &args, .ret_locs = &ret };
 
-    try vm.validatePlan(plan);
+    try platform.validate(plan);
     arg_locs[0].index = 6;
-    try std.testing.expectError(error.BadPlan, vm.validatePlan(plan));
+    try std.testing.expectError(error.BadPlan, platform.validate(plan));
     arg_locs[0].index = 0;
     arg_locs[0].offset = 250;
-    try std.testing.expectError(error.BadPlan, vm.validatePlan(plan));
+    try std.testing.expectError(error.BadPlan, platform.validate(plan));
 }

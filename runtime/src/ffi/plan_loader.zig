@@ -31,6 +31,7 @@ pub const StoredPlan = struct {
 pub const Store = struct {
     plans: [MAX_PLANS]StoredPlan = undefined,
     count: u16 = 0,
+    abi_id: u8 = 0,
 
     pub fn find(self: *const Store, name: []const u8) ?*const StoredPlan {
         const count: usize = self.count;
@@ -129,7 +130,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
     const version = try r.readU8();
     if (version != 2) return error.BadVersion;
     const abi_id = try r.readU8();
-    if (abi_id != 1) return error.BadAbi;
+    if (abi_id < 1 or abi_id > 4) return error.BadAbi;
     const count = try r.readU16();
     _ = try r.readU16();
     if (count > MAX_PLANS) return error.TooManyPlans;
@@ -137,6 +138,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
     const store = try allocator.create(Store);
     errdefer allocator.destroy(store);
     store.count = count;
+    store.abi_id = abi_id;
 
     const total: usize = count;
     var pi: usize = 0;

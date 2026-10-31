@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..codegen.binary_writer import write_package
-from ..ffi.plan import PlanTable, build_sysv_plan
+from ..ffi.plan import PlanTable, build_plan, build_sysv_plan
 
 OP_RET = 0x01
 OP_RET_VOID = 0x02
@@ -110,19 +110,19 @@ def align_up(n: int, a: int) -> int:
 def parse_structs(text: str) -> dict[str, list[str]]:
     structs: dict[str, list[str]] = {}
     for line in text.splitlines():
-        m = re.match(r"^(%[\w.$]+)\s*=\s*type\s+\{(.*)\}\s*$", line.strip())
+        m = re.match(r"^(%[\w.$-]+)\s*=\s*type\s+\{(.*)\}\s*$", line.strip())
         if m:
             inner = m.group(2).strip()
             structs[m.group(1)] = split_top(inner) if inner else []
     return structs
 
 
-def struct_layout(fields: list[str], structs: dict[str, list[str]]) -> tuple[list[int], int, int]:
+def struct_layout(fields: list[str], structs: dict[str, list[str]], ptr_size: int = 8) -> tuple[list[int], int, int]:
     offsets: list[int] = []
     off = 0
     max_align = 1
     for field in fields:
-        size, alignment = type_size_align(field, structs)
+        size, alignment = type_size_align(field, structs, ptr_size)
         off = align_up(off, alignment)
         offsets.append(off)
         off += size
@@ -130,28 +130,28 @@ def struct_layout(fields: list[str], structs: dict[str, list[str]]) -> tuple[lis
     return offsets, align_up(off, max_align), max_align
 
 
-def type_size_align(ty: str, structs: dict[str, list[str]]) -> tuple[int, int]:
+def type_size_align(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -> tuple[int, int]:
     ty = ty.strip()
     if ty.startswith("%"):
         fields = structs.get(ty)
         if fields is None:
             raise ValueError(f"unknown struct type {ty}")
-        _, size, alignment = struct_layout(fields, structs)
+        _, size, alignment = struct_layout(fields, structs, ptr_size)
         return size, alignment
     if ty.startswith("["):
         m = re.match(r"\[(\d+)\s+x\s+(.+)\]$", ty)
         if not m:
             raise ValueError(f"bad array type {ty}")
         count = int(m.group(1))
-        elem_size, elem_align = type_size_align(m.group(2), structs)
+        elem_size, elem_align = type_size_align(m.group(2), structs, ptr_size)
         return count * align_up(elem_size, elem_align), elem_align
     if ty.startswith("{"):
         inner = ty[1:-1].strip()
         fields = split_top(inner) if inner else []
-        _, size, alignment = struct_layout(fields, structs)
+        _, size, alignment = struct_layout(fields, structs, ptr_size)
         return size, alignment
     if ty == "ptr":
-        return 8, 8
+        return ptr_size, ptr_size
     if ty == "void":
         return 0, 1
     if ty == "float":
@@ -202,22 +202,22 @@ def parse_llvm_cstring(body: str) -> bytes:
     return bytes(out)
 
 
-def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]]) -> bytes:
-    size, _ = type_size_align(ty, structs)
+def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_size: int = 8) -> bytes:
+    size, _ = type_size_align(ty, structs, ptr_size)
     out = bytearray(size)
     init = init.strip()
     if init.startswith("{") and init.endswith("}"):
         fields = struct_fields(ty, structs)
         if fields is not None:
-            offsets, _, _ = struct_layout(fields, structs)
+            offsets, _, _ = struct_layout(fields, structs, ptr_size)
             parts = split_top(init[1:-1]) if init[1:-1].strip() else []
             for i, part in enumerate(parts):
                 if i >= len(fields):
                     break
-                tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)\s+(.+)$", part.strip())
+                tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", part.strip())
                 if not tm:
                     continue
-                chunk = parse_constant_bytes(tm.group(1), tm.group(2), structs)
+                chunk = parse_constant_bytes(tm.group(1), tm.group(2), structs, ptr_size)
                 off = offsets[i]
                 n = min(len(chunk), max(0, size - off))
                 out[off : off + n] = chunk[:n]
@@ -225,14 +225,14 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]]) -> b
     if init.startswith("[") and init.endswith("]"):
         elem = array_element(ty)
         if elem is not None:
-            es, ea = type_size_align(elem, structs)
+            es, ea = type_size_align(elem, structs, ptr_size)
             stride = align_up(es, ea)
             parts = split_top(init[1:-1]) if init[1:-1].strip() else []
             for i, part in enumerate(parts):
-                tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)\s+(.+)$", part.strip())
+                tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", part.strip())
                 if not tm:
                     continue
-                chunk = parse_constant_bytes(tm.group(1), tm.group(2), structs)
+                chunk = parse_constant_bytes(tm.group(1), tm.group(2), structs, ptr_size)
                 off = i * stride
                 n = min(len(chunk), max(0, size - off))
                 out[off : off + n] = chunk[:n]
@@ -264,7 +264,7 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]]) -> b
     return bytes(out)
 
 
-def parse_globals(text: str, structs: dict[str, list[str]]) -> tuple[dict[str, int], bytes]:
+def parse_globals(text: str, structs: dict[str, list[str]], ptr_size: int = 8) -> tuple[dict[str, int], bytes]:
     globals_map: dict[str, int] = {}
     data = bytearray()
     for line in text.splitlines():
@@ -277,18 +277,18 @@ def parse_globals(text: str, structs: dict[str, list[str]]) -> tuple[dict[str, i
         if not km:
             continue
         tail = re.sub(r",\s*align\s+\d+\s*$", "", rest[km.end():].strip()).strip()
-        tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)\s+(.+)$", tail)
+        tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", tail)
         if not tm:
             continue
         ty, init = tm.group(1).strip(), tm.group(2).strip()
         try:
-            size, align = type_size_align(ty, structs)
+            size, align = type_size_align(ty, structs, ptr_size)
         except ValueError:
             continue
         off = align_up(len(data), max(align, 1))
         if off > len(data):
             data.extend(b"\x00" * (off - len(data)))
-        data.extend(parse_constant_bytes(ty, init, structs))
+        data.extend(parse_constant_bytes(ty, init, structs, ptr_size))
         globals_map[name] = off
     if len(data) % 8:
         data.extend(b"\x00" * (8 - len(data) % 8))
@@ -299,10 +299,11 @@ def parse_decls(text: str) -> dict[str, tuple[str, list[str], bool]]:
     decls: dict[str, tuple[str, list[str], bool]] = {}
     for line in text.splitlines():
         line = line.strip()
-        m = re.match(r"declare\s+(\S+)(?:\s+\([^)]*\))?\s+@([\w.$]+)\((.*)\)", line)
+        m = re.match(r"declare\s+(.+?)\s+@([\w.$-]+)\((.*)\)", line)
         if not m:
             continue
-        ret, name, params_text = m.group(1), m.group(2), m.group(3)
+        pre = re.sub(r"\s*\([^()]*\)\s*$", "", m.group(1).strip()).strip()
+        ret, name, params_text = pre.split()[-1], m.group(2), m.group(3)
         is_varargs = False
         types: list[str] = []
         for p in split_top(params_text):
@@ -310,7 +311,7 @@ def parse_decls(text: str) -> dict[str, tuple[str, list[str], bool]]:
             if p == "...":
                 is_varargs = True
                 continue
-            tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)", p)
+            tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)", p)
             if tm:
                 types.append(tm.group(1))
         decls[name] = (ret, types, is_varargs)
@@ -329,20 +330,25 @@ class Function:
 
 
 class CallbackTable:
-    def __init__(self) -> None:
+    def __init__(self, abi: str = "sysv", structs: dict[str, list[str]] | None = None, ptr_size: int = 8) -> None:
         self.by_func: dict[str, tuple[int, int, int]] = {}
         self.next_slot = 0
+        self.abi = abi
+        self.structs = structs or {}
+        self.ptr_size = ptr_size
 
     def add(self, name: str, fn: Function, func_index: int, plans: PlanTable) -> tuple[int, int, int]:
         if name in self.by_func:
             return self.by_func[name]
         if self.next_slot >= 256:
             raise ValueError("callback slot pool exhausted")
-        plan = build_sysv_plan(
+        plan = build_plan(
+            self.abi,
             "callback:" + name,
             fn.ret,
             [ptype for ptype, _pname in fn.params],
-            False,
+            structs=self.structs,
+            ptr_size=self.ptr_size,
         )
         plan_index = plans.add(plan)
         slot = self.next_slot
@@ -364,6 +370,8 @@ class Lowerer:
         plans: PlanTable,
         functions_by_name: dict[str, Function],
         callbacks: CallbackTable,
+        abi: str = "sysv",
+        ptr_size: int = 8,
     ):
         self.fn = fn
         self.func_indices = func_indices
@@ -374,6 +382,8 @@ class Lowerer:
         self.plans = plans
         self.functions_by_name = functions_by_name
         self.callbacks = callbacks
+        self.abi = abi
+        self.ptr_size = ptr_size
         self.code = bytearray()
         self.slots: dict[str, int] = {}
         self.allocas: dict[str, int] = {}
@@ -419,7 +429,7 @@ class Lowerer:
         self.emit_u16(slot)
 
     def emit_operand(self, text: str) -> None:
-        globals_found = re.findall(r"@[\w.$]+", text)
+        globals_found = re.findall(r"@[\w.$-]+", text)
         if globals_found:
             name = globals_found[-1]
             if name not in self.globals:
@@ -427,7 +437,7 @@ class Lowerer:
             self.emit_u8(OP_ADDR_CONST)
             self.emit_u32(self.globals[name])
             return
-        locals_found = re.findall(r"%[\w.$]+", text)
+        locals_found = re.findall(r"%[\w.$-]+", text)
         if locals_found:
             self.load_slot(self.slot_for(locals_found[-1][1:]))
             return
@@ -459,7 +469,7 @@ class Lowerer:
         raise ValueError(f"unsupported operand: {text!r}")
 
     def type_size(self, ty: str) -> int:
-        return type_size_align(ty, self.structs)[0]
+        return type_size_align(ty, self.structs, self.ptr_size)[0]
 
     def emit_float_operand(self, text: str, ty: str) -> None:
         stripped = text.strip()
@@ -476,7 +486,7 @@ class Lowerer:
         self.emit_operand(text)
 
     def emit_arg(self, text: str) -> None:
-        found = re.findall(r"@[\w.$]+", text)
+        found = re.findall(r"@[\w.$-]+", text)
         if found:
             name = found[-1]
             key = name[1:]
@@ -547,7 +557,7 @@ class Lowerer:
                 if not nums:
                     raise ValueError(f"non-constant struct index: {index}")
                 field_idx = int(nums[-1])
-                offsets, _, _ = struct_layout(fields, self.structs)
+                offsets, _, _ = struct_layout(fields, self.structs, self.ptr_size)
                 if field_idx < 0 or field_idx >= len(fields):
                     raise ValueError(f"bad struct field index {field_idx}")
                 off = offsets[field_idx]
@@ -583,7 +593,7 @@ class Lowerer:
             if not line or line.startswith("#dbg"):
                 i += 1
                 continue
-            m = re.match(r"^([\w.$]+):$", line)
+            m = re.match(r"^([\w.$-]+):$", line)
             if m:
                 self.label_pos[m.group(1)] = len(self.code)
                 i += 1
@@ -616,12 +626,12 @@ class Lowerer:
         self.fn.local_count = self.next_slot
 
     def lower_switch(self, header: str, cases: list[str]) -> None:
-        m = re.match(r"switch\s+\S+\s+(%[\w.$]+),\s*label\s+%([\w.$]+)\s*\[?$", header)
+        m = re.match(r"switch\s+\S+\s+(%[\w.$-]+),\s*label\s+%([\w.$-]+)\s*\[?$", header)
         if not m:
             raise ValueError(f"bad switch: {header}")
         cond, default = m.group(1), m.group(2)
         for case in cases:
-            cm = re.match(r"\S+\s+(-?\d+),\s*label\s+%([\w.$]+)", case)
+            cm = re.match(r"\S+\s+(-?\d+),\s*label\s+%([\w.$-]+)", case)
             if not cm:
                 raise ValueError(f"bad switch case: {case}")
             value = int(cm.group(1))
@@ -657,12 +667,20 @@ class Lowerer:
             return
 
         if rhs.startswith("store "):
-            m = re.match(r"store\s+(\S+)\s+([^,]+),\s*ptr\s+(.+)$", rhs)
+            m = re.match(r"store\s+(\[[^\]]*\]|\{[^}]*\}|[^,]+?)\s+([^,]+),\s*ptr\s+(.+)$", rhs)
             if not m:
                 raise ValueError(f"bad store: {line}")
             ty, value, ptr = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
             size = self.type_size(ty)
-            if size <= 0 or size > 8:
+            if size <= 0:
+                raise ValueError(f"aggregate store unsupported: {ty}")
+            if size > 8 and ty.startswith(("%", "[", "{")):
+                self.emit_pointer(ptr)
+                self.emit_pointer(value)
+                self.emit_const(size)
+                self.emit_u8(OP_MEMCPY)
+                return
+            if size > 8:
                 raise ValueError(f"aggregate store unsupported: {ty}")
             if ty in ("float", "double"):
                 self.emit_float_operand(value, ty)
@@ -676,12 +694,17 @@ class Lowerer:
         if rhs.startswith("load "):
             if result is None:
                 raise ValueError("load without result")
-            m = re.match(r"load\s+(\S+),\s*ptr\s+(.+)$", rhs)
+            m = re.match(r"load\s+(\[[^\]]*\]|\{[^}]*\}|[^,]+?)\s*,\s*ptr\s+(.+)$", rhs)
             if not m:
                 raise ValueError(f"bad load: {line}")
             ty, ptr = m.group(1).strip(), m.group(2).strip()
             size = self.type_size(ty)
-            if size <= 0 or size > 8:
+            if size > 8:
+                # An aggregate value is represented by a pointer to its bytes.
+                self.emit_pointer(ptr)
+                self.store_slot(self.slot_for(result))
+                return
+            if size <= 0:
                 raise ValueError(f"aggregate load unsupported: {ty}")
             self.emit_pointer(ptr)
             self.emit_u8(OP_LOAD_MEM)
@@ -875,14 +898,14 @@ class Lowerer:
         if rhs.startswith("extractvalue "):
             if result is None:
                 raise ValueError("extractvalue without result")
-            em = re.match(r"extractvalue\s+(.+?)\s+(%[\w.$]+),\s*(\d+)$", rhs)
+            em = re.match(r"extractvalue\s+(.+?)\s+(%[\w.$-]+),\s*(\d+)$", rhs)
             if not em:
                 raise ValueError(f"bad extractvalue: {line}")
             agg_ty, value, index_text = em.group(1).strip(), em.group(2), em.group(3)
             fields = struct_fields(agg_ty, self.structs)
             if fields is None:
                 raise ValueError(f"bad extractvalue type {agg_ty}")
-            offsets, _, _ = struct_layout(fields, self.structs)
+            offsets, _, _ = struct_layout(fields, self.structs, self.ptr_size)
             index = int(index_text)
             if index < 0 or index >= len(fields):
                 raise ValueError(f"bad extractvalue index {index}")
@@ -901,13 +924,13 @@ class Lowerer:
             return
 
         if rhs.startswith("br "):
-            m = re.match(r"br\s+i1\s+(%[\w.$]+),\s*label\s+%([\w.$]+),\s*label\s+%([\w.$]+)", rhs)
+            m = re.match(r"br\s+i1\s+(%[\w.$-]+),\s*label\s+%([\w.$-]+),\s*label\s+%([\w.$-]+)", rhs)
             if m:
                 self.emit_operand(m.group(1))
                 self.jump(OP_JNZ, m.group(2))
                 self.jump(OP_JMP, m.group(3))
                 return
-            m = re.match(r"br\s+label\s+%([\w.$]+)", rhs)
+            m = re.match(r"br\s+label\s+%([\w.$-]+)", rhs)
             if m:
                 self.jump(OP_JMP, m.group(1))
                 return
@@ -945,7 +968,7 @@ class Lowerer:
                 self.emit_u8(OP_MEMSET)
             return
 
-        m = re.match(r"(?:tail\s+)?call\s+(.*?)\s+@([\w.$]+)\((.*)\)$", rhs)
+        m = re.match(r"(?:tail\s+)?call\s+(.*?)\s+@([\w.$-]+)\((.*)\)$", rhs)
         if m:
             ret_expr = re.sub(r"\s*\([^()]*\)\s*$", "", m.group(1).strip()).strip()
             ret_type, fname, args_text = ret_expr, m.group(2), m.group(3)
@@ -953,7 +976,7 @@ class Lowerer:
             arg_types: list[str] = []
             arg_values: list[str] = []
             for arg in args:
-                tm = re.match(r"(\[[^\]]*\]|%[\w.$]+|\S+)\s+(.+)$", arg.strip())
+                tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", arg.strip())
                 if not tm:
                     raise ValueError(f"bad call argument: {arg!r}")
                 arg_types.append(tm.group(1).strip())
@@ -974,7 +997,9 @@ class Lowerer:
                     if bm:
                         byval_sizes[idx] = self.type_size(bm.group(1))
                 plan_ret = "void" if sret_idx is not None else ret_type
-                plan = build_sysv_plan(
+                named_count = len(decl[1]) if (is_varargs and decl) else None
+                plan = build_plan(
+                    self.abi,
                     fname,
                     plan_ret,
                     arg_types,
@@ -982,6 +1007,9 @@ class Lowerer:
                     sret_idx,
                     sret_size,
                     byval_sizes,
+                    self.structs,
+                    self.ptr_size,
+                    named_count,
                 )
                 plan_index = self.plans.add(plan)
                 for value in arg_values:
@@ -1018,7 +1046,7 @@ def parse_functions(text: str) -> list[Function]:
     while i < len(lines):
         line = lines[i].strip()
         line = re.sub(r"\s*!dbg\s*!\d+", "", line).strip()
-        m = re.search(r"define\s+(.+?)\s+@([\w.$]+)\((.*)\)\s*(?:#\d+)?\s*\{", line)
+        m = re.search(r"define\s+(.+?)\s+@([\w.$-]+)\((.*)\)\s*(?:#\d+)?\s*\{", line)
         if not m:
             i += 1
             continue
@@ -1026,7 +1054,7 @@ def parse_functions(text: str) -> list[Function]:
         ret = pre.split()[-1]
         params: list[tuple[str, str]] = []
         for p in (split_top(params_text) if params_text.strip() else []):
-            pm = re.match(r"(i\d+|ptr|void|double|float)\s+.*?%([\w.$]+)", p)
+            pm = re.match(r"(i\d+|ptr|void|double|float)\s+.*?%([\w.$-]+)", p)
             if not pm:
                 raise ValueError(f"bad parameter: {p!r}")
             params.append((pm.group(1), pm.group(2)))
@@ -1060,14 +1088,14 @@ def serialize(functions: list[Function]) -> bytes:
     return bytes(out)
 
 
-def compile_text(text: str, source_name: str = "<input>"):
+def compile_text(text: str, source_name: str = "<input>", abi: str = "sysv", ptr_size: int = 8):
     structs = parse_structs(text)
-    globals_map, global_data = parse_globals(text, structs)
+    globals_map, global_data = parse_globals(text, structs, ptr_size)
     decls = parse_decls(text)
     functions = parse_functions(text)
     indices = {fn.name: idx for idx, fn in enumerate(functions)}
-    plans = PlanTable()
-    callbacks = CallbackTable()
+    plans = PlanTable(abi)
+    callbacks = CallbackTable(abi, structs, ptr_size)
     functions_by_name = {fn.name: fn for fn in functions}
     for fn in functions:
         fn.index = indices[fn.name]
@@ -1081,6 +1109,8 @@ def compile_text(text: str, source_name: str = "<input>"):
             plans,
             functions_by_name,
             callbacks,
+            abi,
+            ptr_size,
         ).lower()
     module = serialize(functions)
     plan_bytes = plans.serialize()

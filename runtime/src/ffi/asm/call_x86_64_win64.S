@@ -21,6 +21,8 @@ ci_win64_call:
     push r13
     push r14
     push r15
+    push rsi
+    push rdi
 
     mov rbx, rcx
     mov r12, rdx
@@ -54,7 +56,9 @@ ci_win64_call:
     movups [rbx + RET_XMM0], xmm0
     movups [rbx + RET_XMM1], xmm1
 
-    lea rsp, [rbp - 40]
+    lea rsp, [rbp - 56]
+    pop rdi
+    pop rsi
     pop r15
     pop r14
     pop r13

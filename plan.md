@@ -11,7 +11,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 
 已完成：
 
-- **v1 实现（Linux x64）**：`compiler/`（C→CIVM、CIPL FFI 计划、CIPKG）+ `runtime/`（Zig VM、线性内存、SysV FFI、C ABI、callback trampoline、`--lib`）+ `examples/`；`make test` 通过（runtime 3、compiler 11、端到端 15），含 MEMORY/register/mixed struct FFI、qsort callback、float32/double 算术、bitfield。
+- **v1 实现（SysV x64/Win64/Win32/ARM64）**：`compiler/`（C→CIVM、CIPL FFI 计划、CIPKG、`--target`）+ `runtime/`（Zig VM、线性内存、平台 ABI 选择、C ABI、`--lib`、Windows/Unix loader）+ `examples/`；`make test` 通过（runtime 3、compiler 15、端到端 15），`scripts/test_cross.sh` 33/33（Win64/Win32/ARM64 各 11）。含 MEMORY/register/mixed struct FFI、qsort callback（SysV）、float32/double 算术、bitfield。
 - **x86-64 SysV 固定汇编引擎**：`spike/asm_abi_call` 5/5，`ReleaseSmall` 8.7K。
 - **前端 CallPlan 生成器（x86-64 SysV 原型）**：`spike/callplan_gen` 从 clang LLVM IR 生成 15 个计划，4/4，`ReleaseSmall` 8.7K。
 - **计划二进制序列化 + loader**：`spike/callplan_gen` 的 `plans.bin` 995 字节/15 计划；Zig loader round-trip、名称查找、解码后调用、错误路径全部通过；总计 6/6。
@@ -29,7 +29,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 下一步：
 
 - **编译器侧 struct/callback FFI**：MEMORY `byval`/`sret`、coerced S8、双 XMM D16、`{i64,double}` mixed、qsort callback 已集成。
-- **多 ABI 计划生成**：Win64/Win32/ARM64 的 compiler plan builder 与 runtime 选择。
+- **多 ABI 计划生成/运行时选择**：Win64/Win32/ARM64 compiler plan builder + `ffi/platform.zig` + 交叉测试已完成。
 - **C11 扩展**：`long double`、c-testsuite/chibicc 子集（float32/double 算术、bitfield 已完成）。
 - **M11 加固/发布**：ABI 边界、体积、错误路径、CI/发布检查。
 
@@ -157,7 +157,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - `runtime/`：Zig VM、线性内存、`ci_vm_*` C ABI、SysV 固定汇编 FFI 引擎、`dlsym`/`libc` 解析、CIPKG 加载。
 - `examples/`：hello、arrays、structs、puts、printf、snprintf、malloc/free、MEMORY/register/mixed struct FFI、qsort callback、float32/double math/FFI、bitfields。
 - `make test`：runtime 3 单测 + compiler 11 单测 + 15 个端到端用例通过；`ffi_structs=28`、`ffi_regstruct=102`、`ffi_mixedstruct=11`、`ffi_qsort=1`、`math=8`、`float_math=8`、`ffi_float=5`、`bitfields=12`。
-- 后续：Win64/Win32/ARM64 计划生成、long double、c-testsuite。
+- 后续：long double、c-testsuite、fuzz/外部 CI。
 
 ## 4. Spike 计划
 
@@ -352,7 +352,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - [x] register-class S8（coerced i64）与 D16（双 XMM 聚合返回）
 - [x] callback 静态 trampoline + 可重入 VM（qsort）
 - [x] mixed-class register aggregate（`{i64,double}`）
-- [ ] Win64/Win32/ARM64 计划生成与运行时选择
+- [x] Win64/Win32/ARM64 计划生成与运行时选择（`scripts/test_cross.sh` 33/33）
 - [x] float32/double 算术/比较（fadd/fsub/fmul/fdiv、fcmp、fpext/fptrunc、sitofp/fptosi）
 - [x] bitfield（clang shift/mask lowering）
 - [ ] long double/c-testsuite
@@ -409,3 +409,4 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - **2026-10-31（周六）**：M11 基础加固——plan 数量/ABI 位置/offset/size 校验，错误路径测试（缺失输入、坏 package、未知符号），`--version`/`--help`。
 - **2026-10-31（周六）**：`make size`/`make release-check`；ReleaseSmall runtime 40K、hello.cib 78B、qsort.cib 460B。
 - **2026-10-31（周六）**：package 截断 smoke（0/4/5/14/15/30/100 字节）全部干净失败，无崩溃。
+- **2026-10-31（周六）**：多 ABI 落地——compiler `--target`、Win64/Win32/AAPCS64 plan builder、runtime `ffi/platform.zig`/`ffi/native.zig`、Win64/Win32/ARM64 frame/engine；交叉测试 33/33（Win64 11、Win32 11、ARM64 11）。
