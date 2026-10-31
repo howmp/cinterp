@@ -497,6 +497,9 @@ def build_win32_plan(
     arg_offset = 0
     args: list[ArgPlan] = []
     has_sret = sret_idx is not None
+    if conv == 2 and has_sret:
+        raise UnsupportedFfi("fastcall sret is not supported")
+    gpr = 0
 
     for i, ty in enumerate(arg_types):
         if sret_idx == i:
@@ -537,6 +540,12 @@ def build_win32_plan(
         if kind == "void":
             raise UnsupportedFfi("void argument")
         align = 4
+        if conv == 2 and gpr < 2 and size <= 4:
+            loc = Loc("gpr", gpr, size, arg_offset)
+            arg_offset = _align_up(arg_offset, 4) + size
+            gpr += 1
+            args.append(ArgPlan([loc], size, align, False))
+            continue
         stack_size = _align_up(stack_size, align)
         loc = Loc("stack", stack_size, size, arg_offset)
         stack_size += _align_up(size, 4)
@@ -710,8 +719,8 @@ def build_plan(
     named_count: int | None = None,
     conv: int = 0,
 ) -> CallPlan:
-    if conv != 0 and abi != "win32":
-        raise UnsupportedFfi("stdcall is only supported for win32")
+    if conv not in (0, 1, 2) or (conv != 0 and abi != "win32"):
+        raise UnsupportedFfi("stdcall/fastcall are only supported for win32")
     if abi == "sysv":
         return build_sysv_plan(
             name, ret_type, arg_types, is_varargs, sret_idx, sret_size, byval_sizes

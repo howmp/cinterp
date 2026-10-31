@@ -80,6 +80,8 @@ for h in ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruc
 done
 python3 -m cinterp compile examples/ffi_stdcall.c --target i686-windows -o "$OUT/ffi_stdcall-i686-windows.cib" >/dev/null
 zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_stdcall_helper32.dll" examples/ffi_stdcall_helper.c
+zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_fastcall_helper32.dll" examples/ffi_fastcall_helper.c
+python3 -m cinterp compile examples/ffi_fastcall.c --target i686-windows -o "$OUT/ffi_fastcall-i686-windows.cib" >/dev/null
 scp "$OUT/cinterp-run32.exe" "$OUT"/*-i686-windows.cib "$OUT"/lib*32.dll "$HOST:$REMOTE" >/dev/null
 win_run cinterp-run32.exe hello-i686-windows.cib "" 42
 win_run cinterp-run32.exe arrays-i686-windows.cib "" 10
@@ -101,6 +103,7 @@ win_run cinterp-run32.exe ffi_hfa-i686-windows.cib libffi_hfa_helper32.dll 120
 win_run cinterp-run32.exe ffi_hfa_stack-i686-windows.cib libffi_hfa_stack_helper32.dll 45
 win_run cinterp-run32.exe packed-i686-windows.cib libpacked_helper32.dll 7
 win_run cinterp-run32.exe ffi_stdcall-i686-windows.cib libffi_stdcall_helper32.dll 60
+win_run cinterp-run32.exe ffi_fastcall-i686-windows.cib libffi_fastcall_helper32.dll 123
 win_run cinterp-run32.exe winapi-i686-windows.cib "" 7
 
 echo "== ARM64"

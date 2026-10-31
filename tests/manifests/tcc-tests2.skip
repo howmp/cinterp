@@ -1,4 +1,4 @@
-# refreshed after harness normalization/warning stripping
+# refreshed after bitfield/fastcall work
 100_c99array-decls	compile: /home/admin/cl/build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
 101_cleanup	compile: cinterp: unsupported type <2 x float>
 102_alignas	compile: /home/admin/cl/build/suites/tcc/tests/tests2/102_alignas.c:4:14: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
@@ -10,7 +10,7 @@
 113_btdll	mismatch: stdout mismatch
 114_bound_signal	mismatch: stdout mismatch
 115_bound_setjmp	mismatch: stdout mismatch
-116_bound_setjmp2	mismatch: stdout mismatch
+116_bound_setjmp2	run: exit -11 != 0
 117_builtins	mismatch: stdout mismatch
 119_random_stuff	compile: /home/admin/cl/build/suites/tcc/tests/tests2/119_random_stuff.c:18:7: warning: ISO C does not allow indirection on operand of type 'void *' [-Wvoid-ptr-dereference]
 120+_alias	mismatch: stdout mismatch
@@ -21,7 +21,6 @@
 126_bound_global	mismatch: stdout mismatch
 127_asm_goto	compile: cinterp: unsupported instruction: callbr void asm sideeffect "jmp ${0:l}", "!i,~{dirflag},~{fpsr},~{flags}"()
 128_run_atexit	mismatch: stdout mismatch
-131_return_struct_in_reg	mismatch: stdout mismatch
 136_atomic_gcc_style	compile: cinterp: unsupported instruction: %7 = cmpxchg ptr %atomic_var1, i32 %5, i32 %6 seq_cst seq_cst, align 4
 137_funcall_struct_args	compile: /home/admin/cl/build/suites/tcc/tests/tests2/137_funcall_struct_args.c:17:1: warning: return type of 'main' is not 'int' [-Wmain-return-type]
 138_arm64_encoding	compile: /home/admin/cl/build/suites/tcc/tests/tests2/138_arm64_encoding.c:182:32: error: unknown register name 'x0' in asm
@@ -53,4 +52,3 @@
 95_bitfields_ms	compile: In file included from /home/admin/cl/build/suites/tcc/tests/tests2/95_bitfields_ms.c:2:
 96_nodata_wanted	mismatch: stdout mismatch
 98_al_ax_extend	mismatch: stdout mismatch
-99_fastcall	mismatch: stdout mismatch

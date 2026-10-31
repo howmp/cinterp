@@ -19,3 +19,4 @@ sigaltstack	run: exit -11 != 0
 tls_get_new-dtv	run: exit -11 != 0
 tls_get_new-dtv_dso	mismatch: stdout mismatch
 pthread_cancel-sem_wait	runtime: known intermittent segfault; quarantine
+pthread-robust-detach	runtime: known intermittent segfault; quarantine

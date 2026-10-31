@@ -33,7 +33,11 @@ _ci_win32_call:
     rep movsb
     mov edi, [esp + edx]
     mov esi, [esp + edx + 4]
-
+    cmp edi, 2
+    jne no_fastcall
+    mov ecx, [ebx + RET_EAX]
+    mov edx, [ebx + RET_EDX]
+no_fastcall:
     call esi
 
     mov [ebx + RET_EAX], eax

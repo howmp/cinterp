@@ -1,0 +1,1 @@
+99_fastcall	run: requires 32-bit inline asm trap framework; Win32 fastcall ABI is covered by ffi_fastcall

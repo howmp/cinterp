@@ -1256,30 +1256,55 @@ class Lowerer:
 
         m = re.match(
             r"(add|sub|mul|sdiv|udiv|srem|urem|and|or|xor|shl|lshr|ashr)\s+"
-            r"(?:nsw\s+|nuw\s+|exact\s+)?\S+\s+(.+)$",
+            r"(?:nsw\s+|nuw\s+|exact\s+)?(\S+)\s+(.+)$",
             rhs,
         )
         if m:
             if result is None:
                 raise ValueError(f"arithmetic without result: {line}")
-            a, b = split_top(m.group(2), ",")
-            self.emit_operand(a)
-            self.emit_operand(b)
-            self.emit_u8({
-                "add": OP_ADD,
-                "sub": OP_SUB,
-                "mul": OP_MUL,
-                "sdiv": OP_DIV_S,
-                "udiv": OP_DIV_U,
-                "srem": OP_REM_S,
-                "urem": OP_REM_U,
-                "and": OP_AND,
-                "or": OP_OR,
-                "xor": OP_XOR,
-                "shl": OP_SHL,
-                "lshr": OP_SHR_U,
-                "ashr": OP_SHR_S,
-            }[m.group(1)])
+            op = m.group(1)
+            ty = m.group(2)
+            a, b = split_top(m.group(3), ",")
+            bits = int(ty[1:]) if ty.startswith("i") else 64
+            mask = (1 << bits) - 1 if bits < 64 else None
+            if op == "lshr" and mask is not None:
+                # LLVM integer operations are width-typed. Loads of i8/i16
+                # values may be sign-extended into the VM's 64-bit slot.
+                self.emit_operand(a)
+                self.emit_const(mask)
+                self.emit_u8(OP_AND)
+                self.emit_operand(b)
+                self.emit_u8(OP_SHR_U)
+            elif op == "ashr" and bits < 64:
+                # Sign-extend from the declared width before an arithmetic shift.
+                self.emit_operand(a)
+                self.emit_const(64 - bits)
+                self.emit_u8(OP_SHL)
+                self.emit_const(64 - bits)
+                self.emit_u8(OP_SHR_S)
+                self.emit_operand(b)
+                self.emit_u8(OP_SHR_S)
+            else:
+                self.emit_operand(a)
+                self.emit_operand(b)
+                self.emit_u8({
+                    "add": OP_ADD,
+                    "sub": OP_SUB,
+                    "mul": OP_MUL,
+                    "sdiv": OP_DIV_S,
+                    "udiv": OP_DIV_U,
+                    "srem": OP_REM_S,
+                    "urem": OP_REM_U,
+                    "and": OP_AND,
+                    "or": OP_OR,
+                    "xor": OP_XOR,
+                    "shl": OP_SHL,
+                    "lshr": OP_SHR_U,
+                    "ashr": OP_SHR_S,
+                }[op])
+                if op == "shl" and mask is not None:
+                    self.emit_const(mask)
+                    self.emit_u8(OP_AND)
             self.store_slot(self.slot_for(result))
             return
 
@@ -1566,7 +1591,7 @@ class Lowerer:
             fname = normalize_llvm_name(m.group(2) if m.group(2) is not None else m.group(3))
             fname = LLVM_LIBC_INTRINSICS.get(fname, fname)
             args_text = m.group(4)
-            conv = 1 if "x86_stdcallcc" in rhs else 0
+            conv = 2 if "x86_fastcallcc" in rhs else (1 if "x86_stdcallcc" in rhs else 0)
             args = split_top(args_text) if args_text.strip() else []
             arg_types: list[str] = []
             arg_values: list[str] = []

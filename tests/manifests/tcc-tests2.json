@@ -18,5 +18,6 @@
   "repo_skip_file": "tests/manifests/tcc-tests2.skip",
   "normalize_source_paths": true,
   "normalize_trailing_whitespace": true,
-  "strip_compiler_diagnostics": true
+  "strip_compiler_diagnostics": true,
+  "repo_exclude_file": "tests/manifests/tcc-tests2.excluded"
 }

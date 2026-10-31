@@ -60,7 +60,7 @@ TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whi
 | --- | ---: | ---: |
 | csuite | 12 | 0 |
 | c-testsuite | 217 | 3 |
-| tcc-tests2 | 88 | 55 |
+| tcc-tests2 | 89 | 53 |
 | chibicc | 14 | 27 |
 | libc-test | 40 | 35 |
 | gcc-torture | 1155 | 91 |
@@ -74,10 +74,10 @@ TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whi
 | libc-test-regression | 49 | 20 |
 | c-testsuite-smoke | 12 | 0 |
 | tcc-smoke / gcc-smoke / compcert-smoke | 12 each | 0 |
-| **total** | **4144** | **309** |
+| **total** | **4144** | **308** |
 
 `make test-suites-full` is the command that produced this table; generated
 YARPGen/Csmith known-failure seeds are recorded separately in
 `tests/generator-known-failures.json`.
 
-`gcc-torture.excluded` and `gcc-torture-compile.excluded` contain 455 compile/runtime cases that depend on explicit non-goals (varargs/builtins/asm/vectors/etc). They are separate from the supported subset and not counted as passes or skips.
+`gcc-torture.excluded` and `gcc-torture-compile.excluded` contain 1098 compile/runtime cases that depend on explicit non-goals (varargs/builtins/asm/vectors/etc). They are separate from the supported subset and not counted as passes or skips.

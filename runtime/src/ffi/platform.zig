@@ -288,12 +288,15 @@ fn marshalWin64(frame: *Win64Frame, plan: abi.CallPlan, args: *const [4096]u8, s
 }
 
 fn marshalWin32(frame: *Win32Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
-    _ = frame;
     for (plan.args) |arg| {
         for (arg.locs) |loc| {
             const off: usize = @intCast(loc.offset);
             const n: usize = @intCast(loc.size);
             switch (loc.kind) {
+                .gpr => {
+                    const value = readU64(args, off);
+                    if (loc.index == 0) frame.eax = @truncate(value) else frame.edx = @truncate(value);
+                },
                 .stack => {
                     const idx: usize = @intCast(loc.index);
                     @memcpy(stack_buf[idx..][0..n], args[off..][0..n]);
@@ -503,7 +506,7 @@ fn validateWin64(plan: abi.CallPlan) !void {
 }
 
 fn validateWin32(plan: abi.CallPlan) !void {
-    try validateCommon(plan, 0, 0, true);
+    try validateCommon(plan, 2, 0, false);
     for (plan.ret_locs) |loc| {
         switch (loc.kind) {
             .rax, .rdx => if (loc.size > 8) return error.BadPlan,
