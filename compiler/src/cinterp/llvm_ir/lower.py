@@ -36,6 +36,11 @@ OP_SHR_S = 0x1F
 OP_SHR_U = 0x24
 OP_FPTOSI = 0x25
 OP_SITOFP = 0x26
+OP_FADD = 0x27
+OP_FSUB = 0x28
+OP_FMUL = 0x29
+OP_FDIV = 0x2A
+OP_FCMP = 0x2B
 OP_LOAD_LOCAL = 0x20
 OP_STORE_LOCAL = 0x21
 OP_JMP = 0x30
@@ -417,6 +422,11 @@ class Lowerer:
         if locals_found:
             self.load_slot(self.slot_for(locals_found[-1][1:]))
             return
+        stripped = text.strip()
+        if re.fullmatch(r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?", stripped):
+            bits = struct.unpack("<Q", struct.pack("<d", float(stripped)))[0]
+            self.emit_const(bits)
+            return
         if re.search(r"\btrue\b", text):
             self.emit_const(1)
             return
@@ -650,6 +660,66 @@ class Lowerer:
             self.emit_pointer(ptr)
             self.emit_u8(OP_LOAD_MEM)
             self.emit_u8(size)
+            self.store_slot(self.slot_for(result))
+            return
+
+        m = re.match(r"(fadd|fsub|fmul|fdiv)\s+(?:fast\s+)?(double|float)\s+(.+)$", rhs)
+        if m:
+            if result is None:
+                raise ValueError(f"float arithmetic without result: {line}")
+            if m.group(2) != "double":
+                raise ValueError("float32 arithmetic is not supported")
+            a, b = split_top(m.group(3), ",")
+            self.emit_operand(a)
+            self.emit_operand(b)
+            self.emit_u8({
+                "fadd": OP_FADD,
+                "fsub": OP_FSUB,
+                "fmul": OP_FMUL,
+                "fdiv": OP_FDIV,
+            }[m.group(1)])
+            self.store_slot(self.slot_for(result))
+            return
+
+        m = re.match(r"fneg\s+(double|float)\s+(.+)$", rhs)
+        if m:
+            if result is None:
+                raise ValueError(f"fneg without result: {line}")
+            if m.group(1) != "double":
+                raise ValueError("float32 arithmetic is not supported")
+            self.emit_operand(m.group(2))
+            self.emit_const(0x8000000000000000)
+            self.emit_u8(OP_XOR)
+            self.store_slot(self.slot_for(result))
+            return
+
+        if rhs.startswith("fcmp "):
+            if result is None:
+                raise ValueError(f"fcmp without result: {line}")
+            m = re.match(r"fcmp\s+(\w+)\s+(\S+)\s+(.+)$", rhs)
+            if not m:
+                raise ValueError(f"bad fcmp: {line}")
+            src_ty = m.group(2)
+            if src_ty != "double":
+                raise ValueError("float32 comparisons are not supported")
+            pred = m.group(1)
+            pred_code = {
+                "oeq": 0,
+                "one": 1,
+                "olt": 2,
+                "ole": 3,
+                "ogt": 4,
+                "oge": 5,
+                "ord": 6,
+                "uno": 7,
+            }.get(pred)
+            if pred_code is None:
+                raise ValueError(f"unsupported fcmp predicate: {pred}")
+            a, b = split_top(m.group(3), ",")
+            self.emit_operand(a)
+            self.emit_operand(b)
+            self.emit_u8(OP_FCMP)
+            self.emit_u8(pred_code)
             self.store_slot(self.slot_for(result))
             return
 
@@ -906,7 +976,7 @@ def parse_functions(text: str) -> list[Function]:
         ret = pre.split()[-1]
         params: list[tuple[str, str]] = []
         for p in (split_top(params_text) if params_text.strip() else []):
-            pm = re.match(r"(i\d+|ptr|void)\s+.*?%([\w.$]+)", p)
+            pm = re.match(r"(i\d+|ptr|void|double|float)\s+.*?%([\w.$]+)", p)
             if not pm:
                 raise ValueError(f"bad parameter: {p!r}")
             params.append((pm.group(1), pm.group(2)))

@@ -29,6 +29,11 @@ pub const OP_SHR_S: u8 = 0x1F;
 pub const OP_SHR_U: u8 = 0x24;
 pub const OP_FPTOSI: u8 = 0x25;
 pub const OP_SITOFP: u8 = 0x26;
+pub const OP_FADD: u8 = 0x27;
+pub const OP_FSUB: u8 = 0x28;
+pub const OP_FMUL: u8 = 0x29;
+pub const OP_FDIV: u8 = 0x2A;
+pub const OP_FCMP: u8 = 0x2B;
 pub const OP_CMP_LT_U: u8 = 0x35;
 pub const OP_LOAD_LOCAL: u8 = 0x20;
 pub const OP_STORE_LOCAL: u8 = 0x21;
@@ -496,6 +501,55 @@ pub const VM = struct {
                     const v = try self.pop();
                     const fval: f64 = @floatFromInt(v.i);
                     try self.push(.{ .i = @bitCast(fval) });
+                },
+                OP_FADD => {
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const fa: f64 = @bitCast(a.i);
+                    const fb: f64 = @bitCast(b.i);
+                    try self.push(.{ .i = @bitCast(fa + fb) });
+                },
+                OP_FSUB => {
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const fa: f64 = @bitCast(a.i);
+                    const fb: f64 = @bitCast(b.i);
+                    try self.push(.{ .i = @bitCast(fa - fb) });
+                },
+                OP_FMUL => {
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const fa: f64 = @bitCast(a.i);
+                    const fb: f64 = @bitCast(b.i);
+                    try self.push(.{ .i = @bitCast(fa * fb) });
+                },
+                OP_FDIV => {
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const fa: f64 = @bitCast(a.i);
+                    const fb: f64 = @bitCast(b.i);
+                    try self.push(.{ .i = @bitCast(fa / fb) });
+                },
+                OP_FCMP => {
+                    const pred = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const fa: f64 = @bitCast(a.i);
+                    const fb: f64 = @bitCast(b.i);
+                    const unordered = std.math.isNan(fa) or std.math.isNan(fb);
+                    var r: bool = false;
+                    switch (pred) {
+                        0 => r = !unordered and fa == fb,
+                        1 => r = !unordered and fa != fb,
+                        2 => r = !unordered and fa < fb,
+                        3 => r = !unordered and fa <= fb,
+                        4 => r = !unordered and fa > fb,
+                        5 => r = !unordered and fa >= fb,
+                        6 => r = !unordered,
+                        7 => r = unordered,
+                        else => {},
+                    }
+                    try self.push(.{ .i = if (r) 1 else 0 });
                 },
                 OP_LOAD_LOCAL => {
                     const idx = try readU16(code, &ip);

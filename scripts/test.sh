@@ -66,6 +66,19 @@ reg_out="$("$RUNTIME" --lib "$OUT/libregstruct_helpers.so" "$OUT/ffi_regstruct.c
 printf '%s\n' "$reg_out" | grep -Fq "result: 102"
 echo "OK ffi_regstruct -> 102"
 
+echo "== mixed-class aggregate FFI (i64 + double)"
+cc -shared -fPIC -O0 examples/ffi_mixedstruct_helper.c -o "$OUT/libmixedstruct_helpers.so"
+python3 -m cinterp compile examples/ffi_mixedstruct.c -o "$OUT/ffi_mixedstruct.cib" >/dev/null
+mixed_out="$("$RUNTIME" --lib "$OUT/libmixedstruct_helpers.so" "$OUT/ffi_mixedstruct.cib" 2>&1)"
+printf '%s\n' "$mixed_out" | grep -Fq "result: 11"
+echo "OK ffi_mixedstruct -> 11"
+
+echo "== double arithmetic"
+python3 -m cinterp compile examples/math.c -o "$OUT/math.cib" >/dev/null
+math_out="$("$RUNTIME" "$OUT/math.cib" 2>&1)"
+printf '%s\n' "$math_out" | grep -Fq "result: 8"
+echo "OK math -> 8"
+
 echo "== callback (qsort)"
 python3 -m cinterp compile examples/ffi_qsort.c -o "$OUT/ffi_qsort.cib" >/dev/null
 qsort_out="$("$RUNTIME" "$OUT/ffi_qsort.cib" 2>&1)"

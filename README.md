@@ -69,10 +69,14 @@ The compiler currently supports:
 - callbacks: a VM function passed as a C function pointer becomes a static
   trampoline; the dispatcher re-enters the VM without unwinding the outer
   frame (see `examples/ffi_qsort.c`)
+- mixed-class register aggregates of two eightbytes (e.g. `{ i64, double }`
+  returned in RAX + XMM0; see `examples/ffi_mixedstruct.c`)
+- double arithmetic: `fadd`/`fsub`/`fmul`/`fdiv`, `fcmp`, `sitofp`/`fptosi`
+  (see `examples/math.c`)
 
 Not yet in the compiler (the runtime engines and spikes validate the ABI):
-mixed-class register aggregates beyond the two-eightbyte return cases,
-bitfields, float arithmetic, `long double`.
+float32 arithmetic/conversions, aggregates larger than two eightbytes outside
+MEMORY/sret, bitfields, `long double`.
 
 ## Binary formats
 
@@ -114,7 +118,7 @@ runtime/               Zig VM/runtime (shipped)
   src/ffi/             plan loader, ABI loc types, asm engines
   src/main.zig         cinterp-run CLI
 examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
-                       MEMORY/register-class struct FFI, qsort callback
+                       MEMORY/register/mixed struct FFI, qsort callback, math
 scripts/test.sh        integration suite
 spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
 plan.md, dev.md        implementation plan and architecture/decisions

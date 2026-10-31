@@ -49,6 +49,12 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.ret_size, 16)
         self.assertEqual(plan.sse_count, 2)
 
+    def test_mixed_aggregate_return_plan(self):
+        plan = build_sysv_plan("c_make_m", "{ i64, double }", ["i64", "double"])
+        self.assertEqual([loc.kind for loc in plan.ret_locs], ["rax", "xmm0"])
+        self.assertEqual(plan.ret_size, 16)
+        self.assertEqual(plan.sse_count, 1)
+
     def test_callback_plan_table(self):
         plans = PlanTable()
         callbacks = CallbackTable()
