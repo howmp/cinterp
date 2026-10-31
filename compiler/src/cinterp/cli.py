@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -32,6 +34,24 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _zig_windows_include() -> Path | None:
+    lib = os.environ.get("ZIG_LIB_DIR")
+    if not lib:
+        try:
+            info = json.loads(subprocess.check_output(["zig", "env"], text=True))
+            lib = info.get("lib_dir")
+        except Exception:
+            lib = None
+    candidates = []
+    if lib:
+        candidates.append(Path(lib) / "libc/include/any-windows-any")
+    candidates.append(Path("/usr/local/lib/zig/libc/include/any-windows-any"))
+    for path in candidates:
+        if path.is_dir():
+            return path
+    return None
+
+
 def _compile(args: argparse.Namespace) -> int:
     if args.link_db:
         cstdapi.set_database(args.link_db)
@@ -47,6 +67,12 @@ def _compile(args: argparse.Namespace) -> int:
         cmd = [args.clang]
         if args.target:
             cmd.append("--target=" + target.triple)
+            if target.os == "windows":
+                windows_include = _zig_windows_include()
+                if windows_include is None:
+                    print("cinterp: Zig Windows headers not found; set ZIG_LIB_DIR", file=sys.stderr)
+                    return 2
+                cmd += ["-isystem", str(windows_include)]
         cmd += [
             "-S",
             "-emit-llvm",

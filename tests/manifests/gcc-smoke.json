@@ -1,0 +1,64 @@
+{
+  "suite": "gcc-smoke",
+  "description": "GCC torture portable cross-ABI smoke",
+  "root": "{SUITES}/gcc-torture",
+  "upstream": "https://github.com/gcc-mirror/gcc",
+  "commit": "f75e33b7c1ddc42ce9d6d455e0076dbe373b46b5",
+  "license": "GPL-3.0-or-later",
+  "tiers": [
+    "nightly"
+  ],
+  "compare_stdout": false,
+  "expected_exit": 0,
+  "timeout": 30,
+  "cases": [
+    {
+      "id": "20000112-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000112-1.c"
+    },
+    {
+      "id": "20000113-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000113-1.c"
+    },
+    {
+      "id": "20000205-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000205-1.c"
+    },
+    {
+      "id": "20000217-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000217-1.c"
+    },
+    {
+      "id": "20000223-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000223-1.c"
+    },
+    {
+      "id": "20000224-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000224-1.c"
+    },
+    {
+      "id": "20000225-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000225-1.c"
+    },
+    {
+      "id": "20000227-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000227-1.c"
+    },
+    {
+      "id": "20000313-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000313-1.c"
+    },
+    {
+      "id": "20000314-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000314-1.c"
+    },
+    {
+      "id": "20000314-2",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000314-2.c"
+    },
+    {
+      "id": "20000314-3",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000314-3.c"
+    }
+  ]
+}

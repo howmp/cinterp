@@ -68,6 +68,7 @@ make generate-diff          # YARPGen differential smoke
 | llvm-regression-c | 935 | 0 |
 | libc-test-regression | 49 | 20 |
 | c-testsuite-smoke | 12 | 0 |
+| tcc-smoke / gcc-smoke / compcert-smoke | 12 each | 0 |
 | **total** | **4140** | **313** |
 
 `make test-suites-full` is the command that produced this table; generated

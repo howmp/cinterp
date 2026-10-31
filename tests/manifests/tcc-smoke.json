@@ -1,0 +1,75 @@
+{
+  "suite": "tcc-smoke",
+  "description": "TinyCC tests2 portable cross-ABI smoke",
+  "root": "{SUITES}/tcc",
+  "upstream": "https://github.com/TinyCC/tinycc",
+  "commit": "e23dabed154a8495f3ac1ff3cc9d04fa1c207893",
+  "license": "LGPL-2.1",
+  "tiers": [
+    "nightly"
+  ],
+  "expected_exit": 0,
+  "timeout": 30,
+  "cases": [
+    {
+      "id": "00_assignment",
+      "source": "tests/tests2/00_assignment.c",
+      "expected_stdout": "tests/tests2/00_assignment.expect"
+    },
+    {
+      "id": "01_comment",
+      "source": "tests/tests2/01_comment.c",
+      "expected_stdout": "tests/tests2/01_comment.expect"
+    },
+    {
+      "id": "02_printf",
+      "source": "tests/tests2/02_printf.c",
+      "expected_stdout": "tests/tests2/02_printf.expect"
+    },
+    {
+      "id": "04_for",
+      "source": "tests/tests2/04_for.c",
+      "expected_stdout": "tests/tests2/04_for.expect"
+    },
+    {
+      "id": "05_array",
+      "source": "tests/tests2/05_array.c",
+      "expected_stdout": "tests/tests2/05_array.expect"
+    },
+    {
+      "id": "06_case",
+      "source": "tests/tests2/06_case.c",
+      "expected_stdout": "tests/tests2/06_case.expect"
+    },
+    {
+      "id": "07_function",
+      "source": "tests/tests2/07_function.c",
+      "expected_stdout": "tests/tests2/07_function.expect"
+    },
+    {
+      "id": "08_while",
+      "source": "tests/tests2/08_while.c",
+      "expected_stdout": "tests/tests2/08_while.expect"
+    },
+    {
+      "id": "09_do_while",
+      "source": "tests/tests2/09_do_while.c",
+      "expected_stdout": "tests/tests2/09_do_while.expect"
+    },
+    {
+      "id": "10_pointer",
+      "source": "tests/tests2/10_pointer.c",
+      "expected_stdout": "tests/tests2/10_pointer.expect"
+    },
+    {
+      "id": "11_precedence",
+      "source": "tests/tests2/11_precedence.c",
+      "expected_stdout": "tests/tests2/11_precedence.expect"
+    },
+    {
+      "id": "12_hashdefine",
+      "source": "tests/tests2/12_hashdefine.c",
+      "expected_stdout": "tests/tests2/12_hashdefine.expect"
+    }
+  ]
+}

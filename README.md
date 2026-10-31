@@ -136,7 +136,9 @@ bindings; `--keep-ir` keeps the generated LLVM IR next to the package.
 `--cib-version 1` emits legacy packages without CIPM/CIPI. `--no-auto-link`
 disables automatic C-standard-library/Windows-API binding. `--link-db DIR`
 overrides the generated cstdapi/winmd databases. Targets: `x86_64-linux`
-(default native), `x86_64-windows`, `i686-windows`, `aarch64-linux`.
+(default native), `x86_64-windows`, `i686-windows`, `aarch64-linux`. Windows
+targets automatically use Zig's bundled MinGW headers (`libc/include/any-windows-any`)
+when available; set `ZIG_LIB_DIR` to override.
 
 The compiler automatically links used C standard library symbols on all
 targets (libc/libm, UCRT/MSVCRT/NTDLL) and Windows APIs on Windows targets

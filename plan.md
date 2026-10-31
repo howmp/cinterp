@@ -8,7 +8,7 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 > **状态（2026-10-31）：已完成（支持子集）。** `fcmp`/float 转换、VM 上限、
 > external data/函数指针、数学 intrinsic 和 CI/生成式差分已落地；full 支持集
 > **4140/4453 通过，313 skip（93.0%）**，另有 455 个明确排除的非目标用例。
-> csuite+c-testsuite smoke 在 Win64/Win32/ARM64 均 12/12。支持集和排除清单见
+> csuite、c-testsuite、TCC、GCC、CompCert smoke 在 Win64/Win32/ARM64 均 12/12。支持集和排除清单见
 > `dev.md` §20 与 `tests/manifests/README.md`。
 
 ## 0. 当前基线
@@ -48,7 +48,7 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 - external data + 函数地址：`stdout`/`t_status`/`strcmp`/`memcpy` 等可通过 CIPI data/`--lib` 解析。
 - 常见 LLVM 数学 intrinsic（fabs/round/ceil/floor/sqrt/fma/min/max 等）映射到 libc provider。
 - csuite 增加 NaN、float 转换用例；新增 GCC ieee、CompCert c、LLVM Regression/C 支持子集和 c-testsuite 跨 ABI smoke。
-- full 从 2803/1604 提升到 4140/313（支持集）；`make test-suites` 367/491；cross smoke 12/12 × 3。
+- full 从 2803/1604 提升到 4140/313（支持集）；`make test-suites` 367/491；五套 cross smoke 各 12/12 × 3。
 - CI nightly 改为 `make test-suites-nightly`（含 100-seed 差分）；runner 报告增加 `error_class`。
 
 ## 1. 原则
@@ -241,7 +241,7 @@ overview: 根据当前 4140/4453 通过、313 skip 的结果，按“先修真�
 | `fcmp une` skip | ~75 | 0（标准 C） |
 | `fptoui/uitofp` skip | ~20+ | 0（标准 C） |
 | `unknown global` skip | ~100 | 代表性 external data 用例通过 |
-| 跨 ABI 上游套件 | csuite + c-testsuite smoke 12/12 × 3 | 代表性 upstream smoke |
+| 跨 ABI 上游套件 | csuite + c-testsuite/TCC/GCC/CompCert smoke 12/12 × 3 | 代表性 upstream smoke |
 | YARPGen 100 未分类 failure | 0（77 通过 / 23 明确 skip） | 保持 0；known 失败有 artifact |
 | CI nightly 生成式 seeds | 100 | 100 |
 
@@ -283,7 +283,7 @@ make generate-diff-csmith
 
 - `make test-suites-full`：**4140/4453 通过，313 skip（93.0%）**；另有 455 个 `.excluded` 非目标用例。
 - `make test-suites`：367/491；`make test` 通过。
-- Win64/Win32/ARM64：csuite 12/12 且 c-testsuite upstream smoke 12/12。
+- Win64/Win32/ARM64：csuite 及 c-testsuite/TCC/GCC/CompCert smoke 各 12/12。
 - YARPGen 100 seeds：77 通过、23 明确 skip；Csmith 3 个已知失败 artifact 化。
 - fuzz：load 1000 次、exec 500 次，0 crash / 0 timeout。
 - 关键实现：`fcmp` 无序谓词、`fptoui/uitofp`、VM 上限、CIPI data/`ADDR_EXTERN`、数学 intrinsic 映射。

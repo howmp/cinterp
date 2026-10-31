@@ -1,0 +1,77 @@
+{
+  "suite": "compcert-smoke",
+  "description": "CompCert regression portable cross-ABI smoke",
+  "root": "{SUITES}/CompCert/test",
+  "upstream": "https://github.com/AbsInt/CompCert-small-tests",
+  "commit": "71c682d6b3a74e1a7d5da30285b5735761031da3",
+  "license": "GPL-2.0-or-later",
+  "tiers": [
+    "nightly"
+  ],
+  "expected_dir": "regression/Results",
+  "expected_ext": "",
+  "expected_exit": 0,
+  "timeout": 30,
+  "cases": [
+    {
+      "id": "bool",
+      "source": "regression/bool.c",
+      "expected_stdout": "regression/Results/bool"
+    },
+    {
+      "id": "casts1",
+      "source": "regression/casts1.c",
+      "expected_stdout": "regression/Results/casts1"
+    },
+    {
+      "id": "casts2",
+      "source": "regression/casts2.c",
+      "expected_stdout": "regression/Results/casts2"
+    },
+    {
+      "id": "char1",
+      "source": "regression/char1.c",
+      "expected_stdout": "regression/Results/char1"
+    },
+    {
+      "id": "compar",
+      "source": "regression/compar.c",
+      "expected_stdout": "regression/Results/compar"
+    },
+    {
+      "id": "decl1",
+      "source": "regression/decl1.c",
+      "expected_stdout": "regression/Results/decl1"
+    },
+    {
+      "id": "decl2",
+      "source": "regression/decl2.c",
+      "expected_stdout": "regression/Results/decl2"
+    },
+    {
+      "id": "expr1",
+      "source": "regression/expr1.c",
+      "expected_stdout": "regression/Results/expr1"
+    },
+    {
+      "id": "expr5",
+      "source": "regression/expr5.c",
+      "expected_stdout": "regression/Results/expr5"
+    },
+    {
+      "id": "for1",
+      "source": "regression/for1.c",
+      "expected_stdout": "regression/Results/for1"
+    },
+    {
+      "id": "for2",
+      "source": "regression/for2.c",
+      "expected_stdout": "regression/Results/for2"
+    },
+    {
+      "id": "int64",
+      "source": "regression/int64.c",
+      "expected_stdout": "regression/Results/int64"
+    }
+  ]
+}

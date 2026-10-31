@@ -56,14 +56,23 @@ test-suites-cross: runtime
 	cp runtime/zig-out/bin/cinterp-run.exe build/cross/cinterp-run64.exe
 	python3 scripts/test_suites.py --suite csuite --target x86_64-windows --jobs 4 --report build/test-suites-win64.json
 	python3 scripts/test_suites.py --suite c-testsuite-smoke --target x86_64-windows --jobs 4 --report build/test-suites-cross-win64.json
+	python3 scripts/test_suites.py --suite tcc-smoke --target x86_64-windows --jobs 4 --report build/test-suites-tcc-win64.json
+	python3 scripts/test_suites.py --suite gcc-smoke --target x86_64-windows --jobs 4 --report build/test-suites-gcc-win64.json
+	python3 scripts/test_suites.py --suite compcert-smoke --target x86_64-windows --jobs 4 --report build/test-suites-compcert-win64.json
 	cd runtime && zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run.exe build/cross/cinterp-run32.exe
 	python3 scripts/test_suites.py --suite csuite --target i686-windows --jobs 4 --report build/test-suites-win32.json
 	python3 scripts/test_suites.py --suite c-testsuite-smoke --target i686-windows --jobs 4 --report build/test-suites-cross-win32.json
+	python3 scripts/test_suites.py --suite tcc-smoke --target i686-windows --jobs 4 --report build/test-suites-tcc-win32.json
+	python3 scripts/test_suites.py --suite gcc-smoke --target i686-windows --jobs 4 --report build/test-suites-gcc-win32.json
+	python3 scripts/test_suites.py --suite compcert-smoke --target i686-windows --jobs 4 --report build/test-suites-compcert-win32.json
 	cd runtime && zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run build/cross/cinterp-run-arm64
 	python3 scripts/test_suites.py --suite csuite --target aarch64-linux --jobs 4 --report build/test-suites-arm64.json
 	python3 scripts/test_suites.py --suite c-testsuite-smoke --target aarch64-linux --jobs 4 --report build/test-suites-cross-arm64.json
+	python3 scripts/test_suites.py --suite tcc-smoke --target aarch64-linux --jobs 4 --report build/test-suites-tcc-arm64.json
+	python3 scripts/test_suites.py --suite gcc-smoke --target aarch64-linux --jobs 4 --report build/test-suites-gcc-arm64.json
+	python3 scripts/test_suites.py --suite compcert-smoke --target aarch64-linux --jobs 4 --report build/test-suites-compcert-arm64.json
 	cd runtime && zig build -Doptimize=ReleaseSmall
 
 generate-diff: runtime
