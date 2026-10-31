@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..codegen.binary_writer import write_package
@@ -355,6 +355,7 @@ class Function:
     params: list[tuple[str, str]]
     body: list[str]
     index: int = 0
+    param_attrs: list[str] = field(default_factory=list)
     code: bytes = b""
     local_count: int = 0
 
@@ -372,11 +373,25 @@ class CallbackTable:
             return self.by_func[name]
         if self.next_slot >= 256:
             raise ValueError("callback slot pool exhausted")
+        sret_idx = None
+        sret_size = 0
+        byval_sizes = [0] * len(fn.params)
+        for i, raw in enumerate(fn.param_attrs):
+            sm = re.search(r"\bsret\(([^)]+)\)", raw)
+            if sm:
+                sret_idx = i
+                sret_size = type_size_align(sm.group(1), self.structs, self.ptr_size)[0]
+            bm = re.search(r"\bbyval\(([^)]+)\)", raw)
+            if bm:
+                byval_sizes[i] = type_size_align(bm.group(1), self.structs, self.ptr_size)[0]
         plan = build_plan(
             self.abi,
             "callback:" + name,
             fn.ret,
             [ptype for ptype, _pname in fn.params],
+            sret_idx=sret_idx,
+            sret_size=sret_size,
+            byval_sizes=byval_sizes,
             structs=self.structs,
             ptr_size=self.ptr_size,
         )
@@ -1137,8 +1152,9 @@ def parse_functions(text: str) -> list[Function]:
         pre, name, params_text = m.group(1), m.group(2), m.group(3)
         ret = pre.split()[-1]
         params: list[tuple[str, str]] = []
-        for p in (split_top(params_text) if params_text.strip() else []):
-            pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80)\s+.*?%([\w.$-]+)", p)
+        raw_params = split_top(params_text) if params_text.strip() else []
+        for p in raw_params:
+            pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80)\s+.*%([\w.$-]+)", p)
             if not pm:
                 raise ValueError(f"bad parameter: {p!r}")
             params.append((pm.group(1), pm.group(2)))
@@ -1148,7 +1164,7 @@ def parse_functions(text: str) -> list[Function]:
         while i < len(lines) and lines[i].strip() != "}":
             body.append(lines[i])
             i += 1
-        functions.append(Function(name=name, ret=ret, params=params, body=body))
+        functions.append(Function(name=name, ret=ret, params=params, body=body, param_attrs=raw_params))
         i += 1
     return functions
 

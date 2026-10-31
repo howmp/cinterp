@@ -1346,6 +1346,8 @@ ci_cb_sysv_255:
 .p2align 3
 .globl ci_cb_sysv_table
 ci_cb_sysv_table:
+.globl ci_cb_table
+.set ci_cb_table, ci_cb_sysv_table
     .quad ci_cb_sysv_0
     .quad ci_cb_sysv_1
     .quad ci_cb_sysv_2

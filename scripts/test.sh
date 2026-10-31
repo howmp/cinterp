@@ -105,6 +105,18 @@ qsort_out="$("$RUNTIME" "$OUT/ffi_qsort.cib" 2>&1)"
 printf '%s\n' "$qsort_out" | grep -Fq "result: 1"
 echo "OK ffi_qsort -> 1"
 
+echo "== callback (stack args + structs)"
+cc -shared -fPIC -O0 examples/ffi_callback_helper.c -o "$OUT/libffi_callback_helper.so"
+python3 -m cinterp compile examples/ffi_callback.c -o "$OUT/ffi_callback.cib" >/dev/null
+cb_out="$("$RUNTIME" --lib "$OUT/libffi_callback_helper.so" "$OUT/ffi_callback.cib" 2>&1)"
+printf '%s\n' "$cb_out" | grep -Fq "result: 256"
+echo "OK ffi_callback -> 256"
+cc -shared -fPIC -O0 examples/ffi_callback_big_helper.c -o "$OUT/libffi_callback_big_helper.so"
+python3 -m cinterp compile examples/ffi_callback_big.c -o "$OUT/ffi_callback_big.cib" >/dev/null
+bigcb_out="$("$RUNTIME" --lib "$OUT/libffi_callback_big_helper.so" "$OUT/ffi_callback_big.cib" 2>&1)"
+printf '%s\n' "$bigcb_out" | grep -Fq "result: 246"
+echo "OK ffi_callback_big -> 246"
+
 echo "== error paths"
 if python3 -m cinterp compile "$OUT/does-not-exist.c" >/dev/null 2>&1; then
     echo "FAIL missing input accepted" >&2

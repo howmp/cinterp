@@ -84,28 +84,6 @@ pub const Frame = struct {
     func: usize,
 };
 
-const CbFrame = extern struct {
-    slot: u64,          // 0
-    gpr: [6]u64,        // 8
-    xmm: [8][2]u64,     // 56
-    stack_args: [*]u8,  // 184
-    ret_rax: u64,       // 192
-    ret_rdx: u64,       // 200
-    ret_xmm0: [2]u64,   // 208
-    ret_xmm1: [2]u64,   // 224
-};
-
-comptime {
-    if (builtin.cpu.arch == .x86_64 and builtin.os.tag != .windows) {
-        if (@offsetOf(CbFrame, "gpr") != 8) @compileError("bad cb gpr offset");
-        if (@offsetOf(CbFrame, "xmm") != 56) @compileError("bad cb xmm offset");
-        if (@offsetOf(CbFrame, "stack_args") != 184) @compileError("bad cb stack offset");
-        if (@offsetOf(CbFrame, "ret_rax") != 192) @compileError("bad cb ret_rax offset");
-        if (@offsetOf(CbFrame, "ret_xmm0") != 208) @compileError("bad cb ret_xmm0 offset");
-        if (@sizeOf(CbFrame) != 240) @compileError("bad cb frame size");
-    }
-}
-
 const CallbackEntry = struct {
     func: usize,
     plan: abi.CallPlan,
@@ -838,7 +816,7 @@ fn readU64Ptr(ptr: [*]const u8) u64 {
     return @as(*align(1) const u64, @ptrCast(ptr)).*;
 }
 
-pub export fn ci_callback_dispatch(slot: u64, frame: *CbFrame) callconv(.C) void {
+pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) callconv(.C) void {
     const s: usize = @intCast(slot);
     if (s >= callback_entries.len) return;
     const entry = callback_entries[s] orelse return;
@@ -848,26 +826,14 @@ pub export fn ci_callback_dispatch(slot: u64, frame: *CbFrame) callconv(.C) void
     if (n > 8) return;
     var values: [8]Value = undefined;
     for (entry.plan.args, 0..) |arg, i| {
-        const loc = arg.locs[0];
-        const bits: u64 = switch (loc.kind) {
-            .gpr => frame.gpr[@intCast(loc.index)],
-            .xmm => frame.xmm[@intCast(loc.index)][0],
-            .stack => readU64Ptr(frame.stack_args + @as(usize, loc.index)),
-            else => 0,
-        };
-        values[i] = .{ .u = bits };
+        values[i] = if (arg.is_struct)
+            .{ .u = platform.callbackStructPtr(frame, arg.locs[0]) }
+        else
+            .{ .u = platform.callbackReadArg(frame, arg.locs[0]) };
     }
     const result = machine.runCallback(entry.func, values[0..n]) catch return;
     if (entry.plan.ret_locs.len == 0) return;
-    const bits: u64 = @bitCast(result);
-    const ret = entry.plan.ret_locs[0];
-    switch (ret.kind) {
-        .rax => frame.ret_rax = bits,
-        .rdx => frame.ret_rdx = bits,
-        .xmm0 => frame.ret_xmm0[0] = bits,
-        .xmm1 => frame.ret_xmm1[0] = bits,
-        else => {},
-    }
+    platform.callbackWriteRet(frame, entry.plan.ret_locs[0], @bitCast(result));
 }
 
 const Reader = struct {

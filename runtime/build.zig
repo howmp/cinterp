@@ -13,10 +13,13 @@ pub fn build(b: *std.Build) void {
     const t = target.result;
     if (t.os.tag == .windows and t.cpu.arch == .x86_64) {
         exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_win64.S"));
+        exe.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_win64.S"));
     } else if (t.os.tag == .windows and t.cpu.arch == .x86) {
         exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_win32.S"));
+        exe.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_win32.S"));
     } else if (t.cpu.arch == .aarch64) {
         exe.addAssemblyFile(b.path("src/ffi/asm/call_arm64_aapcs.S"));
+        exe.addAssemblyFile(b.path("src/ffi/asm/callbacks_arm64_aapcs.S"));
     } else {
         exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
         exe.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));
@@ -36,10 +39,13 @@ pub fn build(b: *std.Build) void {
     });
     if (t.os.tag == .windows and t.cpu.arch == .x86_64) {
         tests.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_win64.S"));
+        tests.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_win64.S"));
     } else if (t.os.tag == .windows and t.cpu.arch == .x86) {
         tests.addAssemblyFile(b.path("src/ffi/asm/call_x86_win32.S"));
+        tests.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_win32.S"));
     } else if (t.cpu.arch == .aarch64) {
         tests.addAssemblyFile(b.path("src/ffi/asm/call_arm64_aapcs.S"));
+        tests.addAssemblyFile(b.path("src/ffi/asm/callbacks_arm64_aapcs.S"));
     } else {
         tests.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
         tests.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));

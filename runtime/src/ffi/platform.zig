@@ -19,7 +19,7 @@ else
     @compileError("unsupported architecture");
 
 pub const abi_id: u8 = @intFromEnum(abi_kind);
-pub const callback_supported = abi_kind == .sysv;
+pub const callback_supported = true;
 
 pub const SysVFrame = extern struct {
     gpr: [6]u64,
@@ -79,6 +79,84 @@ pub const Frame = switch (abi_kind) {
     .win32 => Win32Frame,
     .aapcs64 => Arm64Frame,
 };
+
+pub const SysVCbFrame = extern struct {
+    slot: u64,
+    gpr: [6]u64,
+    xmm: [8][2]u64,
+    stack_args: [*]u8,
+    ret_rax: u64,
+    ret_rdx: u64,
+    ret_xmm0: [2]u64,
+    ret_xmm1: [2]u64,
+};
+
+pub const Win64CbFrame = extern struct {
+    slot: u64,
+    gpr: [4]u64,
+    xmm: [4][2]u64,
+    stack_args: [*]u8,
+    ret_rax: u64,
+    ret_rdx: u64,
+    ret_xmm0: [2]u64,
+    ret_xmm1: [2]u64,
+    saved_xmm6_15: [10][2]u64,
+};
+
+pub const Win32CbFrame = extern struct {
+    slot: u32,
+    stack_args: [*]u8,
+    ret_eax: u32,
+    ret_edx: u32,
+    ret_st0: f64,
+    ret_x87: u8,
+    _pad: [7]u8,
+};
+
+pub const Arm64CbFrame = extern struct {
+    slot: u64,
+    gpr: [8]u64,
+    _pad0: u64,
+    vec: [8][2]u64,
+    stack_args: [*]u8,
+    ret_x0: u64,
+    ret_x1: u64,
+    _pad1: u64,
+    ret_v0: [2]u64,
+    ret_v1: [2]u64,
+    saved_v8_15: [8]u64,
+    sret: u64,
+    _pad2: u64,
+};
+
+pub const CallbackFrame = switch (abi_kind) {
+    .sysv => SysVCbFrame,
+    .win64 => Win64CbFrame,
+    .win32 => Win32CbFrame,
+    .aapcs64 => Arm64CbFrame,
+};
+
+comptime {
+    switch (abi_kind) {
+        .sysv => {
+            if (@sizeOf(SysVCbFrame) != 240) @compileError("bad sysv cb size");
+        },
+        .win64 => {
+            if (@sizeOf(Win64CbFrame) != 320) @compileError("bad win64 cb size");
+            if (@offsetOf(Win64CbFrame, "saved_xmm6_15") != 160) @compileError("bad win64 cb saved");
+        },
+        .win32 => {
+            if (@sizeOf(Win32CbFrame) != 32) @compileError("bad win32 cb size");
+            if (@offsetOf(Win32CbFrame, "ret_st0") != 16) @compileError("bad win32 cb st0");
+        },
+        .aapcs64 => {
+            if (@sizeOf(Arm64CbFrame) != 352) @compileError("bad arm64 cb size");
+            if (@offsetOf(Arm64CbFrame, "vec") != 80) @compileError("bad arm64 cb vec");
+            if (@offsetOf(Arm64CbFrame, "ret_v0") != 240) @compileError("bad arm64 cb v0");
+            if (@offsetOf(Arm64CbFrame, "sret") != 336) @compileError("bad arm64 cb sret");
+        },
+    }
+}
 
 extern fn ci_abi_call_sysv64(frame: *SysVFrame, target: *const anyopaque) callconv(.C) void;
 extern fn ci_win64_call(frame: *Win64Frame, target: *const anyopaque) callconv(.C) void;
@@ -414,8 +492,156 @@ pub fn validate(plan: abi.CallPlan) !void {
     }
 }
 
+extern const ci_cb_table: [256]*const anyopaque;
+
+fn readCallbackU64(ptr: [*]const u8) u64 {
+    return @as(*align(1) const u64, @ptrCast(ptr)).*;
+}
+
+fn callbackReadSysV(frame: *SysVCbFrame, loc: abi.Loc) u64 {
+    return switch (loc.kind) {
+        .gpr => frame.gpr[@intCast(loc.index)],
+        .xmm => frame.xmm[@intCast(loc.index)][0],
+        .stack => readCallbackU64(frame.stack_args + @as(usize, loc.index)),
+        .sret => frame.gpr[0],
+        else => 0,
+    };
+}
+
+fn callbackReadWin64(frame: *Win64CbFrame, loc: abi.Loc) u64 {
+    return switch (loc.kind) {
+        .gpr => frame.gpr[@intCast(loc.index)],
+        .xmm => frame.xmm[@intCast(loc.index)][0],
+        .stack => readCallbackU64(frame.stack_args + @as(usize, loc.index)),
+        .sret => frame.gpr[0],
+        else => 0,
+    };
+}
+
+fn callbackReadWin32(frame: *Win32CbFrame, loc: abi.Loc) u64 {
+    return switch (loc.kind) {
+        .stack => readCallbackU64(frame.stack_args + @as(usize, loc.index)),
+        .sret => readCallbackU64(frame.stack_args),
+        else => 0,
+    };
+}
+
+fn callbackReadArm64(frame: *Arm64CbFrame, loc: abi.Loc) u64 {
+    return switch (loc.kind) {
+        .gpr => frame.gpr[@intCast(loc.index)],
+        .xmm => frame.vec[@intCast(loc.index)][0],
+        .stack => readCallbackU64(frame.stack_args + @as(usize, loc.index)),
+        .sret => frame.sret,
+        else => 0,
+    };
+}
+
+pub fn callbackReadArg(frame: *CallbackFrame, loc: abi.Loc) u64 {
+    return switch (abi_kind) {
+        .sysv => callbackReadSysV(@ptrCast(frame), loc),
+        .win64 => callbackReadWin64(@ptrCast(frame), loc),
+        .win32 => callbackReadWin32(@ptrCast(frame), loc),
+        .aapcs64 => callbackReadArm64(@ptrCast(frame), loc),
+    };
+}
+
+fn callbackStructPtrSysV(frame: *SysVCbFrame, loc: abi.Loc) u64 {
+    return switch (loc.kind) {
+        .stack => @intCast(@intFromPtr(frame.stack_args + @as(usize, loc.index))),
+        else => 0,
+    };
+}
+
+fn callbackStructPtrWin64(frame: *Win64CbFrame, loc: abi.Loc) u64 {
+    return switch (loc.kind) {
+        .stack => @intCast(@intFromPtr(frame.stack_args + @as(usize, loc.index))),
+        else => 0,
+    };
+}
+
+fn callbackStructPtrWin32(frame: *Win32CbFrame, loc: abi.Loc) u64 {
+    return switch (loc.kind) {
+        .stack => @intCast(@intFromPtr(frame.stack_args + @as(usize, loc.index))),
+        else => 0,
+    };
+}
+
+fn callbackStructPtrArm64(frame: *Arm64CbFrame, loc: abi.Loc) u64 {
+    return switch (loc.kind) {
+        .stack => @intCast(@intFromPtr(frame.stack_args + @as(usize, loc.index))),
+        else => 0,
+    };
+}
+
+pub fn callbackStructPtr(frame: *CallbackFrame, loc: abi.Loc) u64 {
+    return switch (abi_kind) {
+        .sysv => callbackStructPtrSysV(@ptrCast(frame), loc),
+        .win64 => callbackStructPtrWin64(@ptrCast(frame), loc),
+        .win32 => callbackStructPtrWin32(@ptrCast(frame), loc),
+        .aapcs64 => callbackStructPtrArm64(@ptrCast(frame), loc),
+    };
+}
+
+fn callbackWriteSysV(frame: *SysVCbFrame, loc: abi.Loc, bits: u64) void {
+    switch (loc.kind) {
+        .rax => frame.ret_rax = bits,
+        .rdx => frame.ret_rdx = bits,
+        .xmm0 => frame.ret_xmm0[0] = bits,
+        .xmm1 => frame.ret_xmm1[0] = bits,
+        else => {},
+    }
+}
+
+fn callbackWriteWin64(frame: *Win64CbFrame, loc: abi.Loc, bits: u64) void {
+    switch (loc.kind) {
+        .rax => frame.ret_rax = bits,
+        .rdx => frame.ret_rdx = bits,
+        .xmm0 => frame.ret_xmm0[0] = bits,
+        .xmm1 => frame.ret_xmm1[0] = bits,
+        else => {},
+    }
+}
+
+fn callbackWriteWin32(frame: *Win32CbFrame, loc: abi.Loc, bits: u64) void {
+    switch (loc.kind) {
+        .rax => {
+            frame.ret_eax = @truncate(bits);
+            if (loc.size == 8) frame.ret_edx = @truncate(bits >> 32);
+        },
+        .rdx => frame.ret_edx = @truncate(bits),
+        .xmm0 => {
+            if (loc.size == 4) {
+                const f: f32 = @bitCast(@as(u32, @truncate(bits)));
+                frame.ret_st0 = @floatCast(f);
+            } else {
+                frame.ret_st0 = @bitCast(bits);
+            }
+            frame.ret_x87 = 1;
+        },
+        else => {},
+    }
+}
+
+fn callbackWriteArm64(frame: *Arm64CbFrame, loc: abi.Loc, bits: u64) void {
+    switch (loc.kind) {
+        .rax => frame.ret_x0 = bits,
+        .rdx => frame.ret_x1 = bits,
+        .xmm0 => frame.ret_v0[0] = bits,
+        .xmm1 => frame.ret_v1[0] = bits,
+        else => {},
+    }
+}
+
+pub fn callbackWriteRet(frame: *CallbackFrame, loc: abi.Loc, bits: u64) void {
+    switch (abi_kind) {
+        .sysv => callbackWriteSysV(@ptrCast(frame), loc, bits),
+        .win64 => callbackWriteWin64(@ptrCast(frame), loc, bits),
+        .win32 => callbackWriteWin32(@ptrCast(frame), loc, bits),
+        .aapcs64 => callbackWriteArm64(@ptrCast(frame), loc, bits),
+    }
+}
+
 pub fn callbackTable(slot: usize) ?*const anyopaque {
-    if (comptime abi_kind != .sysv) return null;
     if (slot >= 256) return null;
-    return ci_cb_sysv_table[slot];
+    return ci_cb_table[slot];
 }
