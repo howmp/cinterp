@@ -1,5 +1,6 @@
 const std = @import("std");
 const vm = @import("vm.zig");
+const abi = @import("ffi/abi.zig");
 
 fn putU16(buf: []u8, p: *usize, v: u16) void {
     buf[p.*] = @truncate(v);
@@ -55,4 +56,18 @@ test "CIVM module returns 42" {
 test "bad package" {
     var machine = vm.VM{};
     try std.testing.expectError(error.BadPackage, machine.loadPackage("x"));
+}
+
+test "plan validation rejects bad ABI locations" {
+    const ret = [_]abi.Loc{.{ .kind = .rax, .index = 0, .size = 8, .offset = 0 }};
+    var arg_locs = [_]abi.Loc{.{ .kind = .gpr, .index = 0, .size = 8, .offset = 0 }};
+    var args = [_]abi.ArgPlan{.{ .locs = &arg_locs, .size = 8, .alignment = 8 }};
+    const plan = abi.CallPlan{ .args = &args, .ret_locs = &ret };
+
+    try vm.validatePlan(plan);
+    arg_locs[0].index = 6;
+    try std.testing.expectError(error.BadPlan, vm.validatePlan(plan));
+    arg_locs[0].index = 0;
+    arg_locs[0].offset = 250;
+    try std.testing.expectError(error.BadPlan, vm.validatePlan(plan));
 }

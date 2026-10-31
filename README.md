@@ -37,12 +37,23 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_structs.c -o bui
 ./runtime/zig-out/bin/cinterp-run --lib build/libstruct_helpers.so build/ffi_structs.cib
 # result: 28
 
+# versions
+PYTHONPATH=compiler/src python3 -m cinterp --version
+./runtime/zig-out/bin/cinterp-run --version
+
 # full test suite
 make test
 ```
 
-`make test` runs runtime unit tests, compiler unit tests, and end-to-end
-examples (arrays, structs, malloc/free, puts, printf, snprintf).
+`make test` runs runtime/compiler unit tests, all end-to-end examples, and
+negative paths (missing input, corrupt package, unknown symbol).
+
+## Validation and trust
+
+The runtime validates package lengths, function/plan counts, plan argument
+counts, ABI location indices, and marshal offsets/sizes before invoking native
+code; malformed packages fail cleanly. C pointers to native allocations are
+necessarily trusted, so run untrusted packages under an OS sandbox.
 
 ## Compiler
 

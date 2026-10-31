@@ -249,6 +249,7 @@ pub const VM = struct {
     }
 
     fn invokeFfi(self: *VM, plan: abi.CallPlan, target: *const anyopaque) !void {
+        try validatePlan(plan);
         var arg_block: [256]u8 = [_]u8{0} ** 256;
         var sret_ptr: ?*anyopaque = null;
 
@@ -829,6 +830,53 @@ fn readU64(buf: *const [256]u8, off: usize) u64 {
     return @as(*align(1) const u64, @ptrCast(&buf[off])).*;
 }
 
+pub fn validatePlan(plan: abi.CallPlan) !void {
+    if (plan.args.len > 16) return error.BadPlan;
+    if (plan.ret_locs.len > 8) return error.BadPlan;
+    if (plan.stack_size > 256) return error.BadPlan;
+    if (plan.ret_size > 256) return error.BadPlan;
+    if (plan.sse_count > 8) return error.BadPlan;
+
+    for (plan.args) |arg| {
+        if (arg.locs.len == 0) return error.BadPlan;
+        if (arg.size > 256) return error.BadPlan;
+        for (arg.locs) |loc| {
+            const off: usize = loc.offset;
+            const n: usize = loc.size;
+            if (off + n > 256) return error.BadPlan;
+            switch (loc.kind) {
+                .gpr => {
+                    if (loc.index >= 6 or n > 8 or off + 8 > 256) return error.BadPlan;
+                },
+                .xmm => {
+                    if (loc.index >= 8 or n > 16) return error.BadPlan;
+                },
+                .stack => {
+                    const idx: usize = loc.index;
+                    if (idx + n > 256) return error.BadPlan;
+                },
+                .sret => {},
+                else => return error.BadPlan,
+            }
+        }
+    }
+
+    for (plan.ret_locs) |loc| {
+        const off: usize = loc.offset;
+        const n: usize = loc.size;
+        if (off + n > 256) return error.BadPlan;
+        switch (loc.kind) {
+            .rax, .rdx => {
+                if (n > 8) return error.BadPlan;
+            },
+            .xmm0, .xmm1 => {
+                if (n > 16) return error.BadPlan;
+            },
+            else => return error.BadPlan,
+        }
+    }
+}
+
 fn marshal(frame: *SysV64Frame, plan: abi.CallPlan, args: *const [256]u8, stack_buf: *[256]u8) void {
     for (plan.args) |arg| {
         for (arg.locs) |loc| {
@@ -873,6 +921,7 @@ pub export fn ci_callback_dispatch(slot: u64, frame: *CbFrame) callconv(.C) void
     if (slot >= callback_entries.len) return;
     const entry = callback_entries[slot] orelse return;
     const machine = callback_vm orelse return;
+    validatePlan(entry.plan) catch return;
     const n: usize = entry.plan.args.len;
     if (n > 8) return;
     var values: [8]Value = undefined;

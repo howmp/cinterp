@@ -12,6 +12,7 @@ from .ffi.plan import UnsupportedFfi
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cinterp", description="C interpreter compiler")
+    parser.add_argument("--version", action="version", version="cinterp 0.1.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     comp = sub.add_parser("compile", help="compile a C file to a CIPKG package")
@@ -60,7 +61,11 @@ def _compile(args: argparse.Namespace) -> int:
         print(f"cinterp: {exc}", file=sys.stderr)
         return 1
 
-    out.write_bytes(package)
+    try:
+        out.write_bytes(package)
+    except OSError as exc:
+        print(f"cinterp: cannot write {out}: {exc}", file=sys.stderr)
+        return 1
     print(
         f"{out}: {len(module)}B module, {len(plan_bytes)}B plans, "
         f"{len(functions)} functions, {len(plans.plans)} external plans"

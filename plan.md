@@ -11,7 +11,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 
 已完成：
 
-- **v1 实现（Linux x64）**：`compiler/`（C→CIVM、CIPL FFI 计划、CIPKG）+ `runtime/`（Zig VM、线性内存、SysV FFI、C ABI、callback trampoline、`--lib`）+ `examples/`；`make test` 通过（runtime 2、compiler 11、端到端 15），含 MEMORY/register/mixed struct FFI、qsort callback、float32/double 算术、bitfield。
+- **v1 实现（Linux x64）**：`compiler/`（C→CIVM、CIPL FFI 计划、CIPKG）+ `runtime/`（Zig VM、线性内存、SysV FFI、C ABI、callback trampoline、`--lib`）+ `examples/`；`make test` 通过（runtime 3、compiler 11、端到端 15），含 MEMORY/register/mixed struct FFI、qsort callback、float32/double 算术、bitfield。
 - **x86-64 SysV 固定汇编引擎**：`spike/asm_abi_call` 5/5，`ReleaseSmall` 8.7K。
 - **前端 CallPlan 生成器（x86-64 SysV 原型）**：`spike/callplan_gen` 从 clang LLVM IR 生成 15 个计划，4/4，`ReleaseSmall` 8.7K。
 - **计划二进制序列化 + loader**：`spike/callplan_gen` 的 `plans.bin` 995 字节/15 计划；Zig loader round-trip、名称查找、解码后调用、错误路径全部通过；总计 6/6。
@@ -156,7 +156,7 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - `compiler/`：Python 包 + `cinterp compile`；LLVM IR 降级、线性内存、globals/字符串、CIPL FFI 计划、CIPKG 包。
 - `runtime/`：Zig VM、线性内存、`ci_vm_*` C ABI、SysV 固定汇编 FFI 引擎、`dlsym`/`libc` 解析、CIPKG 加载。
 - `examples/`：hello、arrays、structs、puts、printf、snprintf、malloc/free、MEMORY/register/mixed struct FFI、qsort callback、float32/double math/FFI、bitfields。
-- `make test`：runtime 2 单测 + compiler 11 单测 + 15 个端到端用例通过；`ffi_structs=28`、`ffi_regstruct=102`、`ffi_mixedstruct=11`、`ffi_qsort=1`、`math=8`、`float_math=8`、`ffi_float=5`、`bitfields=12`。
+- `make test`：runtime 3 单测 + compiler 11 单测 + 15 个端到端用例通过；`ffi_structs=28`、`ffi_regstruct=102`、`ffi_mixedstruct=11`、`ffi_qsort=1`、`math=8`、`float_math=8`、`ffi_float=5`、`bitfields=12`。
 - 后续：Win64/Win32/ARM64 计划生成、long double、c-testsuite。
 
 ## 4. Spike 计划
@@ -356,7 +356,8 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - [x] float32/double 算术/比较（fadd/fsub/fmul/fdiv、fcmp、fpext/fptrunc、sitofp/fptosi）
 - [x] bitfield（clang shift/mask lowering）
 - [ ] long double/c-testsuite
-- [ ] M11 加固/发布
+- [x] M11 基础加固：plan/package 边界校验、错误路径、CLI version/help
+- [ ] M11 发布检查（CI、体积、fuzz/沙箱说明）
 
 ## 6. 风险与阻塞
 
@@ -402,4 +403,5 @@ overview: C 解释器实施计划：x86-64 SysV 固定汇编引擎与 CallPlan �
 - **2026-10-30**：mixed-class `{i64,double}` 聚合返回/参数（RAX+XMM0）；`ffi_mixedstruct` 结果 11。
 - **2026-10-30**：double 算术/比较（fadd/fsub/fmul/fdiv、fcmp、裸浮点常量、fneg）；`math` 结果 8。
 - **2026-10-31（周六）**：float32 算术/FCmp/fpext/fptrunc/fptosi/sitofp + float FFI；`float_math=8`、`ffi_float=5`。
-- **2026-10-31（周六）**：bitfield（clang shift/mask lowering）；`bitfields=12`；`make test` runtime 2 / compiler 11 / 端到端 15。
+- **2026-10-31（周六）**：bitfield（clang shift/mask lowering）；`bitfields=12`；`make test` runtime 3 / compiler 11 / 端到端 15。
+- **2026-10-31（周六）**：M11 基础加固——plan 数量/ABI 位置/offset/size 校验，错误路径测试（缺失输入、坏 package、未知符号），`--version`/`--help`。

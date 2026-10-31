@@ -104,4 +104,30 @@ qsort_out="$("$RUNTIME" "$OUT/ffi_qsort.cib" 2>&1)"
 printf '%s\n' "$qsort_out" | grep -Fq "result: 1"
 echo "OK ffi_qsort -> 1"
 
+echo "== error paths"
+if python3 -m cinterp compile "$OUT/does-not-exist.c" >/dev/null 2>&1; then
+    echo "FAIL missing input accepted" >&2
+    exit 1
+fi
+echo "OK missing input"
+printf 'BAD' > "$OUT/bad.cib"
+if "$RUNTIME" "$OUT/bad.cib" >/dev/null 2>&1; then
+    echo "FAIL bad package accepted" >&2
+    exit 1
+fi
+echo "OK bad package"
+cat > "$OUT/missing_symbol.c" <<'EOF'
+void definitely_not_a_real_symbol(void);
+int main(void) { definitely_not_a_real_symbol(); return 0; }
+EOF
+python3 -m cinterp compile "$OUT/missing_symbol.c" -o "$OUT/missing_symbol.cib" >/dev/null
+if "$RUNTIME" "$OUT/missing_symbol.cib" >/dev/null 2>&1; then
+    echo "FAIL unknown symbol accepted" >&2
+    exit 1
+fi
+echo "OK unknown symbol"
+python3 -m cinterp --version 2>&1 | grep -Fq "cinterp 0.1.0"
+"$RUNTIME" --version 2>&1 | grep -Fq "cinterp-run 0.1.0"
+echo "OK version"
+
 echo "all tests passed"

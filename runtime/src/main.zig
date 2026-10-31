@@ -12,11 +12,21 @@ pub fn main() !void {
     };
     defer vm.ci_vm_destroy(machine);
 
+    const usage = "usage: cinterp-run [--lib path]... <package.cib> [entry]\n";
     var i: usize = 1;
-    while (i < args.len and std.mem.eql(u8, args[i], "--lib")) {
+    while (i < args.len) {
+        if (std.mem.eql(u8, args[i], "--version")) {
+            std.debug.print("cinterp-run 0.1.0\n", .{});
+            return;
+        }
+        if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
+            std.debug.print("{s}", .{usage});
+            return;
+        }
+        if (!std.mem.eql(u8, args[i], "--lib")) break;
         i += 1;
         if (i >= args.len) {
-            std.debug.print("usage: cinterp-run [--lib path]... <package.cib> [entry]\n", .{});
+            std.debug.print("{s}", .{usage});
             std.process.exit(2);
         }
         if (vm.ci_vm_load_library(machine, args[i].ptr) != 0) {
@@ -26,7 +36,7 @@ pub fn main() !void {
         i += 1;
     }
     if (i >= args.len) {
-        std.debug.print("usage: cinterp-run [--lib path]... <package.cib> [entry]\n", .{});
+        std.debug.print("{s}", .{usage});
         std.process.exit(2);
     }
 
