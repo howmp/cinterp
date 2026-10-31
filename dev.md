@@ -850,7 +850,7 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 | fuzz load-only | native Linux | 200 变异 | 0 crash |
 | fuzz-exec safe | native Linux | 500 变异 | 0 crash / 0 timeout |
 | 差分测试 | native Linux | 7 | 通过 |
-| `make size-cross` | native 构建 | 4 目标 | 79,000 / 84,992 / 101,376 / 90,984 B，均 <128K |
+| `make size-cross` | native 构建 | 4 目标 | 77,544（static sysv） / 85,504 / 101,888 / 88,824 B，均 <128K |
 | `make release-artifacts` | native 构建 | 4 目标 | `cinterp-0.1.0-*.tar.gz` |
 | `make bench` | native Linux | 7 用例 | 已记录平均运行时间 |
 
@@ -861,8 +861,8 @@ make fuzz
 make fuzz-exec
 make differential
 make bench
-make size                 # native runtime 79,000B；qsort.cib 646B
-make size-cross           # sysv 79,000 / win64 84,992 / win32 101,376 / arm64 90,984
+make size                 # native runtime 91,264B；qsort.cib 646B
+make size-cross           # static sysv 77,544 / win64 85,504 / win32 101,888 / arm64 88,824
 make release-artifacts
 HOST=admin@192.168.153.132 ./scripts/test_cross.sh
 ```
@@ -922,3 +922,10 @@ zig build -Dtarget=aarch64-linux-gnu
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 13、skip 7；100-seed nightly 通过 61、skip 39。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
 - **策略**：不自动更新 expected/skip；新增失败必须先分类（compile/runtime/mismatch/timeout/harness），再修复或写入显式 skip；`build/suites` 不进入版本库。
+
+### 20.1 Runtime 构建档位
+
+- `make debug-runtime` / `zig build -Doptimize=Debug`：保留 unwind tables、frame pointer、error tracing 和 panic 栈回溯；约 8.8 MiB（含调试符号）。
+- `make runtime` / `zig build -Doptimize=ReleaseSmall`：关闭 unwind tables、frame pointer、error tracing，strip 符号；保留必要的 CLI/VM 错误码和简短错误信息，移除崩溃栈回溯和详细运行时诊断。
+- 当前 ReleaseSmall：native dynamic Linux x64 91,264B；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
+- 发布产物使用 ReleaseSmall；调试/定位崩溃使用 Debug 或 ReleaseSafe。`--dump-target`/`--dump-imports` 等包检查命令仍保留，便于诊断 CIB 内容。

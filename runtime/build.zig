@@ -24,6 +24,11 @@ pub fn build(b: *std.Build) void {
         exe.addAssemblyFile(b.path("src/ffi/asm/call_x86_64_sysv.S"));
         exe.addAssemblyFile(b.path("src/ffi/asm/callbacks_x86_64_sysv.S"));
     }
+    const release = optimize == .ReleaseSmall or optimize == .ReleaseFast;
+    exe.root_module.unwind_tables = !release;
+    exe.root_module.error_tracing = !release;
+    exe.root_module.omit_frame_pointer = release;
+    exe.root_module.strip = release;
     exe.linkLibC();
     b.installArtifact(exe);
 

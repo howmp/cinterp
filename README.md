@@ -21,8 +21,11 @@ and no runtime code generation / executable memory.
 Requirements: Zig 0.13, clang, Python 3.10+.
 
 ```bash
-# build runtime
+# build release runtime (unwind/backtrace/diagnostic tracing trimmed)
 cd runtime && zig build -Doptimize=ReleaseSmall && cd ..
+
+# build debug runtime (full unwind tables, frame pointers, panic tracing)
+make debug-runtime
 
 # compile and run a C file
 PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c -o build/hello.cib
@@ -80,6 +83,15 @@ make size-cross
 # release tarballs for all four targets
 make release-artifacts
 ```
+
+Build profiles:
+
+- `-Doptimize=Debug` / `-Doptimize=ReleaseSafe`: full diagnostics, unwind tables,
+  frame pointers and panic stack traces.
+- `-Doptimize=ReleaseSmall` (default `make runtime`): strips unwind tables,
+  frame pointers, panic tracing and symbols for the release artifact; concise
+  error codes and CLI messages remain.
+- Current sizes: Debug ≈ 8.8 MiB, ReleaseSmall ≈ 91 KiB (Linux x64).
 
 `make test` runs runtime/compiler unit tests, all end-to-end examples, and
 negative paths (missing input, corrupt/truncated packages, unknown symbol).

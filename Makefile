@@ -1,9 +1,12 @@
-.PHONY: all test runtime compiler-test integration size release-check cross-test c-testsuite fuzz fuzz-exec differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross fetch-suites generate-diff
+.PHONY: all test runtime debug-runtime compiler-test integration size release-check cross-test c-testsuite fuzz fuzz-exec differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross fetch-suites generate-diff
 
 all: test
 
 runtime:
 	cd runtime && zig build -Doptimize=ReleaseSmall
+
+debug-runtime:
+	cd runtime && zig build -Doptimize=Debug
 
 compiler-test:
 	PYTHONPATH=compiler/src python3 -m unittest discover -s compiler/tests
