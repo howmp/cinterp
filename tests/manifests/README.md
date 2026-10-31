@@ -15,6 +15,9 @@ Each `*.json` file describes one upstream or local C suite. The runner is
 | `expected_ext` / `expected_dir` | expected stdout location; default `.expected` next to source |
 | `expected_required` | skip cases without a reference output (used by CompCert) |
 | `compare_stdout` | set false for suites whose test harness prints assertion chatter |
+| `normalize_source_paths` | replace absolute `__FILE__` paths with basenames before comparing |
+| `normalize_trailing_whitespace` | compare semantic lines ignoring trailing spaces |
+| `strip_compiler_diagnostics` | drop upstream compiler warning lines (TCC-specific expectations) |
 | `expect_marker` | read `// expect: N` from the source and compare the VM result |
 | `expected_exit` | expected process exit; `null` disables the check |
 | `prelude` | optional file prepended to a generated wrapper |
@@ -51,11 +54,13 @@ make generate-diff          # YARPGen differential smoke
 
 ## Current native baseline (2026-10-31)
 
+TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whitespace, and TCC compiler warnings; this recovered 4 cases without weakening semantic comparisons.
+
 | suite | passed | skipped |
 | --- | ---: | ---: |
 | csuite | 12 | 0 |
 | c-testsuite | 217 | 3 |
-| tcc-tests2 | 84 | 59 |
+| tcc-tests2 | 88 | 55 |
 | chibicc | 14 | 27 |
 | libc-test | 40 | 35 |
 | gcc-torture | 1155 | 91 |
@@ -69,7 +74,7 @@ make generate-diff          # YARPGen differential smoke
 | libc-test-regression | 49 | 20 |
 | c-testsuite-smoke | 12 | 0 |
 | tcc-smoke / gcc-smoke / compcert-smoke | 12 each | 0 |
-| **total** | **4140** | **313** |
+| **total** | **4144** | **309** |
 
 `make test-suites-full` is the command that produced this table; generated
 YARPGen/Csmith known-failure seeds are recorded separately in

@@ -1,5 +1,4 @@
-# regenerated after P0/P1 semantic changes
-03_struct	mismatch: stdout mismatch
+# refreshed after harness normalization/warning stripping
 100_c99array-decls	compile: /home/admin/cl/build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
 101_cleanup	compile: cinterp: unsupported type <2 x float>
 102_alignas	compile: /home/admin/cl/build/suites/tcc/tests/tests2/102_alignas.c:4:14: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
@@ -11,7 +10,7 @@
 113_btdll	mismatch: stdout mismatch
 114_bound_signal	mismatch: stdout mismatch
 115_bound_setjmp	mismatch: stdout mismatch
-116_bound_setjmp2	run: exit -11 != 0
+116_bound_setjmp2	mismatch: stdout mismatch
 117_builtins	mismatch: stdout mismatch
 119_random_stuff	compile: /home/admin/cl/build/suites/tcc/tests/tests2/119_random_stuff.c:18:7: warning: ISO C does not allow indirection on operand of type 'void *' [-Wvoid-ptr-dereference]
 120+_alias	mismatch: stdout mismatch
@@ -22,7 +21,6 @@
 126_bound_global	mismatch: stdout mismatch
 127_asm_goto	compile: cinterp: unsupported instruction: callbr void asm sideeffect "jmp ${0:l}", "!i,~{dirflag},~{fpsr},~{flags}"()
 128_run_atexit	mismatch: stdout mismatch
-129_scopes	mismatch: stdout mismatch
 131_return_struct_in_reg	mismatch: stdout mismatch
 136_atomic_gcc_style	compile: cinterp: unsupported instruction: %7 = cmpxchg ptr %atomic_var1, i32 %5, i32 %6 seq_cst seq_cst, align 4
 137_funcall_struct_args	compile: /home/admin/cl/build/suites/tcc/tests/tests2/137_funcall_struct_args.c:17:1: warning: return type of 'main' is not 'int' [-Wmain-return-type]
@@ -38,11 +36,9 @@
 150_return_qualifiers	compile: /home/admin/cl/build/suites/tcc/tests/tests2/150_return_qualifiers.c:12:5: error: conflicting types for 'const_return'
 151_atomic_header	compile: cinterp: unsupported type volatile
 31_args	mismatch: stdout mismatch
-33_ternary_op	mismatch: stdout mismatch
 34_array_assignment	compile: /home/admin/cl/build/suites/tcc/tests/tests2/34_array_assignment.c:16:6: error: array type 'int[4]' is not assignable
 35_sizeof	compile: /home/admin/cl/build/suites/tcc/tests/tests2/35_sizeof.c:8:34: warning: format specifies type 'int' but the argument has type 'unsigned long' [-Wformat]
 36_array_initialisers	mismatch: stdout mismatch
-38_multiple_array_index	mismatch: stdout mismatch
 42_function_pointer	mismatch: stdout mismatch
 46_grep	mismatch: stdout mismatch
 60_errors_and_warnings	mismatch: stdout mismatch

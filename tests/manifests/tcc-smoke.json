@@ -71,5 +71,8 @@
       "source": "tests/tests2/12_hashdefine.c",
       "expected_stdout": "tests/tests2/12_hashdefine.expect"
     }
-  ]
+  ],
+  "normalize_source_paths": true,
+  "normalize_trailing_whitespace": true,
+  "strip_compiler_diagnostics": true
 }

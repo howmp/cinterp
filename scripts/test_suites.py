@@ -56,6 +56,21 @@ def strip_result(data: bytes) -> tuple[bytes, int | None]:
     return data, None
 
 
+def normalize_output(data: bytes, manifest: dict) -> bytes:
+    data = norm_text(data)
+    if manifest.get("normalize_source_paths"):
+        # TCC/CompCert tests use __FILE__; the reference output often keeps
+        # only the basename while cinterp sees an absolute checkout path.
+        data = re.sub(rb"(?:[A-Za-z]:)?(?:/[^\s:]+)+/([^/\s:]+\.c)", rb"\1", data)
+    if manifest.get("normalize_trailing_whitespace"):
+        data = b"\n".join(line.rstrip() for line in data.split(b"\n"))
+    if manifest.get("strip_compiler_diagnostics"):
+        # Upstream TCC reference output includes its compiler warnings; cinterp
+        # uses clang and does not emit those TCC-specific diagnostics.
+        data = b"\n".join(line for line in data.split(b"\n") if b" warning:" not in line)
+    return data
+
+
 def resolve_root(manifest: dict) -> Path:
     root = str(manifest.get("root", "."))
     suites = Path(os.environ.get("CINTERP_SUITE_ROOT", str(ROOT / "build/suites")))
@@ -208,7 +223,7 @@ def prepare_wrapper(case: dict, manifest: dict, root: Path, temp: Path) -> Path:
     return target
 
 
-def expected_bytes(case: dict, root: Path) -> bytes | None:
+def expected_bytes(case: dict, root: Path, manifest: dict | None = None) -> bytes | None:
     if "expected_stdout" not in case:
         return None
     value = case.get("expected_stdout")
@@ -217,7 +232,8 @@ def expected_bytes(case: dict, root: Path) -> bytes | None:
     path = resolve_path(root, value)
     if not path or not path.is_file():
         raise FileNotFoundError(path)
-    return norm_text(path.read_bytes())
+    raw = path.read_bytes()
+    return normalize_output(raw, manifest or {})
 
 
 def run_on_target(
@@ -348,9 +364,9 @@ def run_case(
         result.update(status="timeout", reason="run timeout")
         result["duration_ms"] = int((time.monotonic() - started) * 1000)
         return result
-    combined = norm_text(run.stdout + run.stderr)
+    combined = normalize_output(run.stdout + run.stderr, manifest)
     clean, result_value = strip_result(combined)
-    exp_stdout = expected_bytes(case, root) if manifest.get("compare_stdout", True) else None
+    exp_stdout = expected_bytes(case, root, manifest) if manifest.get("compare_stdout", True) else None
     expected_exit = case.get("expected_exit", manifest.get("expected_exit", 0))
     if exp_stdout is not None and clean.rstrip(b"\n") != exp_stdout.rstrip(b"\n"):
         result.update(status="mismatch", reason="stdout mismatch")

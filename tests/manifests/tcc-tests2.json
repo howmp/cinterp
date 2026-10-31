@@ -15,5 +15,8 @@
   "expected_exit": 0,
   "timeout": 30,
   "skip": {},
-  "repo_skip_file": "tests/manifests/tcc-tests2.skip"
+  "repo_skip_file": "tests/manifests/tcc-tests2.skip",
+  "normalize_source_paths": true,
+  "normalize_trailing_whitespace": true,
+  "strip_compiler_diagnostics": true
 }
