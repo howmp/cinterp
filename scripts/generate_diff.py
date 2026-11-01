@@ -16,6 +16,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+try:
+    from minimize_failure import minimize_file
+except ImportError:  # module execution from another cwd
+    from scripts.minimize_failure import minimize_file
+
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 PYTHONPATH = str(ROOT / "compiler/src")
@@ -148,6 +153,11 @@ def case(seed: int, yarpgen: Path, work: Path, max_source_bytes: int = 8_000_000
     return result
 
 
+def _csmith_includes(generator: Path) -> list[Path]:
+    root = generator.parents[2] if generator.parent.name == "src" else generator.parent
+    return [root / "runtime", root / "build/runtime"]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--generator", choices=("yarpgen", "csmith"), default="yarpgen")
@@ -159,6 +169,8 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--max-source-bytes", type=int, default=8_000_000)
     ap.add_argument("--failures-dir", default=str(ROOT / "build/generate-failures"))
+    ap.add_argument("--minimize", action="store_true", help="reduce each failure preserving native/cinterp divergence")
+    ap.add_argument("--minimize-calls", type=int, default=120, help="max native/cinterp oracle calls per failure")
     args = ap.parse_args()
     generator = Path(args.yarpgen if args.generator == "yarpgen" else args.csmith)
     if not generator.is_file():
@@ -170,20 +182,14 @@ def main() -> int:
         known = json.loads(known_path.read_text()).get(args.generator, {})
     results = []
     temp = Path(tempfile.mkdtemp(prefix=f"cinterp-{args.generator}-"))
-    try:
-        for seed in range(args.seed_start, args.seed_start + args.iterations):
-            if args.generator == "csmith":
-                item = case_csmith(seed, generator, temp)
-            else:
-                item = case(seed, generator, temp, args.max_source_bytes)
-            if item["status"] == "failure" and str(seed) in known:
-                item.update(status="skip", reason="known: " + str(known[str(seed)]))
-            results.append(item)
-    finally:
-        if not args.keep:
-            import shutil
-
-            shutil.rmtree(temp, ignore_errors=True)
+    for seed in range(args.seed_start, args.seed_start + args.iterations):
+        if args.generator == "csmith":
+            item = case_csmith(seed, generator, temp)
+        else:
+            item = case(seed, generator, temp, args.max_source_bytes)
+        if item["status"] == "failure" and str(seed) in known:
+            item.update(status="skip", reason="known: " + str(known[str(seed)]))
+        results.append(item)
     counts: dict[str, int] = {}
     for item in results:
         counts[item["status"]] = counts.get(item["status"], 0) + 1
@@ -208,11 +214,31 @@ def main() -> int:
 
                 shutil.copytree(src, dst)
                 (dst / "failure.json").write_text(json.dumps(item, indent=2) + "\n")
+                if args.minimize and item["status"] in ("failure", "skip"):
+                    source = dst / ("test.c" if args.generator == "csmith" else "combined.c")
+                    includes = _csmith_includes(generator) if args.generator == "csmith" else []
+                    try:
+                        meta = minimize_file(
+                            source,
+                            includes,
+                            clang="clang",
+                            timeout=30,
+                            max_calls=args.minimize_calls,
+                            output=dst / "minimized.c",
+                        )
+                        item["minimized"] = meta
+                        (dst / "failure.json").write_text(json.dumps(item, indent=2) + "\n")
+                    except Exception as exc:
+                        print(f"minimize seed {item['seed']}: {exc}", file=sys.stderr)
     report = {"generator": args.generator, "iterations": args.iterations, "counts": counts, "results": results}
     path = Path(args.report)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2) + "\n")
     print("generate-diff: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    if not args.keep:
+        import shutil
+
+        shutil.rmtree(temp, ignore_errors=True)
     return 0 if counts.get("failure", 0) == 0 and counts.get("harness", 0) == 0 else 1
 
 

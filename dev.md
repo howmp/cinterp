@@ -1011,3 +1011,12 @@ zig build -Dtarget=aarch64-linux-gnu
 - 运行时执行模型固定为：**单个 CIB + 宿主系统库/provider + 显式 `--lib`**。CIB 不是目标文件或共享库，不参与另一个 CIB 的符号解析、重定位或入口链接。
 - 需要跨包复用时，应在源码/编译阶段合并后重新生成一个 CIB，或由调用方通过 `--lib` 提供普通共享库；不在运行时做 CIB→CIB 链接。
 - `CIPI` 仍然只描述本包外部 plan 到系统库/`--lib` provider 的映射，不新增包间依赖/导出表。
+
+### 20.10 生成式失败最小化实现（2026-10-31）
+
+- **工具**：`scripts/minimize_failure.py` 使用 native-vs-cinterp 差异作为 oracle，按行做 ddmin + 单行贪心删除；保留原失败类别（compile/run/timeout），达到 call 上限即停止。
+- **输入处理**：先生成 `flatten_local_includes`，把 `combined.c` 引用的本地 `func.c`/`driver.c`/`init.h` 展开，避免只缩减两行 include；系统头（`<...>`）保留。
+- **产物**：失败 artifact 中保存 `minimized.c`、`minimized.cib`、`minimized.json`（原始/最小行数、字节数、失败类别、oracle 调用数、native/cinterp 结果）；`failure.json` 增加 `minimized` 字段。
+- **集成**：`generate_diff.py --minimize` 在失败/known-skip artifact 保存后调用 reducer；`make generate-diff-nightly` 默认带 `--minimize`，可用 `--minimize-calls` 控制预算。
+- **修复**：失败 artifact 原先在临时目录清理后才复制，导致默认不保存；现在先复制/缩减再清理临时目录。
+- **限制**：当前是行级 reducer，不是 creduce；复杂依赖可能只到几十个百分点缩减，但已经能把 seed 级黑盒失败变成可读的 `minimized.c` + 根因类别，后续可把最小样本加入固定回归并删除 known seed。

@@ -50,7 +50,7 @@ test-suites-full: runtime
 
 test-suites-nightly: runtime
 	python3 scripts/test_suites.py --tier nightly --report build/test-suites-nightly.json
-	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json
+	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
 
 test-suites-report: test-suites-full
 	@test -s build/test-suites-full.json
@@ -83,7 +83,7 @@ generate-diff: runtime
 	python3 scripts/generate_diff.py --generator yarpgen --iterations 20 --report build/generate-diff-report.json
 
 generate-diff-nightly: runtime
-	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json
+	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
 
 generate-diff-csmith: runtime
 	python3 scripts/generate_diff.py --generator csmith --iterations 3 --report build/generate-diff-csmith.json
