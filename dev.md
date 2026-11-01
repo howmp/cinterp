@@ -917,7 +917,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
-- **测试集**：csuite 17、c-testsuite 218+2 skip、TCC 97+45 skip、chibicc 15+26 skip、libc-test 47+28 skip、GCC execute 1252+52 skip、GCC compile 1411+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 64+15 skip。总计 4286 通过 / 233 显式 skip；另有 1036 个明确排除的非目标用例。
+- **测试集**：csuite 17、c-testsuite 218+2 skip、TCC 97+45 skip、chibicc 15+26 skip、libc-test 47+28 skip、GCC execute 1258+46 skip、GCC compile 1411+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 64+15 skip。总计 4292 通过 / 227 显式 skip；另有 1036 个明确排除的非目标用例。
 - **跨 ABI**：`make test-suites-cross` 每目标约 145 个：csuite 17/17，c-testsuite-smoke 40、GCC-smoke 40、CompCert-smoke 24、TCC-smoke 24；Windows/ARM 平台差异有显式 per-target skip。Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
@@ -932,7 +932,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 20.2 测试重构完成状态与边界（2026-10-31）
 
-- **支持集基线**：`make test-suites-full` 为 **4286/4519 通过，233 skip（94.7%）**；另有 **1036** 个 `.excluded` 非目标用例（GCC execute 396、GCC compile 605、CompCert 34、TCC 1）。
+- **支持集基线**：`make test-suites-full` 为 **4292/4519 通过，227 skip（94.7%）**；另有 **1036** 个 `.excluded` 非目标用例（GCC execute 396、GCC compile 605、CompCert 34、TCC 1）。
 - **标准集**：`make test-suites` 为 **394/495 通过，101 skip**；`make test` 通过。
 - **跨 ABI**：csuite 17/17；扩展 smoke 每目标约 145（c-testsuite 40、GCC 40、CompCert 24、TCC 24），Windows/ARM 平台差异使用 per-target skip。Windows 使用 Zig MinGW 头文件，ARM64 使用 qemu。
 - **生成式**：YARPGen 100 seeds 为 77 通过 / 23 明确 skip；Csmith 3/3 已知失败并保存 artifact；20-seed smoke 16 通过 / 4 skip。
@@ -960,7 +960,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **varargs**：额外参数重叠时反向拷贝；实现 `va_copy`；修复 CompCert `varargs1/2`。
 - **ABI**：`<2 x float>`/HFA coerce 参数按位传输；`udiv/urem` 按声明宽度掩码。
 - **符号**：CIVM/plan 名称上限从 32 提升到 128，修复长 inline/符号名。
-- **结果**：full 4286/4519（233 skip）；standard 394/495；TCC97/45、GCC1252/52、CompCert55/20、libc-test47/28、libc-regression48/21。线程/`RLIMIT_STACK` 敏感用例仍显式隔离。
+- **结果**：full 4292/4519（227 skip）；standard 394/495；TCC97/45、GCC1258/46、CompCert55/20、libc-test47/28、libc-regression48/21。线程/`RLIMIT_STACK` 敏感用例仍显式隔离。
 
 ### 20.4 VLA/C11/external data/stdio 补齐（2026-10-31）
 
@@ -969,7 +969,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **C11**：`_Generic`、`_Static_assert`、`_Alignas/_Alignof`、`static inline`、`_Noreturn` 通过 `csuite/c11`；新增 aligned alloca opcode，支持 local `_Alignas(32)`。
 - **external data**：补充 `__environ`、`_environ`、`__progname*`、`_pgmptr`、`_tzname`、`_timezone`、`_daylight`、`_opt*` 等数据别名；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 通过 cstdapi helper provider 解析。`csuite/external_data` 四目标通过。
 - **stdio/wide/locale**：修复实际 cinterp 侧 `snprintf`/字符串问题；`strtol/wcstol` 的非法 base 差异已在原生 glibc 复现，归为 host-libc reference difference，不再保留 runtime shim。其余 `libc-test` mismatch 同样标记为 musl expected 不适用于当前宿主，不是 cinterp 回归。若产品要求 musl 语义，应引入显式 musl provider/参考目标，而不是修改 expected 或 skip 冒充通过。
-- **结果**：full 4286/4519（233 skip）；standard 394/495；csuite 17/17；TCC 97/45；libc-test 47/28；跨 ABI csuite 17/17。
+- **结果**：full 4292/4519（227 skip）；standard 394/495；csuite 17/17；TCC 97/45；libc-test 47/28；跨 ABI csuite 17/17。
 
 ### 20.5 ABI callback 边角完成（2026-10-31）
 
@@ -978,7 +978,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **长 double**：SysV x87 `st0` 返回写回 trampoline 并 `fld tbyte`；Win32 增加 80-bit ST0 缓冲区；AArch64 fp128 走向量 loc。
 - **AArch64 HFA**：callback 帧新增 q2/q3 返回槽，HFA 4 向量参数/返回可往返；`readRetArm64` 支持 xmm2/xmm3。
 - **聚合 sret/byval**：回调的隐藏 sret 指针和 byval struct 参数走已有 pointer 通道，24-byte `S24` 回调通过。
-- **回归**：新增 `examples/ffi_callback_hfa.c` + helper，覆盖 F4 HFA、D2 HFA、long double、S24 sret；native 与 AArch64 qemu 均得到 `247`。`make test`、full 4286/4519、standard 394/495、跨 ABI csuite 17/17 均通过。
+- **回归**：新增 `examples/ffi_callback_hfa.c` + helper，覆盖 F4 HFA、D2 HFA、long double、S24 sret；native 与 AArch64 qemu 均得到 `247`。`make test`、full 4292/4519、standard 394/495、跨 ABI csuite 17/17 均通过。
 - **限制**：Win64/Win32 的 HFA/long-double 回调帧已编译通过，但未在远端 Windows 上用专用 helper 做值域回归；不做 vectorcall/COM。
 
 ### 20.6 明确决策：_Complex / atexit / signal / GCC builtins（2026-10-31）
@@ -998,7 +998,7 @@ zig build -Dtarget=aarch64-linux-gnu
   - `aliases.<os>.<symbol>`：同签名符号改名（如 Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）。
 - **编译期使用**：`cstdapi.alias()` 在 lowering 前改名；`cstdapi.wrapper()` 追加参数并改用真实 plan 名；`cstdapi.lookup()` 为真实符号提供 CIPI provider。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
 - **runtime 简化**：删除 `runtime/src/ffi/native.zig` 的 `alias()`、`vm.resolveNative()` 的 alias fallback、`strtol/wcstol` shim，以及 `_`/`@` 名称猜测。运行时现在只按 CIB provider、显式 `--lib` 和系统 fallback 查找，不再包含具体函数名分支。
-- **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4286/4519、standard 394/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。
+- **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4292/4519、standard 394/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。
 
 ### 20.8 外部 inline / weak 的明确边界（2026-10-31）
 
@@ -1027,9 +1027,9 @@ zig build -Dtarget=aarch64-linux-gnu
 - runner 已具备 `--include-excluded`、`--only`、`--emit-reasons`；`gcc-torture-compile.skip` 已去重。
 - 修复 `external.collect_names` 的 `@` globals_map 比较错误：已定义全局不再误当外部数据符号。
 - 支持 `llvm.ptrmask` lowering；SysV plan 参数上限从 16 提升到 64。
-- 回收 58 个 excluded（55 个 varargs/HFA + `920501-8` 的 18 参数 plan + `pr27285`/`20040313-1`）；GCC execute 1194→1252。
+- 累计回收 64 个（58 个 excluded + 6 个 GCC execute skip）；GCC execute 1194→1258。
 - 剩余 5 个长 double/聚合 varargs：`stdarg-1/2/3`、`va-arg-5/6`；`va-arg-7/8`、`980608-1` 属外部 inline non-goal。
-- full 4286/4519，233 skip；standard 394/495。
+- full 4292/4519，227 skip；standard 394/495。
 
 ### 20.12 typed variadic calls（2026-10-31）
 
@@ -1037,7 +1037,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - `va_start` 按 code 构建 overflow 区：普通标量 8B；`x86_fp80`/`fp128` 对齐16并复制16B；`byval`/聚合按 size 对齐复制。
 - 修复长 double 和 struct varargs；`stdarg-1/2/3`、`va-arg-5/6` 回收。
 - 剩余 `va-arg-7/8`、`980608-1` 是外部 inline，保持 non-goal。
-- full 4286/4519，233 skip；standard 394/495。
+- full 4292/4519，227 skip；standard 394/495。
 
 ### 20.13 FP/NaN 修复（2026-10-31）
 
@@ -1045,7 +1045,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - 补齐 `llvm.copysign.f80/f128`、`llvm.fabs.f80`、`llvm.sqrt.f80/f128` 到 libc long-double intrinsic。
 - 回收 `copysign1/2`、`inf-4`、`pr108540-1`、`pr109386`；gcc-ieee 59→64 通过。
 - `cdivchk*` 属于 `_Complex`，保持 non-goal。
-- full 4286/4519，233 skip；standard 394/495。
+- full 4292/4519，227 skip；standard 394/495。
 
 ### 20.14 compiler traceback 清理（2026-10-31）
 
@@ -1058,7 +1058,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - 全量重跑 396 个 GCC execute excluded：25 个旧原因已通过。
 - 按范围决策只回收 2 个：`pr27285`（global const）和 `20040313-1`（packed literal struct）。
 - `20020411-1`/`20050607-1`/`complex-3/7` 仍属 vector/_Complex non-goal；GCC builtin 类不回收。
-- excluded 1042→1040；GCC execute 398→396；full 4286/4519，233 skip。
+- excluded 1042→1040；GCC execute 398→396；full 4292/4519，227 skip。
 
 ### 20.16 跨 ABI 扩展（2026-10-31）
 
@@ -1073,7 +1073,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - HFA coerce 残留已处理：`20071102-1` 回收；`981223-1`/`pr55921` 属 `_Complex`/asm non-goal；`pr38969` 已回收。GCC compile 又回收 `920615-1`/`pr113603`/`pr43191`，compile excluded 609→605。
 - GCC compile excluded 主要是 gnu89/implicit-int/K&R（non-goal）、warning-first 需重观察、resource/asm/vector/builtin（non-goal）。
 - 已确认决策：C17；`_Complex`/GCC builtins/外部 inline/weak/CIB-to-CIB/线程原子汇编 vector/可增长内存 non-goal；诊断文本一致性 non-goal；跨 ABI nightly；runner triage flags 已实现。
-- 当前基线：full 4286/4519（233 skip）；standard 394/495；跨 ABI 每目标约145。
+- 当前基线：full 4292/4519（227 skip）；standard 394/495；跨 ABI 每目标约145。
 
 ### 20.18 剩余 candidate 重分诊（2026-10-31）
 
@@ -1090,3 +1090,15 @@ zig build -Dtarget=aarch64-linux-gnu
 - **runner `--inprocess`**：在 test runner 进程内编译，复用 Python 解释器和已加载数据库；csuite 441ms→254ms（约1.7x），standard 约16.4s→16.2s（大套件受 runtime/子进程主导）。
 - **`--cib-cache`**：内容寻址缓存，key 含编译器源码 mtime/size 指纹、target、source、CPATH；Makefile suite 默认使用 `build/cib-cache`。编译-only 套件第二次约26.6s→25.1s，收益有限；主要价值是避免重复 compiler 起进程/LLVM 编译。
 - 结论：当前最值得默认启用的是 inprocess + lazy DB；若继续追求大幅加速，应做 batch clang/compiler daemon，Rust 重写放在 profile 证明 lowering 仍是主因之后。
+
+### 20.20 Plan 1–4 完成：excluded/skip 审计（2026-10-31）
+
+- GCC execute 重跑 52 个 skip：6 个通过并回收（`20030914-1`、`20040811-1`、`941014-1`、`960513-1`、`pr43220`、`vla-dealloc-1`）；剩余 46 个分类为 `bug 45 / non-goal 1`，上游测试源文件即复现输入。
+- GCC compile excluded 609 全量重跑：20 通过、4 个安全回收；605 行现在都带类别前缀：
+  `dialect 334 / non-goal 141 / frontend 60 / resource 25 / unsupported 20 / bug 25`。
+- GCC execute excluded 396 行已分类：
+  `non-goal 159 / bug 100 / dialect 105 / resource 16 / frontend 15 / unsupported 1`。
+- TCC 45 skip 分类：diagnostic/frontend 5、resource 4、non-goal 18、mismatch 8、harness/test-entry 6、frontend/dialect 4。
+- CompCert 20 skip 分类：mismatch 8、non-goal 11、frontend/dialect 1。
+- 所有 `.excluded`/`.skip` 已清除 warning-first 和 Python traceback 原因；剩余 bug 项的复现路径是对应 `build/suites/<suite>/.../<id>.c`。
+- 当前 full **4292/4519，227 skip**；standard 394/495；GCC execute 1258/46；TCC 97/45；CompCert 55/20。

@@ -79,7 +79,7 @@ TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whi
 | tcc-tests2 | 97 | 45 |
 | chibicc | 15 | 26 |
 | libc-test | 47 | 28 |
-| gcc-torture | 1252 | 52 |
+| gcc-torture | 1258 | 46 |
 | gcc-torture-compile | 1411 | 0 |
 | compcert | 55 | 20 |
 | llvm-singlesource | 85 | 8 |
@@ -92,7 +92,7 @@ TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whi
 | tcc-smoke | 24 | 0 native；Windows 23+1 skip |
 | gcc-smoke | 40 | 0 |
 | compcert-smoke | 24 | 0 native；Windows 23+1 skip |
-| **total** | **4286** | **233** |
+| **total** | **4292** | **227** |
 
 `make test-suites-full` is the command that produced this table; generated
 YARPGen/Csmith known-failure seeds are recorded separately in

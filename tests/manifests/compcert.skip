@@ -1,21 +1,21 @@
 # refreshed after P1/P2 bug fixes
-alias	mismatch: stdout mismatch
-alignas	compile: /home/admin/cl/build/suites/CompCert/test/regression/alignas.c:25:10: error: size of array element of type 'int16' (aka 'int') (4 bytes) isn't a multiple of its alignment (16 by...
-aligned	mismatch: stdout mismatch
-alignglob	mismatch: stdout mismatch
-attribs1	mismatch: stdout mismatch
-builtins-aarch64	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-aarch64.c:13:31: error: use of unknown builtin '__builtin_cls' [-Wimplicit-function-declaration]
-builtins-arm	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-arm.c:14:33: error: use of unknown builtin '__builtin_fsqrt' [-Wimplicit-function-declaration]
-builtins-common	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-common.c:16:33: error: use of unknown builtin '__builtin_bswap' [-Wimplicit-function-declaration]
-builtins-powerpc	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-powerpc.c:23:40: error: use of unknown builtin '__builtin_mulhw' [-Wimplicit-function-declaration]
-builtins-riscV	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-riscV.c:14:47: error: use of unknown builtin '__builtin_fmadd' [-Wimplicit-function-declaration]
-builtins-x86	compile: /home/admin/cl/build/suites/CompCert/test/regression/builtins-x86.c:24:33: error: use of unknown builtin '__builtin_read16_reversed' [-Wimplicit-function-declaration]
-charlit	compile: /home/admin/cl/build/suites/CompCert/test/regression/charlit.c:20:21: error: hex escape sequence out of range
-dollars	mismatch: stdout mismatch
-floats	mismatch: stdout mismatch
-initializers2	mismatch: stdout mismatch
-krfun	compile: /home/admin/cl/build/suites/CompCert/test/regression/krfun.c:5:6: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C...
-memcpy	compile: /home/admin/cl/build/suites/CompCert/test/regression/memcpy.c:18:31: warning: invalid conversion specifier ',' [-Wformat-invalid-specifier]
-packedstruct2	compile: /home/admin/cl/build/suites/CompCert/test/regression/packedstruct2.c:7:19: error: expected identifier or '('
-sections	compile: /home/admin/cl/build/suites/CompCert/test/regression/sections.c:39:3: error: use of unknown builtin '__builtin_membar' [-Wimplicit-function-declaration]
-struct7	mismatch: stdout mismatch
+alias	mismatch: platform/expected difference: stdout mismatch
+alignas	non-goal: C11/dialect: /home/admin/cl/build/suites/CompCert/test/regression/alignas.c:25:10: error: size of array element of type 'int16' (aka 'int') (4 bytes) isn't a multiple of its alignment (16 bytes)
+aligned	mismatch: platform/expected difference: stdout mismatch
+alignglob	mismatch: platform/expected difference: stdout mismatch
+attribs1	mismatch: platform/expected difference: stdout mismatch
+builtins-aarch64	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-aarch64.c:13:31: error: use of unknown builtin '__builtin_cls' [-Wimplicit-function-declaration]
+builtins-arm	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-arm.c:14:33: error: use of unknown builtin '__builtin_fsqrt' [-Wimplicit-function-declaration]
+builtins-common	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-common.c:16:33: error: use of unknown builtin '__builtin_bswap' [-Wimplicit-function-declaration]
+builtins-powerpc	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-powerpc.c:23:40: error: use of unknown builtin '__builtin_mulhw' [-Wimplicit-function-declaration]
+builtins-riscV	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-riscV.c:14:47: error: use of unknown builtin '__builtin_fmadd' [-Wimplicit-function-declaration]
+builtins-x86	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-x86.c:24:33: error: use of unknown builtin '__builtin_read16_reversed' [-Wimplicit-function-declaration]
+charlit	non-goal: char literal diagnostic: /home/admin/cl/build/suites/CompCert/test/regression/charlit.c:20:21: error: hex escape sequence out of range
+dollars	mismatch: platform/expected difference: stdout mismatch
+floats	mismatch: platform/expected difference: stdout mismatch
+initializers2	mismatch: platform/expected difference: stdout mismatch
+krfun	frontend/dialect: unsupported compile: /home/admin/cl/build/suites/CompCert/test/regression/krfun.c:23:14: error: parameter 'c' was not declared, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
+memcpy	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/memcpy.c:26:3: error: use of unknown builtin '__builtin_memcpy_aligned' [-Wimplicit-function-declaration]
+packedstruct2	non-goal: packed struct frontend: /home/admin/cl/build/suites/CompCert/test/regression/packedstruct2.c:7:19: error: expected identifier or '('
+sections	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/sections.c:39:3: error: use of unknown builtin '__builtin_membar' [-Wimplicit-function-declaration]
+struct7	mismatch: platform/expected difference: stdout mismatch

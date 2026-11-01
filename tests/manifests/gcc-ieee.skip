@@ -11,6 +11,6 @@ float32-builtin-issignaling-1	compile: In file included from /home/admin/cl/buil
 float32x-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float32x-builtin-issignaling-1.c:13:
 float64-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float64-builtin-issignaling-1.c:13:
 float64x-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float64x-builtin-issignaling-1.c:13:
-fp-cmp-cond-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/fp-cmp-cond-1.c:8:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
+fp-cmp-cond-1	non-goal:vector_type (<1 x float>): cinterp unsupported fcmp type <1
 pr50310	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !385
 pr72824-2	compile: cinterp: bad parameter: '<4 x float> noundef %value'

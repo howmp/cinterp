@@ -1,399 +1,399 @@
 # unsupported compile cases excluded from the execute support subset
-20000412-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20000412-3.c:14:10: error: call to undeclared function 'f'; ISO C99 and later do not support implicit fu
-20000717-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20000717-3.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
-20000822-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20000822-1.c:15:3: error: function definition is not allowed here
-20001009-2	compile: cinterp: unsupported instruction: call void asm sideeffect "", "r,~{dirflag},~{fpsr},~{flags}"(i32 %1), !srcloc !35
-20001111-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20001111-1.c:19:10: warning: cast to 'char *' from smaller integer type 'unsigned int' [-Wint-to-pointer
-20010209-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20010209-1.c:9:3: error: function definition is not allowed here
-20010605-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20010605-1.c:6:5: error: function definition is not allowed here
-20010605-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20010605-2.c:11:7: warning: passing arguments to 'foo' without a prototype is deprecated in all versions
-20020314-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020314-1.c:14:7: error: call to undeclared library function 'alloca' with type 'void *(unsigned long)'
-20020411-1	non-goal: vector/_Complex type (explicitly unsupported); observed 2026-10-31
-20020412-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020412-1.c:24:10: error: fields must have a constant size: 'variable length array in structure' extens
-20020819-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020819-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
-20030222-1	compile: cinterp: unsupported instruction: %1 = call i64 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i64 %0), !srcloc !31
-20030501-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20030501-1.c:11:7: error: function definition is not allowed here
-20031003-1	compile: cinterp: unsupported operand: 'poison'
-20031211-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20031211-2.c:12:14: warning: implicit truncation from 'int' to bit-field changes value from 131 to 3 [-W
-20040223-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040223-1.c:9:5: error: call to undeclared library function 'abort' with type 'void (void) __attribute_
-20040302-1	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %lab0, label %end]
-20040308-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040308-1.c:6:9: error: fields must have a constant size: 'variable length array in structure' extensio
-20040423-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040423-1.c:8:9: error: fields must have a constant size: 'variable length array in structure' extensio
-20040520-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040520-1.c:7:9: error: function definition is not allowed here
-20040805-1	compile: cinterp: bad alloca size 65536 for [65536 x i8]
-20041019-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20041019-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
-20041214-1	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %do_precision, label %do_form_integer, label %do_form_string]
-20041218-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20041218-2.c:5:19: error: fields must have a constant size: 'variable length array in structure' extensi
-20050121-1	compile: cinterp: unsupported type <2 x float>
-20050203-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !49
-20050316-1	compile: cinterp: unsupported type <2 x i32>
-20050316-2	compile: cinterp: unsupported type <2 x float>
-20050316-3	compile: cinterp: unsupported type <2 x i32>
-20050604-1	compile: cinterp: unsupported type <4 x i16>
-20050607-1	non-goal: vector/_Complex type (explicitly unsupported); observed 2026-10-31
-20060420-1	compile: cinterp: unsupported type <4 x float>
-20061031-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !27
-20061220-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20061220-1.c:11:3: error: function definition is not allowed here
-20070919-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20070919-1.c:28:19: error: fields must have a constant size: 'variable length array in structure' extens
-20071210-1	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %lab1, label %lab1, label %lab2, label %lab3, label %lab4]
-20071211-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !29
-20071220-1	compile: cinterp: unsupported instruction: %1 = call ptr asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(ptr %0), !srcloc !30
-20071220-2	compile: cinterp: unsupported instruction: %1 = call ptr asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(ptr %0), !srcloc !30
-20080122-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !33
-20090219-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20090219-1.c:13:5: error: function definition is not allowed here
-20120427-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20120427-1.c:9:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
-20120427-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20120427-2.c:9:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
-20241029-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20241029-1.c:7:5: error: use of unknown builtin '__builtin_puts' [-Wimplicit-function-declaration]
-920302-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920302-1.c:9:1: warning: a function definition without a prototype is deprecated in all versions of C an
-920409-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920409-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920410-1	compile: cinterp: bad alloca size 160000 for [40000 x i32]
-920411-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920411-1.c:3:6: warning: a function definition without a prototype is deprecated in all versions of C an
-920415-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920415-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920428-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920428-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920428-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920428-2.c:5:3: error: parameter 'i' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-920429-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920429-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920501-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920501-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920501-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920501-3.c:8:1: warning: a function definition without a prototype is deprecated in all versions of C an
-920501-4	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %x, label %y, label %z]
-920501-5	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %x, label %y, label %z]
-920501-7	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920501-7.c:12:3: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not supp
-920501-9	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920501-9.c:11:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-920520-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920520-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920603-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920603-1.c:2:3: error: parameter 'got' was not declared, defaults to 'int'; ISO C99 and later do not sup
-920612-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920612-2.c:11:5: error: function definition is not allowed here
-920721-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920721-2.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920721-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920721-3.c:2:15: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-920721-4	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920721-4.c:9:29: error: function definition is not allowed here
-920728-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920728-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920730-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920730-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920731-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920731-1.c:2:3: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-920812-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920812-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920908-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920908-2.c:20:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-920909-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920909-1.c:2:3: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-921013-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921013-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-921017-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921017-1.c:4:3: error: parameter 'n' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-921110-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921110-1.c:8:3: error: call to undeclared library function 'exit' with type 'void (int) __attribute__((n
-921113-1	compile: cinterp: bad alloca size 65536 for [128 x [128 x i32]]
-921123-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921123-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-921124-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921124-1.c:3:3: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-921202-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921202-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-921207-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921207-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-921208-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921208-2.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-921215-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921215-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-921218-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921218-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-921218-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921218-2.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930106-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930106-1.c:15:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-930111-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930111-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930208-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930208-1.c:8:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930429-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930429-2.c:4:4: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-930513-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930513-1.c:7:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930513-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930513-2.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930518-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930518-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930527-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930527-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930603-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930603-1.c:3:7: warning: a function definition without a prototype is deprecated in all versions of C an
-930603-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930603-3.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930621-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930621-1.c:11:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-930622-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930622-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930630-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930630-1.c:11:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-930702-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930702-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930713-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930713-1.c:8:1: warning: a function definition without a prototype is deprecated in all versions of C an
-930718-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930718-1.c:15:12: warning: implicit truncation from 'int' to a one-bit wide bit-field changes value from
-930719-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930719-1.c:4:14: error: parameter 'com' was not declared, defaults to 'int'; ISO C99 and later do not su
-930818-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930818-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930916-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930916-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930921-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930921-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930929-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930929-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-930930-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930930-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-931002-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931002-1.c:15:5: error: function definition is not allowed here
-931009-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931009-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-931012-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931012-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-931017-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931017-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-931018-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931018-1.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-931031-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931031-1.c:19:1: warning: a function definition without a prototype is deprecated in all versions of C a
-931102-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931102-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-931102-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931102-2.c:12:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-931208-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931208-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-931228-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931228-1.c:2:4: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-940115-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/940115-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-940122-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/940122-1.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-941101-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/941101-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-941110-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/941110-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-941202-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/941202-1.c:2:7: error: parameter 'y' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-950322-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950322-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-950426-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950426-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-950512-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950512-1.c:4:5: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-950605-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950605-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-950621-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950621-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-960218-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/960218-1.c:5:4: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-960312-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "r,r,~{dirflag},~{fpsr},~{flags}"(i32 %12, i32 %13), !srcloc !62
-960402-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/960402-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-960830-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/960830-1.c:20:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
-961112-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/961112-1.c:3:4: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
-980605-1	compile: cinterp: bad alloca size 100000 for [100000 x i8]
-990106-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/990106-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-990130-1	compile: cinterp: unsupported instruction: %1 = call i32 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !32
-990208-1	compile: cinterp: unsupported instruction: indirectbr ptr undef, [label %here]
-990413-2	compile: cinterp: unsupported instruction: %2 = call x86_fp80 asm sideeffect "fpatan\0A\09", "={st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"(x86_fp80 %0, x86_fp80 %1), !srcloc !74
-991014-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/991014-1.c:12:13: error: array is too large (4611686018427387648 elements)
-align-nest	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/align-nest.c:10:9: error: fields must have a constant size: 'variable length array in structure' extensi
-bitfld-5	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !22
-cmpdi-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpdi-1.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
-cmpsf-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpsf-1.c:8:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
-cmpsi-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpsi-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
-cmpsi-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpsi-2.c:7:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
-comp-goto-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/comp-goto-1.c:128:7: warning: a function declaration without a prototype is deprecated in all versions o
-comp-goto-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/comp-goto-2.c:14:3: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not s
-complex-3	non-goal: vector/_Complex type (explicitly unsupported); observed 2026-10-31
-complex-5	compile: cinterp: bad parameter: '<2 x float> noundef %a.coerce'
-complex-6	compile: cinterp: bad parameter: '<2 x float> noundef %x.coerce'
-complex-7	non-goal: vector/_Complex type (explicitly unsupported); observed 2026-10-31
-dbra-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/dbra-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implici
-divmod-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/divmod-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-inst-check	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/inst-check.c:5:3: error: parameter 'm' was not declared, defaults to 'int'; ISO C99 and later do not sup
-int-compare	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/int-compare.c:5:8: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not su
-loop-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-2.c:5:4: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not support
-loop-2d	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-2d.c:5:4: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not suppor
-loop-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-3.c:7:4: error: parameter 'i' was not declared, defaults to 'int'; ISO C99 and later do not support
-loop-3b	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-3b.c:7:4: error: parameter 'i' was not declared, defaults to 'int'; ISO C99 and later do not suppor
-loop-3c	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-3c.c:7:4: error: parameter 'm' was not declared, defaults to 'int'; ISO C99 and later do not suppor
-memclr	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6272
-memcpy-1	compile: cinterp: bad alloca size 131072 for [131072 x i8]
-memcpy-a1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6274
-memcpy-a2	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6274
-memcpy-a4	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6274
-memcpy-a8	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6274
-misalign	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !874
-mod-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/mod-1.c:3:7: error: parameter 'y' was not declared, defaults to 'int'; ISO C99 and later do not support 
-nest-align-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nest-align-1.c:26:5: error: function definition is not allowed here
-nest-stdar-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nest-stdar-1.c:10:5: error: function definition is not allowed here
-nestfunc-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-1.c:20:5: error: function definition is not allowed here
-nestfunc-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-2.c:17:5: error: function definition is not allowed here
-nestfunc-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-3.c:16:5: error: function definition is not allowed here
-nestfunc-5	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-5.c:11:3: error: function definition is not allowed here
-nestfunc-6	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-6.c:15:3: error: function definition is not allowed here
-nestfunc-7	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-7.c:16:5: error: function definition is not allowed here
-pr103052	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr103052.c:5:2: error: use of unknown builtin '__builtin_exit' [-Wimplicit-function-declaration]
-pr103376	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr103376.c:6:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr103405	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr103405.c:25:3: error: function definition is not allowed here
-pr105613	compile: cinterp: bad parameter: '<2 x i64> noundef %v.coerce'
-pr105777	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr105777.c:3:
-pr105984	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr105984.c:8:8: error: use of unknown builtin '__builtin_mul_overflow_p' [-Wimplicit-function-declaratio
-pr108292	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr108292.c:12:33: error: address of vector element requested
-pr108498-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr108498-1.c:64:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr109040	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr109040.c:19:3: warning: AVX vector argument of type 'V' (vector of 16 'unsigned short' values) without
-pr109938	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr109938.c:4:
-pr109986	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr109986.c:4:
-pr110252-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr110252-2.c:1:32: warning: unknown attribute '__noipa__' ignored [-Wunknown-attributes]
-pr110817-1	compile: cinterp: unsupported type <1 x i64>
-pr110817-2	compile: cinterp: unsupported type <2 x i32>
-pr110817-3	compile: cinterp: unsupported type <1 x i32>
-pr114552	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !29
-pr115033	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr115033.c:34:3: error: use of unknown builtin '__builtin_exit' [-Wimplicit-function-declaration]
-pr117432	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr117432.c:7:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr121957	compile: cinterp: unsupported type <16 x i64>
-pr122000	compile: cinterp: unsupported instruction: %1 = atomicrmw add ptr @ll, i64 %add seq_cst, align 8
-pr122943	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr122943.c:3:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr123625	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr123625.c:19:10: warning: initializing 'int64_t *' (aka 'long *') with an expression of type 'uint64_t 
-pr123625-2	compile: cinterp: unsupported type <16 x i64>
-pr123625-3	compile: cinterp: unsupported type <16 x i64>
-pr123753	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr123753.c:12:6: error: cannot decrement value of type 'W' (vector of 4 'short' values)
-pr123864	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr123864.c:3:3: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr126405	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr126405.c:19:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr126405-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr126405-2.c:17:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr126405-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr126405-3.c:15:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr20621-1	compile: cinterp: bad alloca size 65536 for %struct.big
-pr22061-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr22061-1.c:11:7: error: call to undeclared library function 'alloca' with type 'void *(unsigned long)';
-pr22061-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr22061-3.c:7:28: error: function definition is not allowed here
-pr22061-4	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr22061-4.c:7:28: error: function definition is not allowed here
-pr23135	compile: cinterp: bad alloca size 131072 for %struct.big_t
-pr23324	compile: cinterp: bad alloca size 0 for %union.at6
-pr24135	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr24135.c:11:5: error: function definition is not allowed here
-pr28865	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr28865.c:3:20: error: initialization of flexible array member is not allowed
-pr28982b	compile: cinterp: bad alloca size 262144 for %struct.big
-pr30314	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr30314.c:3:
-pr38533	compile: cinterp: unsupported instruction: %0 = call i32 asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 0), !srcloc !21
-pr39228	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr39228.c:9:10: error: use of unknown builtin '__builtin_isinff' [-Wimplicit-function-declaration]
-pr40022	compile: cinterp: unsupported instruction: call void asm sideeffect "", "imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %0), !srcloc !35
-pr40657	compile: cinterp: unsupported instruction: call void asm sideeffect "", "=*m,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(ptr) %x.addr), !srcloc !24
-pr41239	compile: cinterp: unsupported instruction: call void asm sideeffect "", "r,r,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %0, ptr %1), !srcloc !87
-pr41935	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr41935.c:9:23: error: fields must have a constant size: 'variable length array in structure' extension 
-pr43385	compile: cinterp: unsupported instruction: %1 = call i32 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !56
-pr43560	compile: cinterp: unsupported instruction: %0 = call ptr asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(ptr @s), !srcloc !63
-pr44575	compile: cinterp: unsupported type <2 x float>
-pr44852	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !28
-pr45695	compile: cinterp: unsupported instruction: %1 = call i32 asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !19
-pr46309	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr46309.c:7:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr47237	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr47237.c:16:3: error: use of unknown builtin '__builtin_apply' [-Wimplicit-function-declaration]
-pr47925	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr47925.c:17:1: warning: non-void function does not return a value [-Wreturn-type]
-pr49218	compile: cinterp: aggregate store unsupported: i128
-pr49279	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr49279.c:6:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr49390	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr49390.c:13:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr51447	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr51447.c:8:25: error: register 'rbx' unsuitable for global register variables on this target
-pr51581-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr51581-1.c:11:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr51581-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr51581-2.c:10:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr51877	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr51877.c:6:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr51933	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr51933.c:6:16: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr52286	compile: cinterp: unsupported instruction: %0 = call i32 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 0), !srcloc !21
-pr53645	compile: cinterp: unsupported type <4 x i32>
-pr53645-2	compile: cinterp: unsupported type <8 x i16>
-pr54471	compile: cinterp: aggregate store unsupported: i128
-pr55875	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr55875.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
-pr56205	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr56205.c:8:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr56866	compile: cinterp: unsupported instruction: call void asm sideeffect "", "imr,imr,imr,imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %arraydecay7, ptr %arraydecay8, ptr %arraydecay9, ptr %ar
-pr56982	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !45
-pr57344-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr57344-1.c:16:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr57344-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr57344-2.c:17:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr57344-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr57344-3.c:12:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr57344-4	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr57344-4.c:12:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr58277-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr58277-1.c:17:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr58419	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !42
-pr60960	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr60960.c:5:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr61375	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr61375.c:14:27: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr63302	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr63302.c:13:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr63641	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr63641.c:3:27: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr65053-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr65053-1.c:5:27: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr65053-2	compile: cinterp: unsupported instruction: call void asm sideeffect "", "=*imr,0,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i32) @x, i32 %0), !srcloc !23
-pr65170	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr65170.c:11:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr65427	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr65427.c:6:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr65648	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr65648.c:10:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr65956	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr65956.c:6:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr68328	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr68328.c:3:27: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr69320-2	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !43
-pr69691	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr69691.c:9:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr70460	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr70460.c:9:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr70903	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr70903.c:5:38: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr71494	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr71494.c:10:3: error: function definition is not allowed here
-pr71626-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr71626-1.c:5:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr71626-2	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr71626-2.c:4:
-pr78438	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr78438.c:6:27: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr78726	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr78726.c:6:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr79354	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr79354.c:7:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr79737-1	compile: cinterp: aggregate store unsupported: i72
-pr79737-2	compile: cinterp: aggregate store unsupported: i72
-pr80421	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr80421.c:3:27: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr80692	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr80692.c:5:2: error: GNU decimal type extension not supported
-pr81588	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr81588.c:3:26: warning: unknown attribute 'noclone' ignored [-Wunknown-attributes]
-pr82210	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr82210.c:8:57: error: fields must have a constant size: 'variable length array in structure' extension 
-pr82954	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr82954.c:3:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr84169	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr84169.c:11:24: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr84478	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr84478.c:16:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr84524	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr84524.c:3:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr84748	compile: cinterp: aggregate store unsupported: i128
-pr85156	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr85156.c:5:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr85169	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr85169.c:5:29: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr85331	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr85331.c:7:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr85582-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr85582-2.c:11:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr85582-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr85582-3.c:11:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr85756	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr85756.c:8:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr88904	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr88904.c:5:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr90025	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr90025.c:3:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr92618	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr92618.c:8:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr92904	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr92904.c:22:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr93213	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr93213.c:24:17: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr93945	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr93945.c:5:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-pr94130	compile: cinterp: unsupported instruction: call void asm sideeffect "", "imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %arraydecay4), !srcloc !41
-pr94412	compile: cinterp: unsupported type <2 x i32>
-pr94524-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr94524-1.c:5:38: warning: unknown attribute '__noclone__' ignored [-Wunknown-attributes]
-pr94524-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr94524-2.c:5:38: warning: unknown attribute '__noclone__' ignored [-Wunknown-attributes]
-pr94591	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr94591.c:9:8: error: use of unknown builtin '__builtin_shuffle' [-Wimplicit-function-declaration]
-pr98474	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr98474.c:11:17: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-scal-to-vec1	compile: cinterp: unsupported type <8 x i16>
-scal-to-vec2	compile: cinterp: unsupported type <16 x i8>
-scal-to-vec3	compile: cinterp: unsupported type <4 x float>
-simd-1	compile: cinterp: unsupported type <4 x i32>
-simd-2	compile: cinterp: unsupported type <8 x i16>
-simd-4	compile: cinterp: unsupported type <2 x i32>
-simd-5	compile: cinterp: unsupported type <4 x i16>
-simd-6	compile: cinterp: unsupported type <8 x i8>
-stkalign	compile: cinterp: unsupported instruction: call void asm "", "=*imr,=*m,0,*m,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i32) %x, ptr elementtype(%struct.anon) @test.s, ptr %x, ptr element
-strct-pack-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/strct-pack-3.c:9:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support i
-tstdi-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/tstdi-1.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
-va-arg-22	compile: cinterp: bad alloca size 0 for %struct.A0
-va-arg-pack-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/va-arg-pack-1.c:125:33: error: use of unknown builtin '__builtin_va_arg_pack' [-Wimplicit-function-decla
-vector-div-neg-pow2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/vector-div-neg-pow2.c:16:17: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-zero-struct-1	compile: cinterp: bad alloca size 0 for %struct.g
-zero-struct-2	compile: cinterp: bad alloca size 0 for %struct.spinlock_t
+20000412-3	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20000412-3.c:14:10: error: call to undeclared function 'f'; ISO C99 and later do not support implicit fu
+20000717-3	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20000717-3.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
+20000822-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20000822-1.c:15:3: error: function definition is not allowed here
+20001009-2	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "r,~{dirflag},~{fpsr},~{flags}"(i32 %1), !srcloc !35
+20001111-1	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20001111-1.c:40:3: error: use of unknown builtin '__builtin_exit' [-Wimplicit-function-declaration]
+20010209-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20010209-1.c:9:3: error: function definition is not allowed here
+20010605-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20010605-1.c:6:5: error: function definition is not allowed here
+20010605-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20010605-2.c:18:3: error: call to undeclared library function 'exit' with type 'void (int) __attribute__
+20020314-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020314-1.c:14:7: error: call to undeclared library function 'alloca' with type 'void *(unsigned long)'
+20020411-1	non-goal:vector_complex: source regression/test; see upstream case
+20020412-1	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020412-1.c:24:10: error: fields must have a constant size: 'variable length array in structure' extens
+20020819-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020819-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
+20030222-1	non-goal:asm: cinterp: unsupported instruction: %1 = call i64 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i64 %0), !srcloc !31
+20030501-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20030501-1.c:11:7: error: function definition is not allowed here
+20031003-1	unsupported:type_or_operand: cinterp: unsupported operand: 'poison'
+20031211-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20031211-2.c:13:3: error: call to undeclared function 'foo'; ISO C99 and later do not support implicit f
+20040223-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040223-1.c:9:5: error: call to undeclared library function 'abort' with type 'void (void) __attribute_
+20040302-1	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %lab0, label %end]
+20040308-1	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040308-1.c:6:9: error: fields must have a constant size: 'variable length array in structure' extensio
+20040423-1	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040423-1.c:8:9: error: fields must have a constant size: 'variable length array in structure' extensio
+20040520-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040520-1.c:7:9: error: function definition is not allowed here
+20040805-1	resource: cinterp: bad alloca size 65536 for [65536 x i8]
+20041019-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20041019-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
+20041214-1	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %do_precision, label %do_form_integer, label %do_form_string]
+20041218-2	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20041218-2.c:5:19: error: fields must have a constant size: 'variable length array in structure' extensi
+20050121-1	bug:compile: exit 1 != 0
+20050203-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !49
+20050316-1	non-goal:vector_complex: cinterp: unsupported instruction: %2 = bitcast i64 %conv to <2 x i32>
+20050316-2	non-goal:vector_complex: cinterp: unsupported instruction: %1 = bitcast <2 x float> %0 to <2 x i32>
+20050316-3	non-goal:vector_complex: cinterp: unsupported instruction: %2 = bitcast i64 %1 to <2 x i32>
+20050604-1	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+20050607-1	non-goal:vector_complex: source regression/test; see upstream case
+20060420-1	non-goal:vector_complex: cinterp: unsupported instruction: %add55 = fadd <4 x float> %55, %54
+20061031-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !27
+20061220-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20061220-1.c:11:3: error: function definition is not allowed here
+20070919-1	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20070919-1.c:28:19: error: fields must have a constant size: 'variable length array in structure' extens
+20071210-1	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %lab1, label %lab1, label %lab2, label %lab3, label %lab4]
+20071211-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !29
+20071220-1	non-goal:asm: cinterp: unsupported instruction: %1 = call ptr asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(ptr %0), !srcloc !30
+20071220-2	non-goal:asm: cinterp: unsupported instruction: %1 = call ptr asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(ptr %0), !srcloc !30
+20080122-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !33
+20090219-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20090219-1.c:13:5: error: function definition is not allowed here
+20120427-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20120427-1.c:9:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
+20120427-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20120427-2.c:9:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
+20241029-1	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20241029-1.c:7:5: error: use of unknown builtin '__builtin_puts' [-Wimplicit-function-declaration]
+920302-1	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %x, label %x, label %y, label %z]
+920409-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920409-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920410-1	resource: cinterp: bad alloca size 160000 for [40000 x i32]
+920411-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920411-1.c:17:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+920415-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920415-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920428-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920428-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920428-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920428-2.c:5:3: error: parameter 'i' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+920429-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920429-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920501-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920501-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920501-3	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %base]
+920501-4	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %x, label %y, label %z]
+920501-5	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %x, label %y, label %z]
+920501-7	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920501-7.c:12:3: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not supp
+920501-9	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920501-9.c:11:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+920520-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920520-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920603-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920603-1.c:2:3: error: parameter 'got' was not declared, defaults to 'int'; ISO C99 and later do not sup
+920612-2	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920612-2.c:11:5: error: function definition is not allowed here
+920721-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920721-2.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920721-3	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920721-3.c:2:15: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+920721-4	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920721-4.c:9:29: error: function definition is not allowed here
+920728-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920728-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920730-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920730-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920731-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920731-1.c:2:3: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+920812-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920812-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+920908-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920908-2.c:20:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+920909-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/920909-1.c:2:3: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+921013-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921013-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+921017-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921017-1.c:4:3: error: parameter 'n' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+921110-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921110-1.c:8:3: error: call to undeclared library function 'exit' with type 'void (int) __attribute__((n
+921113-1	resource: cinterp: bad alloca size 65536 for [128 x [128 x i32]]
+921123-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921123-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+921124-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921124-1.c:3:3: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+921202-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921202-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+921207-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921207-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+921208-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921208-2.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+921215-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921215-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+921218-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921218-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+921218-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/921218-2.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930106-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930106-1.c:15:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+930111-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930111-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930208-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930208-1.c:8:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930429-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930429-2.c:4:4: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+930513-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930513-1.c:7:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930513-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930513-2.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930518-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930518-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930527-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930527-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930603-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930603-1.c:9:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930603-3	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930603-3.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930621-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930621-1.c:11:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+930622-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930622-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930630-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930630-1.c:11:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+930702-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930702-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930713-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930713-1.c:16:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+930718-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930718-1.c:22:3: error: call to undeclared library function 'abort' with type 'void (void) __attribute__
+930719-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930719-1.c:4:14: error: parameter 'com' was not declared, defaults to 'int'; ISO C99 and later do not su
+930818-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930818-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930916-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930916-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930921-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930921-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930929-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930929-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+930930-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/930930-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+931002-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931002-1.c:15:5: error: function definition is not allowed here
+931009-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931009-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+931012-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931012-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+931017-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931017-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+931018-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931018-1.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+931031-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931031-1.c:28:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+931102-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931102-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+931102-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931102-2.c:12:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+931208-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931208-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+931228-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/931228-1.c:2:4: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+940115-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/940115-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+940122-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/940122-1.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+941101-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/941101-1.c:2:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+941110-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/941110-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+941202-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/941202-1.c:2:7: error: parameter 'y' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+950322-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950322-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+950426-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950426-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+950512-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950512-1.c:4:5: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+950605-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950605-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+950621-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/950621-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+960218-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/960218-1.c:5:4: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+960312-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "r,r,~{dirflag},~{fpsr},~{flags}"(i32 %12, i32 %13), !srcloc !62
+960402-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/960402-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+960830-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/960830-1.c:20:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
+961112-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/961112-1.c:3:4: error: parameter 'x' was not declared, defaults to 'int'; ISO C99 and later do not suppo
+980605-1	resource: cinterp: bad alloca size 100000 for [100000 x i8]
+990106-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/990106-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+990130-1	non-goal:asm: cinterp: unsupported instruction: %1 = call i32 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !32
+990208-1	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr undef, [label %here]
+990413-2	non-goal:asm: cinterp: unsupported instruction: %2 = call x86_fp80 asm sideeffect "fpatan\0A\09", "={st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"(x86_fp80 %0, x86_fp80 %1), !srcloc !74
+991014-1	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/991014-1.c:12:13: error: array is too large (4611686018427387648 elements)
+align-nest	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/align-nest.c:10:9: error: fields must have a constant size: 'variable length array in structure' extensi
+bitfld-5	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !22
+cmpdi-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpdi-1.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
+cmpsf-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpsf-1.c:8:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
+cmpsi-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpsi-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
+cmpsi-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpsi-2.c:7:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
+comp-goto-1	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %sim_base_addr, label %L_LOAD32_RR, label %L_METAOP_DONE]
+comp-goto-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/comp-goto-2.c:14:3: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not s
+complex-3	bug:compile: source regression/test; see upstream case
+complex-5	bug:compile: exit 1 != 0
+complex-6	bug:compile: exit 1 != 0
+complex-7	non-goal:vector_complex: source regression/test; see upstream case
+dbra-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/dbra-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implici
+divmod-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/divmod-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
+inst-check	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/inst-check.c:5:3: error: parameter 'm' was not declared, defaults to 'int'; ISO C99 and later do not sup
+int-compare	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/int-compare.c:5:8: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not su
+loop-2	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-2.c:5:4: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not support
+loop-2d	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-2d.c:5:4: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not suppor
+loop-3	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-3.c:7:4: error: parameter 'i' was not declared, defaults to 'int'; ISO C99 and later do not support
+loop-3b	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-3b.c:7:4: error: parameter 'i' was not declared, defaults to 'int'; ISO C99 and later do not suppor
+loop-3c	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/loop-3c.c:7:4: error: parameter 'm' was not declared, defaults to 'int'; ISO C99 and later do not suppor
+memclr	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6272
+memcpy-1	resource: cinterp: bad alloca size 131072 for [131072 x i8]
+memcpy-a1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6274
+memcpy-a2	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6274
+memcpy-a4	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6274
+memcpy-a8	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !6274
+misalign	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !874
+mod-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/mod-1.c:3:7: error: parameter 'y' was not declared, defaults to 'int'; ISO C99 and later do not support
+nest-align-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nest-align-1.c:26:5: error: function definition is not allowed here
+nest-stdar-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nest-stdar-1.c:10:5: error: function definition is not allowed here
+nestfunc-1	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-1.c:20:5: error: function definition is not allowed here
+nestfunc-2	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-2.c:17:5: error: function definition is not allowed here
+nestfunc-3	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-3.c:16:5: error: function definition is not allowed here
+nestfunc-5	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-5.c:11:3: error: function definition is not allowed here
+nestfunc-6	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-6.c:15:3: error: function definition is not allowed here
+nestfunc-7	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/nestfunc-7.c:16:5: error: function definition is not allowed here
+pr103052	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr103052.c:5:2: error: use of unknown builtin '__builtin_exit' [-Wimplicit-function-declaration]
+pr103376	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "r,~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !34
+pr103405	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr103405.c:25:3: error: function definition is not allowed here
+pr105613	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr105777	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/../../gcc.dg/tree-ssa/pr105777.c:25:10: error: use of unknown builtin '__builtin_mul_overflow_p' [-Wimpl
+pr105984	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr105984.c:8:8: error: use of unknown builtin '__builtin_mul_overflow_p' [-Wimplicit-function-declaratio
+pr108292	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr108292.c:12:33: error: address of vector element requested
+pr108498-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "r,~{dirflag},~{fpsr},~{flags}"(ptr %arraydecay1), !srcloc !158
+pr109040	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr109938	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr109986	resource: cinterp: too many values to unpack (expected 2)
+pr110252-2	non-goal:asm: cinterp: unsupported instruction: %3 = call i32 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 %2), !srcloc !33
+pr110817-1	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr110817-2	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr110817-3	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr114552	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !29
+pr115033	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr115033.c:34:3: error: use of unknown builtin '__builtin_exit' [-Wimplicit-function-declaration]
+pr117432	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr117432.c:32:6: error: ISO C requires a named parameter before '...'
+pr121957	non-goal:asm: cinterp: unsupported instruction: callbr void asm sideeffect "", "!i,~{dirflag},~{fpsr},~{flags}"()
+pr122000	non-goal:atomic: cinterp: unsupported instruction: %1 = atomicrmw add ptr @ll, i64 %add seq_cst, align 8
+pr122943	bug:compile: cinterp: aggregate store unsupported: i128
+pr123625	non-goal:vector_complex: cinterp: unsupported instruction: %vecext = extractelement <16 x i64> %6, i32 %7
+pr123625-2	non-goal:vector_complex: cinterp: unsupported instruction: %vecext = extractelement <16 x i64> %10, i32 0
+pr123625-3	non-goal:asm: cinterp: unsupported instruction: callbr void asm sideeffect "", "!i,~{dirflag},~{fpsr},~{flags}"()
+pr123753	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr123753.c:12:6: error: cannot decrement value of type 'W' (vector of 4 'short' values)
+pr123864	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr123864.c:6:10: error: use of unknown builtin '__builtin_mul_overflow_p' [-Wimplicit-function-declarati
+pr126405	resource: cinterp: too many values to unpack (expected 2)
+pr126405-2	resource: cinterp: too many values to unpack (expected 2)
+pr126405-3	non-goal:vector_complex: cinterp: unsupported instruction: %vecins = insertelement <16 x i64> %3, i64 %conv, i32 %2
+pr20621-1	resource: cinterp: bad alloca size 65536 for %struct.big
+pr22061-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr22061-1.c:11:7: error: call to undeclared library function 'alloca' with type 'void *(unsigned long)';
+pr22061-3	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr22061-3.c:7:28: error: function definition is not allowed here
+pr22061-4	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr22061-4.c:7:28: error: function definition is not allowed here
+pr23135	resource: cinterp: bad alloca size 131072 for %struct.big_t
+pr23324	resource: cinterp: bad alloca size 0 for %union.at6
+pr24135	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr24135.c:11:5: error: function definition is not allowed here
+pr28865	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr28865.c:3:20: error: initialization of flexible array member is not allowed
+pr28982b	resource: cinterp: bad alloca size 262144 for %struct.big
+pr30314	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/../../gcc.dg/tree-ssa/pr30314.c:13:10: error: use of unknown builtin '__builtin_mul_overflow_p' [-Wimpli
+pr38533	non-goal:asm: cinterp: unsupported instruction: %0 = call i32 asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 0), !srcloc !21
+pr39228	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr39228.c:9:10: error: use of unknown builtin '__builtin_isinff' [-Wimplicit-function-declaration]
+pr40022	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %0), !srcloc !35
+pr40657	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "=*m,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(ptr) %x.addr), !srcloc !24
+pr41239	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "r,r,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %0, ptr %1), !srcloc !87
+pr41935	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr41935.c:9:23: error: fields must have a constant size: 'variable length array in structure' extension
+pr43385	non-goal:asm: cinterp: unsupported instruction: %1 = call i32 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !56
+pr43560	non-goal:asm: cinterp: unsupported instruction: %0 = call ptr asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(ptr @s), !srcloc !63
+pr44575	bug:compile: exit -11 != 0
+pr44852	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !28
+pr45695	non-goal:asm: cinterp: unsupported instruction: %1 = call i32 asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !19
+pr46309	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !50
+pr47237	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr47237.c:16:3: error: use of unknown builtin '__builtin_apply' [-Wimplicit-function-declaration]
+pr47925	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !21
+pr49218	bug:compile: cinterp: aggregate store unsupported: i128
+pr49279	non-goal:asm: cinterp: unsupported instruction: %1 = call ptr asm sideeffect "", "=r,0,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %0), !srcloc !29
+pr49390	non-goal:asm: cinterp: unsupported instruction: %1 = call ptr asm "", "=r,r,0,~{dirflag},~{fpsr},~{flags}"(ptr @a, ptr %0), !srcloc !242
+pr51447	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr51447.c:8:25: error: register 'rbx' unsuitable for global register variables on this target
+pr51581-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !338
+pr51581-2	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !390
+pr51877	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !49
+pr51933	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "imr,imr,imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr @v1, ptr @v2, ptr @v3), !srcloc !33
+pr52286	non-goal:asm: cinterp: unsupported instruction: %0 = call i32 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i32 0), !srcloc !21
+pr53645	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr53645-2	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr54471	bug:compile: cinterp: aggregate store unsupported: i128
+pr55875	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr55875.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
+pr56205	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !113
+pr56866	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "imr,imr,imr,imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %arraydecay7, ptr %arraydecay8, ptr %arraydecay9, ptr %ar
+pr56982	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !45
+pr57344-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !38
+pr57344-2	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !38
+pr57344-3	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !39
+pr57344-4	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !39
+pr58277-1	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !65
+pr58419	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !42
+pr60960	resource: cinterp: too many values to unpack (expected 2)
+pr61375	bug:compile: cinterp: aggregate store unsupported: i128
+pr63302	bug:compile: cinterp: aggregate store unsupported: i128
+pr63641	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !108
+pr65053-1	non-goal:asm: cinterp: unsupported instruction: call void asm "", "=*imr,0,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i32) %u, i32 %4), !srcloc !48
+pr65053-2	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "=*imr,0,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i32) @x, i32 %0), !srcloc !23
+pr65170	bug:compile: cinterp: aggregate store unsupported: i128
+pr65427	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr65648	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "r,r,~{memory},~{dirflag},~{fpsr},~{flags}"(i32 %0, ptr %1), !srcloc !49
+pr65956	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "=*imr,0,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr elementtype(ptr) %x.addr, ptr %0), !srcloc !51
+pr68328	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !30
+pr69320-2	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !43
+pr69691	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !403
+pr70460	non-goal:indirectbr: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %lab1, label %lab0, label %lab2, label %lab0, label %lab0]
+pr70903	non-goal:vector_complex: cinterp: unsupported instruction: %vecext = extractelement <8 x i32> %1, i32 1
+pr71494	non-goal:nested_function: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr71494.c:10:3: error: function definition is not allowed here
+pr71626-1	non-goal:vector_complex: cinterp: unsupported instruction: %vecext = extractelement <1 x i64> %1, i32 0
+pr71626-2	non-goal:vector_complex: cinterp: unsupported instruction: %vecext = extractelement <1 x i64> %1, i32 0
+pr78438	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !34
+pr78726	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "imr,imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr @b, ptr @c), !srcloc !43
+pr79354	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !63
+pr79737-1	bug:compile: cinterp: aggregate store unsupported: i72
+pr79737-2	bug:compile: cinterp: aggregate store unsupported: i72
+pr80421	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "r,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %0), !srcloc !45
+pr80692	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr80692.c:5:2: error: GNU decimal type extension not supported
+pr81588	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "imr,~{memory},~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !22
+pr82210	frontend:compile_error: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr82210.c:8:57: error: fields must have a constant size: 'variable length array in structure' extension
+pr82954	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "imr,imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %arraydecay, ptr %arraydecay1), !srcloc !54
+pr84169	bug:compile: cinterp: aggregate store unsupported: i128
+pr84478	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !114
+pr84524	non-goal:asm: cinterp: unsupported instruction: %4 = call i16 asm sideeffect "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i16 %3), !srcloc !107
+pr84748	bug:compile: cinterp: aggregate store unsupported: i128
+pr85156	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "=*m,=*m,*m,*m,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i32) @x, ptr elementtype(i32) @y, ptr elementtype(i32) @x
+pr85169	non-goal:vector_complex: cinterp: unsupported instruction: %vecext = extractelement <64 x i8> %2, i32 %3
+pr85331	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr85331.c:12:8: error: use of unknown builtin '__builtin_shuffle' [-Wimplicit-function-declaration]
+pr85582-2	bug:compile: cinterp: aggregate store unsupported: i128
+pr85582-3	bug:compile: cinterp: aggregate store unsupported: i128
+pr85756	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "r,~{memory},~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !38
+pr88904	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "=*imr,0,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(ptr) %x.addr, ptr %1), !srcloc !46
+pr90025	bug:compile: exit 1 != 0
+pr92618	non-goal:vector_complex: cinterp: unsupported instruction: %vecinit = insertelement <2 x i64> poison, i64 %conv, i32 0
+pr92904	bug:compile: cinterp: aggregate store unsupported: i128
+pr93213	bug:compile: cinterp: aggregate store unsupported: i128
+pr93945	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr @u), !srcloc !37
+pr94130	non-goal:asm: cinterp: unsupported instruction: call void asm sideeffect "", "imr,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %arraydecay4), !srcloc !41
+pr94412	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+pr94524-1	non-goal:vector_complex: cinterp: unsupported instruction: %vecext = extractelement <16 x i8> %1, i32 0
+pr94524-2	non-goal:vector_complex: cinterp: unsupported instruction: %vecext = extractelement <16 x i8> %1, i32 0
+pr94591	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr94591.c:9:8: error: use of unknown builtin '__builtin_shuffle' [-Wimplicit-function-declaration]
+pr98474	bug:compile: cinterp: aggregate store unsupported: i128
+scal-to-vec1	non-goal:vector_complex: cinterp: unsupported instruction: %vecinit = insertelement <8 x i16> poison, i16 %conv, i32 0
+scal-to-vec2	non-goal:vector_complex: cinterp: unsupported instruction: %vecinit = insertelement <16 x i8> poison, i8 %conv, i32 0
+scal-to-vec3	non-goal:vector_complex: cinterp: unsupported instruction: %add = fadd <4 x float> <float 2.000000e+00, float 2.000000e+00, float 2.000000e+00, float 2.000000e+00>, %0
+simd-1	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+simd-2	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+simd-4	bug:compile: exit -6 != 0
+simd-5	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+simd-6	bug:compile: cinterp: not enough values to unpack (expected 2, got 1)
+stkalign	non-goal:asm: cinterp: unsupported instruction: call void asm "", "=*imr,=*m,0,*m,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i32) %x, ptr elementtype(%struct.anon) @test.s, ptr %x, ptr element
+strct-pack-3	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/strct-pack-3.c:9:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support i
+tstdi-1	dialect:pre_c99: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/tstdi-1.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
+va-arg-22	resource: cinterp: bad alloca size 0 for %struct.A0
+va-arg-pack-1	non-goal:builtin: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/va-arg-pack-1.c:125:33: error: use of unknown builtin '__builtin_va_arg_pack' [-Wimplicit-function-decla
+vector-div-neg-pow2	non-goal:vector_complex: cinterp: unsupported instruction: %vecins = insertelement <4 x i32> %6, i32 %conv7, i32 %5
+zero-struct-1	resource: cinterp: bad alloca size 0 for %struct.g
+zero-struct-2	resource: cinterp: bad alloca size 0 for %struct.spinlock_t
 
 # run cases requiring unsupported varargs/builtins/asm support
-20010122-1	run: unsupported feature (compiler builtin)
-20020107-1	run: unsupported feature (inline asm)
-20021120-3	run: unsupported feature (compiler builtin)
-20040709-1	run: unsupported feature (compiler builtin)
-20040709-2	run: unsupported feature (compiler builtin)
-20071120-1	run: unsupported feature (compiler builtin)
-20080502-1	run: unsupported feature (compiler builtin)
-20230630-2	run: unsupported feature (compiler builtin)
-20230630-4	run: unsupported feature (compiler builtin)
-980608-1	non-goal: external inline definition (C99 inline/weak; observed 2026-10-31)
-alias-2	run: unsupported feature (compiler builtin)
-alias-3	run: unsupported feature (compiler builtin)
-alias-4	run: unsupported feature (compiler builtin)
-bcp-1	run: unsupported feature (compiler builtin)
-bitfld-signed1-1	run: unsupported feature (compiler builtin)
-bswap-1	run: unsupported feature (compiler builtin)
-bswap-3	run: unsupported feature (compiler builtin)
-built-in-setjmp	run: unsupported feature (compiler builtin)
-builtin-bitops-1	run: unsupported feature (compiler builtin)
-builtin-constant	run: unsupported feature (compiler builtin)
-builtin-prefetch-1	run: unsupported feature (compiler builtin)
-builtin-prefetch-2	run: unsupported feature (compiler builtin)
-builtin-prefetch-3	run: unsupported feature (compiler builtin)
-builtin-prefetch-4	run: unsupported feature (compiler builtin)
-builtin-prefetch-5	run: unsupported feature (compiler builtin)
-builtin-prefetch-6	run: unsupported feature (compiler builtin)
-ffs-1	run: unsupported feature (compiler builtin)
-ffs-2	run: unsupported feature (compiler builtin)
-frame-address	run: unsupported feature (compiler builtin)
-ifcvt-diamond-1	run: unsupported feature (compiler builtin)
-pr108498-2	run: unsupported feature (compiler builtin)
-pr108789	run: unsupported feature (compiler builtin)
-pr110166-1	run: unsupported feature (compiler builtin)
-pr17377	run: unsupported feature (compiler builtin)
-pr31448	run: unsupported feature (compiler builtin)
-pr31448-2	run: unsupported feature (compiler builtin)
-pr34130	run: unsupported feature (compiler builtin)
-pr37573	run: unsupported feature (compiler builtin)
-pr38151	run: unsupported feature (compiler builtin)
-pr42614	run: unsupported feature (compiler builtin)
-pr53688	run: unsupported feature (compiler builtin)
-pr58574	run: unsupported feature (compiler builtin)
-pr58726	run: unsupported feature (compiler builtin)
-pr58984	run: unsupported feature (compiler builtin)
-pr60003	run: unsupported feature (compiler builtin)
-pr60822	run: unsupported feature (compiler builtin)
-pr61306-2	run: unsupported feature (compiler builtin)
-pr61725	run: unsupported feature (compiler builtin)
-pr64006	run: unsupported feature (compiler builtin)
-pr64242	run: unsupported feature (compiler builtin)
-pr65215-1	run: unsupported feature (compiler builtin)
-pr65215-2	run: unsupported feature (compiler builtin)
-pr65215-3	run: unsupported feature (compiler builtin)
-pr65215-4	run: unsupported feature (compiler builtin)
-pr68381	run: unsupported feature (compiler builtin)
-pr70222-1	run: unsupported feature (compiler builtin)
-pr70429	run: unsupported feature (compiler builtin)
-pr71554	run: unsupported feature (compiler builtin)
-pr83362	run: unsupported feature (compiler builtin)
-pr84521	run: unsupported feature (compiler builtin)
-pr85095	run: unsupported feature (compiler builtin)
-pr86714	run: unsupported feature (compiler builtin)
-pr88739	run: unsupported feature (compiler builtin)
-pr89369	run: unsupported feature (compiler builtin)
-pr89434	run: unsupported feature (compiler builtin)
-pr90311	run: unsupported feature (compiler builtin)
-pr91450-1	run: unsupported feature (compiler builtin)
-pr91450-2	run: unsupported feature (compiler builtin)
-pr91635	run: unsupported feature (compiler builtin)
-pr93249	run: unsupported feature (compiler builtin)
-pr93494	run: unsupported feature (compiler builtin)
-pr93908	run: unsupported feature (compiler builtin)
-pr97325	run: unsupported feature (compiler builtin)
-pr97386-1	run: unsupported feature (compiler builtin)
-pr97386-2	run: unsupported feature (compiler builtin)
-pr98366	run: unsupported feature (compiler builtin)
-strlen-2	run: unsupported feature (compiler builtin)
-strlen-3	run: unsupported feature (compiler builtin)
-strlen-4	run: unsupported feature (compiler builtin)
-strlen-5	run: unsupported feature (compiler builtin)
-va-arg-7	non-goal: external inline definition (C99 inline/weak; observed 2026-10-31)
-va-arg-8	non-goal: external inline definition (C99 inline/weak; observed 2026-10-31)
+20010122-1	bug:compile: exit 1 != 0
+20020107-1	bug:compile: exit 1 != 0
+20021120-3	non-goal:builtin: source regression/test; see upstream case
+20040709-1	non-goal:builtin: source regression/test; see upstream case
+20040709-2	bug:compile: exit -6 != 0
+20071120-1	non-goal:builtin: source regression/test; see upstream case
+20080502-1	bug:compile: exit -6 != 0
+20230630-2	bug:compile: exit -6 != 0
+20230630-4	bug:compile: exit -6 != 0
+980608-1	bug:compile: exit 1 != 0
+alias-2	bug:compile: exit 1 != 0
+alias-3	bug:compile: exit 1 != 0
+alias-4	bug:compile: exit 1 != 0
+bcp-1	bug:compile: exit 1 != 0
+bitfld-signed1-1	non-goal:builtin: source regression/test; see upstream case
+bswap-1	bug:compile: exit 1 != 0
+bswap-3	bug:compile: exit 1 != 0
+built-in-setjmp	bug:compile: exit 1 != 0
+builtin-bitops-1	bug:compile: exit 1 != 0
+builtin-constant	bug:compile: exit 1 != 0
+builtin-prefetch-1	bug:compile: exit 1 != 0
+builtin-prefetch-2	bug:compile: exit 1 != 0
+builtin-prefetch-3	bug:compile: exit 1 != 0
+builtin-prefetch-4	bug:compile: exit 1 != 0
+builtin-prefetch-5	bug:compile: exit 1 != 0
+builtin-prefetch-6	bug:compile: exit 1 != 0
+ffs-1	bug:compile: exit 1 != 0
+ffs-2	bug:compile: exit 1 != 0
+frame-address	bug:compile: exit -6 != 0
+ifcvt-diamond-1	non-goal:builtin: source regression/test; see upstream case
+pr108498-2	non-goal:builtin: source regression/test; see upstream case
+pr108789	bug:compile: exit 1 != 0
+pr110166-1	non-goal:builtin: source regression/test; see upstream case
+pr17377	bug:compile: exit 1 != 0
+pr31448	bug:compile: exit -6 != 0
+pr31448-2	bug:compile: exit -6 != 0
+pr34130	bug:compile: exit 1 != 0
+pr37573	non-goal:builtin: source regression/test; see upstream case
+pr38151	non-goal:vector_complex: source regression/test; see upstream case
+pr42614	bug:compile: exit 1 != 0
+pr53688	non-goal:builtin: source regression/test; see upstream case
+pr58574	bug:compile: exit 1 != 0
+pr58726	non-goal:builtin: source regression/test; see upstream case
+pr58984	bug:compile: exit -6 != 0
+pr60003	bug:compile: exit 1 != 0
+pr60822	bug:compile: exit 1 != 0
+pr61306-2	bug:compile: exit -6 != 0
+pr61725	bug:compile: exit 1 != 0
+pr64006	bug:compile: exit 1 != 0
+pr64242	bug:compile: exit 1 != 0
+pr65215-1	bug:compile: exit -6 != 0
+pr65215-2	non-goal:builtin: source regression/test; see upstream case
+pr65215-3	non-goal:builtin: source regression/test; see upstream case
+pr65215-4	bug:compile: exit -6 != 0
+pr68381	bug:compile: exit 1 != 0
+pr70222-1	bug:compile: exit -6 != 0
+pr70429	non-goal:builtin: source regression/test; see upstream case
+pr71554	bug:compile: exit 1 != 0
+pr83362	non-goal:builtin: source regression/test; see upstream case
+pr84521	bug:compile: exit 1 != 0
+pr85095	bug:compile: exit 1 != 0
+pr86714	non-goal:builtin: source regression/test; see upstream case
+pr88739	bug:compile: exit -6 != 0
+pr89369	non-goal:builtin: source regression/test; see upstream case
+pr89434	bug:compile: exit 1 != 0
+pr90311	bug:compile: exit 1 != 0
+pr91450-1	bug:compile: exit 1 != 0
+pr91450-2	bug:compile: exit 1 != 0
+pr91635	bug:compile: exit 1 != 0
+pr93249	non-goal:builtin: source regression/test; see upstream case
+pr93494	bug:compile: exit 1 != 0
+pr93908	non-goal:builtin: source regression/test; see upstream case
+pr97325	bug:compile: exit 1 != 0
+pr97386-1	bug:compile: exit 1 != 0
+pr97386-2	bug:compile: exit -6 != 0
+pr98366	bug:compile: exit -6 != 0
+strlen-2	bug:compile: exit 1 != 0
+strlen-3	bug:compile: exit -6 != 0
+strlen-4	bug:compile: exit 1 != 0
+strlen-5	bug:compile: exit 1 != 0
+va-arg-7	bug:compile: exit 1 != 0
+va-arg-8	bug:compile: exit 1 != 0
