@@ -1081,3 +1081,12 @@ zig build -Dtarget=aarch64-linux-gnu
 - TCC include-skipped：97 通过、45 失败（compile 20、mismatch 24、run 1），无新增回收。
 - GCC compile excluded 全量 609 重跑：20 通过；回收 `20071102-1`、`920615-1`、`pr113603`、`pr43191`；其余通过项为 vector/_Complex non-goal。compile excluded 减少到 605。
 - 之后没有新的无需产品决策的回收项；剩余为 dialect/asm/vector/builtin/diagnostic 分类和平台 skip。
+
+### 20.19 Python 编译性能优化（2026-10-31）
+
+- **profile**：`20000112-1.c` 单次 clang IR ~27ms、完整 Python compile ~70-80ms；`compile_text` 的小文件 regex/lowering 约 40ms。瓶颈是进程启动、link DB 加载、IR 文本处理，不是单一算法。
+- **lazy DB**：无外部 plan 时 `cstdapi.apply`/`winmd.apply` 直接返回，避免每次 compile 加载 cstdapi JSON。
+- **strip_meta 快路径**：无 C 字符串的 IR 行不再 `re.split`；热正则预编译。`compile_text` 5 次 benchmark 53ms→40ms。
+- **runner `--inprocess`**：在 test runner 进程内编译，复用 Python 解释器和已加载数据库；csuite 441ms→254ms（约1.7x），standard 约16.4s→16.2s（大套件受 runtime/子进程主导）。
+- **`--cib-cache`**：内容寻址缓存，key 含编译器源码 mtime/size 指纹、target、source、CPATH；Makefile suite 默认使用 `build/cib-cache`。编译-only 套件第二次约26.6s→25.1s，收益有限；主要价值是避免重复 compiler 起进程/LLVM 编译。
+- 结论：当前最值得默认启用的是 inprocess + lazy DB；若继续追求大幅加速，应做 batch clang/compiler daemon，Rust 重写放在 profile 证明 lowering 仍是主因之后。

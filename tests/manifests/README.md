@@ -46,6 +46,9 @@ Re-triage excluded candidates without editing baselines:
 python3 scripts/test_suites.py --suite gcc-torture --include-excluded \
   --include-skipped --only va-arg-1,stdarg-1 \
   --emit-reasons build/triage-varargs.txt --report build/triage-varargs.json
+
+# faster local reruns (in-process compiler + content-addressed CIB cache)
+python3 scripts/test_suites.py --tier full --jobs 8 --inprocess --cib-cache build/cib-cache
 ```
 
 `--include-excluded` bypasses `.excluded`, `--only` accepts comma-separated

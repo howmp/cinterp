@@ -138,7 +138,7 @@ def lookup(target: Target, name: str) -> list[Provider] | None:
 
 
 def apply(target: Target, plans, imports: ImportTable, enabled: bool = True) -> Target:
-    if not enabled:
+    if not enabled or not plans.plans:
         return target
     target = replace(target, link_db=database_id())
     mask = _ARCH_MASK.get(target.arch, 0)

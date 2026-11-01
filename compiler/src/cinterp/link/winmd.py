@@ -91,7 +91,7 @@ def lookup(target: Target, name: str) -> tuple[list[Provider], int, int] | None:
 
 
 def apply(target: Target, plans, imports: ImportTable, enabled: bool = True) -> Target:
-    if not enabled or target.os != "windows":
+    if not enabled or target.os != "windows" or not plans.plans:
         return target
     db_id = database_id()
     if db_id not in target.link_db:

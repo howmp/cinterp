@@ -203,9 +203,24 @@ def extract_gep(text: str) -> str | None:
     return expr
 
 
+_META_DBG_COMMA = re.compile(r",\s*!dbg\s*!\d+")
+_META_DBG = re.compile(r"\s*!dbg\s*!\d+")
+_META_LOOP_COMMA = re.compile(r",\s*!llvm\.loop\s*!\d+")
+_META_LOOP = re.compile(r"\s*!llvm\.loop\s*!\d+")
+_META_ATTR = re.compile(r"\s*#\d+")
+
+
 def strip_meta(line: str) -> str:
     # Metadata stripping must not touch C string literals: formats such as
     # "%#04o" contain text that looks like an LLVM attribute reference.
+    if '"' not in line:
+        line = line.split(";", 1)[0]
+        line = _META_DBG_COMMA.sub("", line)
+        line = _META_DBG.sub("", line)
+        line = _META_LOOP_COMMA.sub("", line)
+        line = _META_LOOP.sub("", line)
+        line = _META_ATTR.sub("", line)
+        return line.strip()
     parts = re.split(r'("(?:\\.|[^"\\])*")', line)
     out: list[str] = []
     for i, part in enumerate(parts):

@@ -8,17 +8,23 @@ pinned upstream checkouts under build/suites.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
+import sys
+
 import re
 import subprocess
 import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+COMPILER_ROOT = ROOT / "compiler/src"
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 RUNTIME_TARGETS = {
     "x86_64-windows": ROOT / "build/cross/cinterp-run64.exe",
@@ -297,6 +303,77 @@ def run_on_target(
     raise RuntimeError(f"unsupported target {target}")
 
 
+@lru_cache(maxsize=1)
+def compiler_fingerprint() -> str:
+    h = hashlib.sha256()
+    base = COMPILER_ROOT / "cinterp"
+    for path in sorted(base.rglob("*")):
+        if path.is_file() and "__pycache__" not in path.parts:
+            st = path.stat()
+            h.update(str(path.relative_to(base)).encode())
+            h.update(str(st.st_mtime_ns).encode())
+            h.update(str(st.st_size).encode())
+    return h.hexdigest()
+
+
+def cib_cache_key(source: Path, case: dict, target: str, env: dict, manifest: dict) -> str:
+    h = hashlib.sha256()
+    h.update(compiler_fingerprint().encode())
+    h.update(target.encode())
+    h.update(str(case.get("source", "")).encode())
+    h.update(source.read_bytes())
+    h.update(env.get("CPATH", "").encode())
+    h.update(str(manifest.get("force_target", False)).encode())
+    return h.hexdigest()
+
+
+def compile_inprocess(source: Path, cib: Path, target_name: str, env: dict, timeout: float = 300) -> tuple[int, str]:
+    """Compile without paying Python startup/DB reload per test case."""
+    if str(COMPILER_ROOT) not in sys.path:
+        sys.path.insert(0, str(COMPILER_ROOT))
+    from cinterp.cli import _zig_windows_include
+    from cinterp.ffi.plan import UnsupportedFfi
+    from cinterp.link import cstdapi, winmd
+    from cinterp.link.imports import ImportTable
+    from cinterp.link.target import TARGETS
+    from cinterp.llvm_ir.lower import compile_text
+
+    target = TARGETS[target_name]
+    with tempfile.TemporaryDirectory(prefix="cinterp-inproc-") as td:
+        ll = Path(td) / (source.stem + ".ll")
+        cmd = [os.environ.get("CINTERP_CLANG", "clang")]
+        if target_name != "x86_64-linux":
+            cmd.append("--target=" + target.triple)
+            if target.os == "windows":
+                include = _zig_windows_include()
+                if include is None:
+                    return 2, "cinterp: Zig Windows headers not found; set ZIG_LIB_DIR"
+                cmd += ["-isystem", str(include)]
+        cmd += ["-S", "-emit-llvm", "-O0", "-g", "-fno-discard-value-names", str(source), "-o", str(ll)]
+        comp = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, timeout=timeout)
+        if comp.returncode != 0:
+            return comp.returncode, norm_text(comp.stderr).decode("utf-8", "replace")
+        ir_text = ll.read_text()
+    imports = ImportTable()
+    try:
+        package, _module, _plans, _functions, _planset = compile_text(
+            ir_text,
+            str(source),
+            abi=target.abi,
+            ptr_size=target.ptr_bits // 8,
+            target=target,
+            imports=imports,
+            cib_version=2,
+            auto_link=True,
+        )
+    except (UnsupportedFfi, ValueError) as exc:
+        return 1, f"cinterp: {exc}"
+    except Exception as exc:
+        return 1, f"cinterp: internal compiler error: {exc}"
+    cib.write_bytes(package)
+    return 0, ""
+
+
 def summarize_failure(stderr: str, rc: int) -> str:
     lines = [line.strip() for line in stderr.splitlines() if line.strip()]
     if not lines:
@@ -349,21 +426,50 @@ def run_case(
     cmd = [sys.executable, "-m", "cinterp", "compile", str(source), "-o", str(cib)]
     if target != "x86_64-linux" or manifest.get("force_target"):
         cmd += ["--target", target]
-    try:
-        comp = subprocess.run(
-            cmd, cwd=ROOT, env=env, capture_output=True, timeout=compile_timeout
-        )
-    except subprocess.TimeoutExpired:
-        result.update(status="timeout", reason="compile timeout")
-        result["duration_ms"] = int((time.monotonic() - started) * 1000)
-        return result
-    if comp.returncode != 0:
-        stderr = norm_text(comp.stderr).decode("utf-8", "replace").strip()
-        result.update(status="compile", reason=summarize_failure(stderr, comp.returncode))
-        if stderr:
-            result["detail"] = stderr[-2000:]
-        result["duration_ms"] = int((time.monotonic() - started) * 1000)
-        return result
+    cached = False
+    cache_path: Path | None = None
+    if runner.get("cib_cache"):
+        cache_dir = runner["cib_cache"]
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / (cib_cache_key(source, case, target, env, manifest) + ".cib")
+        if cache_path.is_file():
+            shutil.copyfile(cache_path, cib)
+            cached = True
+            result["cached"] = True
+
+    if not cached and runner.get("inprocess"):
+        try:
+            rc, stderr = compile_inprocess(source, cib, target, env, compile_timeout)
+        except subprocess.TimeoutExpired:
+            result.update(status="timeout", reason="compile timeout")
+            result["duration_ms"] = int((time.monotonic() - started) * 1000)
+            return result
+        if rc != 0:
+            stderr = norm_text(stderr.encode()).decode("utf-8", "replace").strip()
+            result.update(status="compile", reason=summarize_failure(stderr, rc))
+            if stderr:
+                result["detail"] = stderr[-2000:]
+            result["duration_ms"] = int((time.monotonic() - started) * 1000)
+            return result
+    else:
+        try:
+            comp = subprocess.run(
+                cmd, cwd=ROOT, env=env, capture_output=True, timeout=compile_timeout
+            )
+        except subprocess.TimeoutExpired:
+            result.update(status="timeout", reason="compile timeout")
+            result["duration_ms"] = int((time.monotonic() - started) * 1000)
+            return result
+        if comp.returncode != 0:
+            stderr = norm_text(comp.stderr).decode("utf-8", "replace").strip()
+            result.update(status="compile", reason=summarize_failure(stderr, comp.returncode))
+            if stderr:
+                result["detail"] = stderr[-2000:]
+            result["duration_ms"] = int((time.monotonic() - started) * 1000)
+            return result
+    if not cached and cache_path is not None and cib.is_file():
+        shutil.copyfile(cib, cache_path)
+
     if manifest.get("mode") == "compile":
         result.update(status="ok")
         result["duration_ms"] = int((time.monotonic() - started) * 1000)
@@ -427,6 +533,8 @@ def main() -> int:
     ap.add_argument("--qemu", default=os.environ.get("QEMU", "qemu-aarch64"))
     ap.add_argument("--sysroot", default=os.environ.get("SYSROOT", "/usr/aarch64-linux-gnu"))
     ap.add_argument("--include-skipped", action="store_true", help="run skip-listed cases for re-triage")
+    ap.add_argument("--inprocess", action="store_true", help="compile in this Python process (faster local runs)")
+    ap.add_argument("--cib-cache", default="", help="directory for content-addressed CIB cache")
     ap.add_argument("--include-excluded", action="store_true", help="include .excluded cases for re-triage")
     ap.add_argument("--only", action="append", default=[], help="only run IDs (comma-separated, repeatable)")
     ap.add_argument("--emit-reasons", default="", help="write auditable ID<TAB>status: reason for non-ok cases")
@@ -461,6 +569,8 @@ def main() -> int:
         "qemu": args.qemu,
         "sysroot": args.sysroot,
         "include_skipped": args.include_skipped,
+        "inprocess": args.inprocess,
+        "cib_cache": Path(args.cib_cache) if args.cib_cache else None,
     }
     if args.target in ("x86_64-windows", "i686-windows"):
         if not runner_cfg["windows_host"]:
