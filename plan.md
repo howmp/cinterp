@@ -34,7 +34,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 - 已实现 `--include-excluded`、`--only`、`--emit-reasons`；`.excluded` 现在可以只读重跑并输出审计原因。
 - reason 现在优先取 `cinterp:`/`error:`/`fatal error:`，Python traceback 归为 `compiler crash: ...` 并保留 `detail`；不再把首行 clang warning 当根因。
 - `gcc-torture-compile.skip` 已缩成 header-only，不再复制 excluded ID。
-- 仍需清理 5 个编译器 traceback 的 class/具体根因；`--only`/`--emit-reasons` 已可重复使用。
+- 已完成 5 个 compiler traceback 清理：local_count/plan size 超限现在返回明确的 `compiler limit`，不再打印 Python traceback。
 - 不自动更新 expected/skip；回收时只删除已经确认通过的 excluded 行，保留 diff 和审查报告。
 
 ### 1.3 优先回收候选
@@ -50,7 +50,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 - 不再有以 clang warning 或 Python traceback 作为原因的行。
 - `gcc-torture-compile.skip` 不再复制 excluded 列表。
 - full 相对 4280/4513 无回归；已回收 56 个（GCC execute 1194→1250），expected/compare 标志不变。
-- P2a 剩余：FP/NaN bucket、5 个 compiler traceback 清理，以及其他 excluded 分类。
+- P2a 剩余：其他 excluded 分类与跨 ABI 扩展；FP/NaN bucket 已完成的 5 项见 §3。
 
 ## 2. P2b：跨 ABI 子集
 

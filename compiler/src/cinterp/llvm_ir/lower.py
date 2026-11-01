@@ -1944,6 +1944,8 @@ def parse_functions(text: str) -> list[Function]:
 
 
 def serialize(functions: list[Function]) -> bytes:
+    if len(functions) > 0xFFFF:
+        raise ValueError(f"compiler limit: function count {len(functions)} exceeds 65535")
     out = bytearray()
     out += b"CIVM"
     out += bytes([1, 1])
@@ -1952,7 +1954,15 @@ def serialize(functions: list[Function]) -> bytes:
     for fn in functions:
         name = fn.name.encode()
         if len(name) > 255:
-            raise ValueError("function name too long")
+            raise ValueError(f"compiler limit: function name {fn.name!r} exceeds 255 bytes")
+        if len(fn.params) > 0xFFFF:
+            raise ValueError(f"compiler limit: function {fn.name} has too many parameters")
+        if fn.local_count > 0xFFFF:
+            raise ValueError(
+                f"compiler limit: function {fn.name} local_count {fn.local_count} exceeds 65535"
+            )
+        if len(fn.code) > 0xFFFFFFFF:
+            raise ValueError(f"compiler limit: function {fn.name} code too large")
         out += bytes([len(name)])
         out += name
         out += len(fn.params).to_bytes(2, "little")

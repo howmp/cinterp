@@ -830,11 +830,17 @@ def _loc_bytes(loc: Loc) -> bytes:
 def serialize_plans(plans: list[CallPlan], abi_id: int = 1) -> bytes:
     import struct
 
+    if len(plans) > 0xFFFF:
+        raise UnsupportedFfi(f"compiler limit: plan count {len(plans)} exceeds 65535")
     out = bytearray()
     out += b"CIPL"
     out += bytes([3, abi_id & 0xFF])
     out += struct.pack("<HH", len(plans), 0)
     for plan in plans:
+        if len(plan.args) > 0xFFFF or len(plan.ret_locs) > 0xFFFF:
+            raise UnsupportedFfi(f"compiler limit: plan {plan.name} has too many locations")
+        if plan.stack_size > 0xFFFF or plan.ret_size > 0xFFFF:
+            raise UnsupportedFfi(f"compiler limit: plan {plan.name} stack/ret size exceeds 65535")
         name = plan.name.encode("utf-8")
         if len(name) > 255:
             raise UnsupportedFfi(f"plan name too long: {plan.name}")

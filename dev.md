@@ -1046,3 +1046,9 @@ zig build -Dtarget=aarch64-linux-gnu
 - 回收 `copysign1/2`、`inf-4`、`pr108540-1`、`pr109386`；gcc-ieee 59→64 通过。
 - `cdivchk*` 属于 `_Complex`，保持 non-goal。
 - full 4280/4513，233 skip；standard 394/495。
+
+### 20.14 compiler traceback 清理（2026-10-31）
+
+- `serialize`/`serialize_plans` 增加格式上限检查；函数 local_count、plan count/locations/stack/ret_size 超 u16 时返回 `ValueError/UnsupportedFfi: compiler limit: ...`。
+- 清理 5 个 excluded/skip traceback：`20001226-1`、`limits-blockid`、`limits-fnargs`、`limits-fndefn`、TCC `101_cleanup`；改为 resource/compiler-limit 原因。
+- 这些是序列化字段上限，不是语言语义缺陷；继续保持 excluded/skip。

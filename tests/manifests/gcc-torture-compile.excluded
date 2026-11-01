@@ -10,7 +10,7 @@
 20000923-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "r,~{memory},~{dirflag},~{fpsr},~{flags}"(ptr %vla), !srcloc !31
 20001116-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20001116-1.c:3:9: error: initializer element is not a compile-time constant
 20001205-1	compile: cinterp: unsupported instruction: %0 = call { i64, i64 } asm "", "=r,=r,~{dirflag},~{fpsr},~{flags}"(), !srcloc !48
-20001226-1	compile: Traceback (most recent call last):
+20001226-1	resource: compiler limit (function local_count 81926 > 65535); clean diagnostic
 20010107-1	compile: cinterp: unsupported instruction: call void (...) getelementptr inbounds (i64, ptr @x, i64 2)()
 20010209-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20010209-1.c:5:7: warning: implicit conversion of out of range value from 'double' to 'short' is undefin
 20010226-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20010226-1.c:17:7: error: function definition is not allowed here
@@ -305,11 +305,11 @@ labels-1	compile: cinterp: unsupported instruction: indirectbr ptr undef, [label
 labels-2	compile: cinterp: unsupported instruction: indirectbr ptr undef, [label %L2, label %L3, label %L1]
 labels-3	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %l1, label %l1, label %l2, label %l1, label %l1]
 layout	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/layout.c:8:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implici
-limits-blockid	compile: Traceback (most recent call last):
+limits-blockid	resource: compiler limit (function local_count 100000 > 65535); clean diagnostic
 limits-declparen	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/limits-declparen.c:15:5: fatal error: bracket nesting level exceeded maximum of 256
 limits-exprparen	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/limits-exprparen.c:15:14: fatal error: bracket nesting level exceeded maximum of 256
-limits-fnargs	compile: Traceback (most recent call last):
-limits-fndefn	compile: Traceback (most recent call last):
+limits-fnargs	resource: compiler limit (plan stack/ret size > 65535); clean diagnostic
+limits-fndefn	resource: compiler limit (function local_count 68930 > 65535); clean diagnostic
 limits-structnest	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/limits-structnest.c:21:1: fatal error: bracket nesting level exceeded maximum of 256
 lll	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/lll.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit i
 load8	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/load8.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit
