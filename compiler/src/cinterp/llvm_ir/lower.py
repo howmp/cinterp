@@ -441,10 +441,10 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_
             for i, part in enumerate(parts):
                 if i >= len(fields):
                     break
-                tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", part.strip())
+                tm = split_type_init(part.strip())
                 if not tm:
                     continue
-                chunk = parse_constant_bytes(tm.group(1), tm.group(2), structs, ptr_size)
+                chunk = parse_constant_bytes(tm[0], tm[1], structs, ptr_size)
                 off = offsets[i]
                 n = min(len(chunk), max(0, size - off))
                 out[off : off + n] = chunk[:n]
@@ -456,10 +456,10 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_
             stride = align_up(es, ea)
             parts = split_top(init[1:-1]) if init[1:-1].strip() else []
             for i, part in enumerate(parts):
-                tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", part.strip())
+                tm = split_type_init(part.strip())
                 if not tm:
                     continue
-                chunk = parse_constant_bytes(tm.group(1), tm.group(2), structs, ptr_size)
+                chunk = parse_constant_bytes(tm[0], tm[1], structs, ptr_size)
                 off = i * stride
                 n = min(len(chunk), max(0, size - off))
                 out[off : off + n] = chunk[:n]
@@ -585,10 +585,10 @@ def collect_global_relocs(
         for i, part in enumerate(parts):
             if i >= len(fields):
                 break
-            tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", part.strip())
+            tm = split_type_init(part.strip())
             if tm:
                 out.extend(collect_global_relocs(
-                    tm.group(1), tm.group(2), base + offsets[i], globals_map, structs, ptr_size
+                    tm[0], tm[1], base + offsets[i], globals_map, structs, ptr_size
                 ))
         return out
     if init.startswith("[") and init.endswith("]"):
@@ -598,10 +598,10 @@ def collect_global_relocs(
             stride = align_up(es, ea)
             parts = split_top(init[1:-1]) if init[1:-1].strip() else []
             for i, part in enumerate(parts):
-                tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)\s+(.+)$", part.strip())
+                tm = split_type_init(part.strip())
                 if tm:
                     out.extend(collect_global_relocs(
-                        tm.group(1), tm.group(2), base + i * stride, globals_map, structs, ptr_size
+                        tm[0], tm[1], base + i * stride, globals_map, structs, ptr_size
                     ))
         return out
     return out

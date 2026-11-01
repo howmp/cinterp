@@ -1,6 +1,6 @@
 ---
 name: production-embedding-readiness
-overview: 生产嵌入调查结论；P0 1–3 已完成，P0 5 已回收 20 个正确性用例；安全隔离明确非目标，剩余正确性边角与发布合同。
+overview: 生产嵌入调查结论；P0 1–3 已完成，P0 5 已回收 22 个正确性用例；安全隔离明确非目标，剩余正确性边角与发布合同。
 ---
 
 # 生产嵌入可用性结论
@@ -41,9 +41,9 @@ overview: 生产嵌入调查结论；P0 1–3 已完成，P0 5 已回收 20 个�
    - C API 回归覆盖两个 VM 同时使用 qsort callback、销毁其中一个后另一个继续运行。
 
 5. **正确性系统性缺口（部分完成）**
-   - 已修复整数宽度归一化（`add/sub/mul/icmp/ret` 及转换边界）和全局常量 GEP 地址/打包字面量结构 reloc；回收 20 个 GCC execute skip。
-   - full 从 4292/4519 提升到 4312/4519（skip 207）。
-   - 剩余 GCC execute skip：bitfield 结果宽度（GCC 方言/Clang 前端差异）、`conversion`、`pr15296`、`pr60017`，以及外部 inline/非目标项；不是全部都能在不改变 expected 的前提下修复。
+   - 已修复整数宽度归一化（`add/sub/mul/icmp/ret` 及转换边界）和全局常量 GEP 地址/打包字面量结构 reloc；回收 22 个 GCC execute skip。
+   - full 从 4292/4519 提升到 4314/4519（skip 205）。
+   - 剩余 GCC execute skip：bitfield 结果宽度（GCC 方言/Clang 前端差异）、`conversion`、`20040709-3`，以及外部 inline/非目标项；不是全部都能在不改变 expected 的前提下修复。
 
 6. **发布与法律合同缺失**
    - 仓库没有 LICENSE；release tarball 已包含 header/lib/DLL，但仍不含许可证。
