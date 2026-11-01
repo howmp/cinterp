@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     unsigned char *argv_cib = read_file(argv[3], &argv_size);
     if (!hello || !qsort_cib || !argv_cib) return 5;
 
-    ci_vm_config config = {sizeof(config), CI_CONFIG_SAFE, 0};
+    ci_vm_config config = {sizeof(config), 0, 0};
     ci_vm *vm = ci_vm_create_ex(&config);
     if (!vm) return 6;
     if (load_package(vm, hello, hello_size) != CI_OK) return 7;

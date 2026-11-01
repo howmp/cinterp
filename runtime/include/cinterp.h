@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 /*
- * cinterp embedding API, ABI 1.
+ * cinterp embedding API, ABI 2.
  *
  * The runtime executes a precompiled CIB package. It does not need clang or
  * the Python compiler at runtime. A VM owns one package at a time and is
@@ -18,9 +18,7 @@ extern "C" {
  * permanently when their owning VM is destroyed.
  */
 
-#define CI_ABI_VERSION 1
-#define CI_CONFIG_SAFE 1u
-
+#define CI_ABI_VERSION 2
 typedef struct ci_vm ci_vm;
 
 /* Status values. Functions return CI_OK or a negative CI_E_* value. */
@@ -33,16 +31,15 @@ enum {
     CI_E_TARGET = -5,
     CI_E_PLANS = -6,
     CI_E_LINK = -7,
-    CI_E_SAFE = -8,
-    CI_E_ENTRY = -9,
-    CI_E_RESOURCE = -10,
-    CI_E_RUNTIME = -11,
-    CI_E_DESTROYED = -12
+    CI_E_ENTRY = -8,
+    CI_E_RESOURCE = -9,
+    CI_E_RUNTIME = -10,
+    CI_E_DESTROYED = -11
 };
 
 typedef struct ci_vm_config {
     uint32_t struct_size; /* set to sizeof(ci_vm_config) */
-    uint32_t flags;       /* CI_CONFIG_SAFE */
+    uint32_t flags;       /* reserved, must be 0 */
     size_t stack_size;    /* 0 = default; upper bound in VM value slots */
 } ci_vm_config;
 
@@ -71,8 +68,6 @@ int ci_vm_run_args(ci_vm *vm, const char *entry, int argc,
 
 /* Result of the last successful run. */
 int64_t ci_vm_result(const ci_vm *vm);
-
-int ci_vm_set_safe(ci_vm *vm, int enabled);
 
 /* Error text and a stable category for the last failed operation. */
 const char *ci_vm_last_error(const ci_vm *vm);

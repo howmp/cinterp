@@ -506,6 +506,55 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_
     return bytes(out)
 
 
+def constant_gep_base_offset(
+    text: str, structs: dict[str, list[str]], ptr_size: int
+) -> tuple[str, int] | None:
+    """Return (base global name, byte offset) for a constant GEP expression."""
+    rhs = extract_gep(text)
+    if rhs is None:
+        return None
+    rest = re.sub(r"^getelementptr\s*", "", rhs).strip()
+    rest = re.sub(r"^(?:inbounds\s+|nuw\s+)*", "", rest).strip()
+    rest = re.sub(r",\s*align\s+\d+\s*$", "", rest).strip()
+    if rest.startswith("(") and rest.endswith(")"):
+        rest = rest[1:-1]
+    parts = split_top(rest)
+    if len(parts) < 3:
+        return None
+    base_match = re.search(r"@([\w.$-]+)", parts[1])
+    if not base_match:
+        return None
+    source_ty = parts[0].strip()
+    indices = [item.strip() for item in parts[2:]]
+    try:
+        off = 0
+        current = source_ty
+        for pos, index in enumerate(indices):
+            index = re.sub(r"^(?:i\d+|ptr)\s+", "", index).strip()
+            if not re.fullmatch(r"-?\d+", index):
+                return None
+            value = int(index)
+            if pos == 0:
+                off += value * type_size_align(current, structs, ptr_size)[0]
+                continue
+            elem = array_element(current)
+            fields = struct_fields(current, structs)
+            if elem is not None:
+                off += value * type_size_align(elem, structs, ptr_size)[0]
+                current = elem
+            elif fields is not None:
+                if value < 0 or value >= len(fields):
+                    return None
+                offsets, _, _ = struct_layout(fields, structs, ptr_size)
+                off += offsets[value]
+                current = fields[value]
+            else:
+                return None
+    except ValueError:
+        return None
+    return ("@" + base_match.group(1), off)
+
+
 def collect_global_relocs(
     ty: str,
     init: str,
@@ -513,20 +562,26 @@ def collect_global_relocs(
     globals_map: dict[str, int],
     structs: dict[str, list[str]],
     ptr_size: int = 8,
-) -> list[tuple[int, str]]:
+) -> list[tuple[int, str, int]]:
     init = init.strip()
-    out: list[tuple[int, str]] = []
+    out: list[tuple[int, str, int]] = []
     if ty.strip().startswith("ptr"):
-        m = re.search(r"@([\w.$-]+)", init)
-        if m:
-            out.append((base, "@" + m.group(1)))
+        base_and_offset = constant_gep_base_offset(init, structs, ptr_size)
+        if base_and_offset is not None:
+            name, addend = base_and_offset
+            out.append((base, name, addend))
+        else:
+            m = re.search(r"@([\w.$-]+)", init)
+            if m:
+                out.append((base, "@" + m.group(1), 0))
         return out
     if ((init.startswith("{") and init.endswith("}")) or (init.startswith("<{") and init.endswith("}>"))):
         fields = struct_fields(ty, structs)
         if fields is None:
             return out
         offsets, _, _ = struct_layout(fields, structs, ptr_size)
-        parts = split_top(init[1:-1]) if init[1:-1].strip() else []
+        inner = init[2:-2] if init.startswith("<{") else init[1:-1]
+        parts = split_top(inner) if inner.strip() else []
         for i, part in enumerate(parts):
             if i >= len(fields):
                 break
@@ -577,7 +632,7 @@ def split_type_init(text: str) -> tuple[str, str] | None:
 
 def parse_globals_ex(
     text: str, structs: dict[str, list[str]], ptr_size: int = 8
-) -> tuple[dict[str, int], bytes, list[tuple[int, str]]]:
+) -> tuple[dict[str, int], bytes, list[tuple[int, str, int]]]:
     specs: list[tuple[str, str, str, int]] = []
     for line in text.splitlines():
         line = strip_meta(line.strip())
@@ -750,7 +805,7 @@ class Lowerer:
         structs: dict[str, list[str]],
         globals_map: dict[str, int],
         global_data: bytes,
-        global_relocs: list[tuple[int, int]],
+        global_relocs: list[tuple[int, str, int]],
         decls: dict[str, tuple[str, list[str], bool]],
         plans: PlanTable,
         functions_by_name: dict[str, Function],
@@ -911,6 +966,28 @@ class Lowerer:
             return
         raise ValueError(f"unsupported operand: {text!r}")
 
+    def normalize_int(self, bits: int, signed: bool = True) -> None:
+        """Normalize the value on top of stack to an LLVM iN value.
+
+        VM slots are 64-bit and memory loads sign-extend. Keep arithmetic
+        results sign-extended for signed consumers; unsigned consumers apply
+        their own mask at the comparison/zext boundary.
+        """
+        if bits <= 0 or bits >= 64:
+            return
+        self.emit_const((1 << bits) - 1)
+        self.emit_u8(OP_AND)
+        if signed:
+            shift = 64 - bits
+            self.emit_const(shift)
+            self.emit_u8(OP_SHL)
+            self.emit_const(shift)
+            self.emit_u8(OP_SHR_S)
+
+    def emit_int_operand(self, text: str, bits: int, signed: bool) -> None:
+        self.emit_operand(text)
+        self.normalize_int(bits, signed)
+
     def type_size(self, ty: str) -> int:
         return type_size_align(ty, self.structs, self.ptr_size)[0]
 
@@ -1051,7 +1128,7 @@ class Lowerer:
                 self.emit_u32(off)
                 self.emit_u8(OP_STORE_MEM)
                 self.emit_u8(min(8, len(data) - off))
-            for field_off, target_name in self.global_relocs:
+            for field_off, target_name, addend in self.global_relocs:
                 if target_name in self.globals:
                     self.emit_u8(OP_ADDR_CONST)
                     self.emit_u32(self.globals[target_name])
@@ -1065,6 +1142,9 @@ class Lowerer:
                         self.emit_u16(self.external_data[key])
                     else:
                         continue
+                if addend:
+                    self.emit_const(addend)
+                    self.emit_u8(OP_ADD)
                 self.emit_u8(OP_ADDR_CONST)
                 self.emit_u32(field_off)
                 self.emit_u8(OP_STORE_MEM)
@@ -1382,8 +1462,7 @@ class Lowerer:
                 self.emit_const(mask)
                 self.emit_u8(OP_AND)
                 self.emit_u8(OP_DIV_U if op == "udiv" else OP_REM_U)
-                self.emit_const(mask)
-                self.emit_u8(OP_AND)
+                self.normalize_int(bits, True)
             elif op == "lshr" and mask is not None:
                 # LLVM integer operations are width-typed. Loads of i8/i16
                 # values may be sign-extended into the VM's 64-bit slot.
@@ -1392,6 +1471,7 @@ class Lowerer:
                 self.emit_u8(OP_AND)
                 self.emit_operand(b)
                 self.emit_u8(OP_SHR_U)
+                self.normalize_int(bits, True)
             elif op == "ashr" and bits < 64:
                 # Sign-extend from the declared width before an arithmetic shift.
                 self.emit_operand(a)
@@ -1401,6 +1481,7 @@ class Lowerer:
                 self.emit_u8(OP_SHR_S)
                 self.emit_operand(b)
                 self.emit_u8(OP_SHR_S)
+                self.normalize_int(bits, True)
             else:
                 self.emit_operand(a)
                 self.emit_operand(b)
@@ -1419,44 +1500,48 @@ class Lowerer:
                     "lshr": OP_SHR_U,
                     "ashr": OP_SHR_S,
                 }[op])
-                if op == "shl" and mask is not None:
-                    self.emit_const(mask)
-                    self.emit_u8(OP_AND)
+                self.normalize_int(bits, True)
             self.store_slot(self.slot_for(result))
             return
 
-        m = re.match(r"icmp\s+(\w+)\s+\S+\s+(.+)$", rhs)
+        m = re.match(r"icmp\s+(\w+)\s+(\S+)\s+(.+)$", rhs)
         if m:
             if result is None:
                 raise ValueError(f"icmp without result: {line}")
             pred = m.group(1)
-            a, b = split_top(m.group(2), ",")
+            cmp_ty = m.group(2)
+            bits = int(cmp_ty[1:]) if cmp_ty.startswith("i") else self.ptr_size * 8
+            signed_cmp = pred in ("slt", "sle", "sgt", "sge")
+            a, b = split_top(m.group(3), ",")
+            def emit_cmp_arg(text: str) -> None:
+                self.emit_operand(text)
+                self.normalize_int(bits, signed_cmp)
             invert = False
             if pred in ("eq",):
-                self.emit_operand(a)
-                self.emit_operand(b)
+                self.emit_int_operand(a, bits, False)
+                self.emit_int_operand(b, bits, False)
                 self.emit_u8(OP_CMP_EQ)
             elif pred in ("ne",):
-                self.emit_operand(a)
-                self.emit_operand(b)
+                self.emit_int_operand(a, bits, False)
+                self.emit_int_operand(b, bits, False)
                 self.emit_u8(OP_CMP_EQ)
                 invert = True
             elif pred in ("slt", "ult"):
-                self.emit_operand(a)
-                self.emit_operand(b)
+                emit_cmp_arg(a)
+                emit_cmp_arg(b)
                 self.emit_u8(OP_CMP_LT if pred == "slt" else OP_CMP_LT_U)
             elif pred in ("sgt", "ugt"):
-                self.emit_operand(b)
-                self.emit_operand(a)
+                emit_cmp_arg(b)
+                emit_cmp_arg(a)
                 self.emit_u8(OP_CMP_LT if pred == "sgt" else OP_CMP_LT_U)
             elif pred in ("sle", "ule"):
-                self.emit_operand(b)
-                self.emit_operand(a)
+                emit_cmp_arg(b)
+                emit_cmp_arg(a)
                 self.emit_u8(OP_CMP_LT if pred == "sle" else OP_CMP_LT_U)
                 invert = True
             elif pred in ("sge", "uge"):
-                self.emit_operand(a)
-                self.emit_operand(b)
+                emit_cmp_arg(a)
+                emit_cmp_arg(b)
                 self.emit_u8(OP_CMP_LT if pred == "sge" else OP_CMP_LT_U)
                 invert = True
             else:
@@ -1496,6 +1581,8 @@ class Lowerer:
                     self.emit_u8(OP_F128_TO_I64)
                 else:
                     self.emit_u8(OP_FPTOSI32 if src_ty == "float" else OP_FPTOSI)
+                if dst_ty.startswith("i") and dst_ty[1:].isdigit() and int(dst_ty[1:]) < 64:
+                    self.normalize_int(int(dst_ty[1:]), True)
             elif op == "fptoui":
                 if src_ty == "x86_fp80":
                     self.emit_u8(OP_F80_TO_U64)
@@ -1506,8 +1593,7 @@ class Lowerer:
                 if dst_ty.startswith("i"):
                     bits = int(dst_ty[1:])
                     if bits < 64:
-                        self.emit_const((1 << bits) - 1)
-                        self.emit_u8(OP_AND)
+                        self.normalize_int(bits, True)
             elif op == "sitofp":
                 if dst_ty == "x86_fp80":
                     self.emit_u8(OP_F80_FROM_I64)
@@ -1559,11 +1645,11 @@ class Lowerer:
                 src_bits = int(src_ty[1:])
                 dst_bits = int(dst_ty[1:])
                 if op == "trunc":
-                    self.emit_const((1 << dst_bits) - 1)
-                    self.emit_u8(OP_AND)
+                    self.normalize_int(dst_bits, True)
                 elif op == "zext":
                     self.emit_const((1 << src_bits) - 1)
                     self.emit_u8(OP_AND)
+                    self.normalize_int(dst_bits, True)
                 else:
                     shift = 64 - src_bits
                     if shift > 0:
@@ -1571,6 +1657,7 @@ class Lowerer:
                         self.emit_u8(OP_SHL)
                         self.emit_const(shift)
                         self.emit_u8(OP_SHR_S)
+                    self.normalize_int(dst_bits, True)
             self.store_slot(self.slot_for(result))
             return
 
@@ -1647,8 +1734,11 @@ class Lowerer:
             return
         m = re.match(r"ret\s+(\S+)\s+(.+)$", rhs)
         if m:
-            if m.group(1) in ("float", "double", "x86_fp80"):
-                self.emit_float_operand(m.group(2), m.group(1))
+            ret_ty = m.group(1)
+            if ret_ty in ("float", "double", "x86_fp80"):
+                self.emit_float_operand(m.group(2), ret_ty)
+            elif ret_ty.startswith("i") and ret_ty[1:].isdigit() and int(ret_ty[1:]) < 64:
+                self.emit_int_operand(m.group(2), int(ret_ty[1:]), True)
             else:
                 self.emit_operand(m.group(2))
             self.emit_u8(OP_RET)
@@ -2009,7 +2099,7 @@ def compile_text(
     body_text = "\n".join(line for fn in functions for line in fn.body)
     external_names = set(external.collect_names(body_text, globals_map, indices, decls))
     reloc_names: set[str] = set()
-    for _off, target_name in global_relocs:
+    for _off, target_name, _addend in global_relocs:
         key = target_name[1:]
         if key not in globals_map and key not in indices and len(key) <= 64:
             reloc_names.add(key)

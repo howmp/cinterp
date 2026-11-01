@@ -1,17 +1,17 @@
 ---
 name: production-embedding-readiness
-overview: 生产嵌入调查结论；P0 1–3（库/header、C API 合同、VM 回调隔离）已完成并验证，剩余安全、正确性和发布合同。
+overview: 生产嵌入调查结论；P0 1–3 已完成，P0 5 已回收 20 个正确性用例；安全隔离明确非目标，剩余正确性边角与发布合同。
 ---
 
 # 生产嵌入可用性结论
 
 ## 结论
 
-**当前项目已有可链接的 `libcinterp`、C 头文件和单 VM C API；但距离生产可用仍受 P0 4–6（安全、正确性、发布合同）阻断。**
+**当前项目已有可链接的 `libcinterp`、C 头文件和单 VM C API；但距离生产可用仍受正确性边角和发布合同阻断；安全隔离明确不是本项目目标。**
 
 - 作为 `cinterp-run` 独立子进程运行时，只能有条件试用：CIB 必须来自可信构建流水线，每个 CIB 一个进程，并在 OS sandbox、资源限制和 wall-clock kill 下运行。
 - `ci_vm_*` 现在可通过 `libcinterp.a`/`libcinterp.so`（Windows `cinterp_static.lib`/`cinterp.dll`）和 `runtime/include/cinterp.h` 链接；仍缺少 pkg-config/CMake/Rust 绑定。
-- 不能运行不可信 CIB：CIB 可表达任意原生调用，`--safe` 是 fuzzing 辅助，不是安全边界。
+- 不提供 `--safe` 或进程内沙箱；CIB 可表达任意原生调用，只应运行可信构建产物。
 - 多 VM 已有 callback 隔离和 destroy 清理；但同一个 VM 仍要求单线程串行调用，不能并发执行。
 - 不适合 MCU/资源敏感嵌入式设备：每实例约 10 MB 固定内存，且只支持 Linux/Windows 的 64 位/32 位特定目标。
 
@@ -40,21 +40,20 @@ overview: 生产嵌入调查结论；P0 1–3（库/header、C API 合同、VM �
    - callback entry 和逻辑槽映射移入 VM；trampoline 使用进程级安全槽映射，destroy/plan 重载会退休旧槽并等待活跃回调结束，避免跨 VM 串调和 UAF。
    - C API 回归覆盖两个 VM 同时使用 qsort callback、销毁其中一个后另一个继续运行。
 
-4. **`--safe` 不是安全边界**
-   - 未覆盖 `VA_START`/`VA_COPY`/`FPCLASS`、callback 和部分算术路径；已观察到 `--safe` 下的 SIGSEGV/SIGFPE 和宿主内存访问。
-   - 没有指令预算、超时或取消接口，死循环无法在 VM 内停止。
-   - 不可信执行必须使用独立进程/容器 + OS 级隔离；不能只依赖 VM 模式。
-
-5. **正确性仍有系统性缺口**
-   - 46 个 GCC execute 失败，已审计排除项中仍有约 125 个 `bug` 标签（另有 non-goal/dialect 分类）。
-   - 32 位整数在 `add/sub/mul/icmp/ret` 上的宽度归一化不完整，可能导致溢出类误编译。
-   - 全局常量地址表达式（如 `&array[i].field`）不可靠；varargs 路径仍存在 SIGSEGV 类失败。
-   - 这些属于嵌入式/正式项目的实际风险，不是单纯的测试边角。
+5. **正确性系统性缺口（部分完成）**
+   - 已修复整数宽度归一化（`add/sub/mul/icmp/ret` 及转换边界）和全局常量 GEP 地址/打包字面量结构 reloc；回收 20 个 GCC execute skip。
+   - full 从 4292/4519 提升到 4312/4519（skip 207）。
+   - 剩余 GCC execute skip：bitfield 结果宽度（GCC 方言/Clang 前端差异）、`conversion`、`pr15296`、`pr60017`，以及外部 inline/非目标项；不是全部都能在不改变 expected 的前提下修复。
 
 6. **发布与法律合同缺失**
    - 仓库没有 LICENSE；release tarball 已包含 header/lib/DLL，但仍不含许可证。
    - 版本号分散在 6 处，`runtime_version` 与发布版本没有映射，没有 CIB/API 兼容策略。
    - 没有正式 release workflow、SBOM、校验和/签名、split debug 产物。
+
+### 明确非目标
+
+- 不提供 `--safe`、进程内沙箱或资源配额；CIB 可调用宿主符号，只允许可信构建产物。
+- 不可信输入由宿主自行通过进程/容器隔离；本项目不承担该边界。
 
 ### P1：生产质量
 
@@ -73,7 +72,7 @@ overview: 生产嵌入调查结论；P0 1–3（库/header、C API 合同、VM �
 - 构建期生成 CIB，只运行自有/已审查的 CIB。
 - 使用独立 `cinterp-run` 子进程，每 CIB 一进程。
 - 外层加 OS sandbox、只读文件系统、无网络、CPU/内存限制和硬超时。
-- 把 `--safe` 仅用于 fuzzing/诊断，不作为安全控制。
+- 不提供 Safe 模式；CIB 必须来自可信构建流水线，不把 runtime 当作隔离边界。
 - 不把第三方 CIB、`--lib` 或宿主动态库暴露给不可信输入。
 
 ### 阶段 B：成为可嵌入库（P0 1–3 已完成）
@@ -88,7 +87,7 @@ overview: 生产嵌入调查结论；P0 1–3（库/header、C API 合同、VM �
 - 指令预算/取消、可配置内存、provider 清理和符号 allowlist。
 - 修复整数宽度、全局常量地址、varargs 崩溃等正确性问题。
 - 完成 CI 跨 ABI、sanitizer、结构化 fuzz 和兼容性回归。
-- 若要运行不可信代码，始终以进程/容器为边界，而不是依赖 VM 内部 `--safe`。
+- 项目本身不实现沙箱；需要隔离时由宿主进程/容器负责。
 
 ## 明确的支持边界
 

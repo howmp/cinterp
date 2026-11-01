@@ -730,7 +730,7 @@ make test            # runtime/compiler 单测 + 20 个端到端用例 + 错误�
 make c-testsuite     # 本地 C 子集（10/10）
 python3 scripts/c_testsuite_upstream.py  # 上游支持集 217/217，3 skip
 make fuzz            # load-only package/plan 变异
-make fuzz-exec       # --safe 字节码执行 fuzz（300 变异 0 crash）
+make fuzz-exec       # 字节码执行 fuzz（300 变异 0 crash）
 make differential    # clang 原生 vs cinterp 返回值差分
 make bench           # 每用例平均运行时间
 make size-cross      # 四个目标 ReleaseSmall 体积
@@ -741,11 +741,11 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 测试分层：
 
 - 前端单测：LLVM IR 解析、降级、ABI 计划、二进制 round-trip。
-- 运行时单测：CIVM、栈/帧、内存/计划校验、错误路径、safe 模式。
+- 运行时单测：CIVM、栈/帧、内存/计划校验、错误路径。
 - 端到端：hello/arrays/structs/malloc/puts/printf/snprintf、float/double/long double、struct FFI、HFA、packed、qsort/callback、ABI 边界。
 - 交叉矩阵：Win64 19、Win32 20（含 stdcall）、ARM64 19；真实 Windows SSH + qemu。
 - c-testsuite：本地 10/10；上游 217/217，skip 3（外部数据符号、向量、复杂聚合全局初始化）。
-- fuzz：load-only package/plan + safe bytecode 执行；差分测试覆盖无外部依赖用例。
+- fuzz：load-only package/plan + bytecode 执行；差分测试覆盖无外部依赖用例。
 
 ## 15. 当前边界与明确不支持
 
@@ -758,14 +758,14 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 - **AAPCS64**：HFA 3/4、栈 HFA、HFA callback 4 向量和 fp128/long double callback 已覆盖；少数大结构体组合仍需分诊。
 - **SysV**：packed/未对齐、MEMORY/sret、mixed aggregate 已覆盖；>2 eightbyte 非 MEMORY 聚合、i128、向量类型未纳入。
 - **外部数据符号**：`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*` 等已解析，Windows UCRT helper 也接入；更冷门的数据符号仍按 provider/fallback 处理。
-- **工具链/信任**：clang `-O0`；VM 指针就是宿主指针，恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
+- **工具链/信任**：clang `-O0`；VM 指针就是宿主指针，运行时提供安全的 CIB 信任模型，不提供进程内沙箱或 Safe 模式。不可信输入由宿主自行隔离。
 
 ## 16. 剩余风险与后续方向
 
 - **外部数据符号**：基础 data provider 已完成；剩余为非常见 libc/平台全局，遇未解析符号时按显式 skip 记录。
 - **向量/复杂 ABI**：Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV i128/vector 仍是明确范围外。
 - **long double**：Windows CRT 限制是宿主运行时问题；如需精确 `%Lf`，需提供自有格式化 shim。
-- **跨 ABI 执行 fuzz**：当前 safe bytecode fuzz 在 native 运行时；其他 ABI 需要对应运行时/Windows/qemu 上的 fuzz 流程。
+- **跨 ABI 执行 fuzz**：当前 bytecode fuzz 在 native 运行时；其他 ABI 需要对应运行时/Windows/qemu 上的 fuzz 流程。
 - **CI 外部环境**：Windows/ARM64 CI 使用托管 runner 的 smoke；完整 Windows SSH/qemu 矩阵仍需自托管环境。
 - **发布**：已生成四目标 tarball；许可证/正式发布渠道仍需项目方确认。
 
@@ -891,7 +891,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - external data 已支持基础场景；向量类型、复杂聚合全局初始化仍有 skip。
 - Win64 vectorcall/COM、Win32 thiscall、SysV i128/vector：明确范围外；HFA/long double callback 已覆盖。
 - Windows CRT `%Lf` 与原生 MinGW 一致，不额外提供格式化 shim。
-- safe 字节码 fuzz 目前只在 native 运行时执行；其他 ABI 的完整执行 fuzz 依赖对应 runner。
+- 字节码 fuzz 目前只在 native 运行时执行；其他 ABI 的完整执行 fuzz 依赖对应 runner。
 
 ### 19.7 计划完成状态
 
@@ -899,7 +899,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **2026-10-31 新增完成**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。
 - **明确范围外**：向量类型/vector ABI、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV `i128`/向量参数；Win32 fastcall 已单独支持。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
-- **信任模型**：恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
+- **信任模型**：运行时只执行可信 CIB；不提供 Safe 模式或进程内沙箱，不可信输入由宿主自行隔离。
 - 交付物与验证数字见 19.5；旧 CIB 目标/自动链接设计已合并到 §19.8，`plan.md` 现在只保留剩余特性和容量工作。
 
 ### 19.8 目标声明与外部符号自动链接（2026-10-31）
@@ -1102,6 +1102,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **batch**：`--batch` 已实现（批量 clang + 分 chunk 进程内 lowering），warm cache 时跳过预编译；冷启动/小套件仍不如 `--inprocess`，因此不作为 Makefile 默认。
 - 结论：inprocess + cache 默认启用；batch 保留作为冷启动实验。若继续追求大幅加速，需做编译器 daemon 或 Rust lowering。
 
+
 ### 20.20 Plan 1–4 完成：excluded/skip 审计（2026-10-31）
 
 - GCC execute 重跑 52 个 skip：6 个通过并回收（`20030914-1`、`20040811-1`、`941014-1`、`960513-1`、`pr43220`、`vla-dealloc-1`）；剩余 46 个分类为 `bug 45 / non-goal 1`，上游测试源文件即复现输入。
@@ -1113,3 +1114,12 @@ zig build -Dtarget=aarch64-linux-gnu
 - CompCert 20 skip 分类：mismatch 8、non-goal 11、frontend/dialect 1。
 - 所有 `.excluded`/`.skip` 已清除 warning-first 和 Python traceback 原因；剩余 bug 项的复现路径是对应 `build/suites/<suite>/.../<id>.c`。
 - 当前 full **4292/4519，227 skip**；standard 394/495；GCC execute 1258/46；TCC 97/45；CompCert 55/20。
+
+### 20.21 P0 5 正确性回收（2026-11-01）
+
+- 移除 `--safe`/`ci_vm_set_safe`；运行时不承诺进程内沙箱，CIB 只运行可信构建产物。
+- 修复整数宽度归一化：`add/sub/mul/icmp/ret`、截断/符号扩展/无符号转换按 LLVM iN 归一化；i64 保持完整宽度。
+- 修复全局常量地址：literal packed struct（`<{...}>`）的指针字段 reloc，以及 `getelementptr` 常量地址的 addend（例如 `&((items+1)->field)`）。
+- 回收 20 个 GCC execute skip：20040409-{1,1w,2,2w,3,3w}、20050218-1、991201-1、arith-rand、arith-rand-ll、vrp-5、const-addr-expr-1、20081117-1、20100209-1、pr28651、pr33779-{1,2}、pr52129、pr53084、pr7284-1。
+- 验证：full 4312/4519（207 skip），standard 394/495，4 ABI cross suites 通过；C API static/shared smoke 通过。
+- 仍保留的 bitfield 结果宽度项（bitfld-3、pr32244-1、pr34971、20040709-3）属于 GCC 期望与 Clang IR 语义差异，暂不改变 expected。

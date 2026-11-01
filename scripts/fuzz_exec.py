@@ -54,7 +54,7 @@ def main() -> int:
             candidate.write_bytes(mutate(data, rng))
             runs += 1
             try:
-                proc = subprocess.run([str(RUNTIME), "--safe", str(candidate)],
+                proc = subprocess.run([str(RUNTIME), str(candidate)],
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                       timeout=args.timeout)
             except subprocess.TimeoutExpired:

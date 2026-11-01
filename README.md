@@ -69,7 +69,7 @@ make test
 # release-size check (runtime < 128K, qsort package < 4K)
 make release-check
 
-# fuzz: load-only package/plan, and safe bytecode execution
+# fuzz: load-only package/plan mutation and bytecode execution
 make fuzz
 make fuzz-exec
 
@@ -241,9 +241,9 @@ ci_vm_destroy(vm);
 `ci_vm_run`/`ci_vm_run_args` return a status; the C `main` return value is read
 with `ci_vm_result`. Errors expose `ci_vm_last_error_code` and
 `ci_vm_last_error`. Loaders are transactional. `ci_vm_create` accepts a stack
-slot upper bound (0 = default), and `ci_vm_create_ex` adds the safe flag.
-Packages still need to be compiled with `cinterp` at build time; the runtime
-does not need clang.
+slot upper bound (0 = default), and `ci_vm_create_ex` accepts a reserved-flags
+config. Packages still need to be compiled with `cinterp` at build time; the
+runtime does not need clang.
 
 The VM is single-threaded per instance, reentrant at the host callback
 boundary, and uses a linear memory for stack/global data. Separate VM instances
@@ -252,9 +252,8 @@ retired when their VM is destroyed. For v2 packages it resolves native symbols
 through CIPI providers (with `--lib` as a user override); unlisted custom
 symbols fall back to the process, loaded `--lib` libraries and the platform C
 runtime. Static callback trampolines are available for SysV x64, Win64, Win32
-and AArch64. `--safe` disables native calls and restricts memory operations to
-the VM linear memory for bytecode fuzzing; `--load-only` validates a package
-without executing it.
+and AArch64. The runtime executes trusted CIB packages and does not provide
+an in-process sandbox; `--load-only` validates a package without executing it.
 
 ## Repository layout
 

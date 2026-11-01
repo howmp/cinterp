@@ -238,13 +238,6 @@ python3 -m cinterp compile examples/ffi_printf.c -o "$OUT/ffi_printf-linkdb.cib"
 grep -Fq "imports=1" "$OUT/linkdb.txt"
 echo "OK --link-db override"
 
-if "$RUNTIME" --safe "$OUT/ffi_printf.cib" >"$OUT/safe-import.txt" 2>&1; then
-    echo "FAIL --safe accepted native call" >&2
-    exit 1
-fi
-grep -Fq "SafeMode" "$OUT/safe-import.txt"
-echo "OK --safe rejects imported call"
-
 echo "== C embedding API (static + shared)"
 python3 -m cinterp compile runtime/tests/capi_argv.c -o "$OUT/capi_argv.cib" >/dev/null
 cc -std=c11 -I runtime/zig-out/include runtime/tests/capi_smoke.c \

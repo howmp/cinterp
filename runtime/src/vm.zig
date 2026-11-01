@@ -324,7 +324,6 @@ pub const VM = struct {
     jumps: [32]JumpEntry = [_]JumpEntry{.{}} ** 32,
     result: i64 = 0,
     stack_limit: usize = MAX_STACK,
-    safe: bool = false,
     last_error: [128]u8 = undefined,
     last_error_code: c_int = 0,
     callback_entries: [256]?CallbackEntry = [_]?CallbackEntry{null} ** 256,
@@ -1381,7 +1380,6 @@ pub const VM = struct {
                     try self.push(.{ .i = @bitCast(addr64) });
                 },
                 OP_CALL_NATIVE, OP_CALL_VARARG => {
-                    if (self.safe) return error.SafeMode;
                     const idx = try readU16(code, &ip);
                     const store = self.plan_store orelse return error.NoPlans;
                     const i: usize = idx;
@@ -1538,7 +1536,6 @@ pub const VM = struct {
                     } else return error.BadLongjmp;
                 },
                 OP_ADDR_EXTERN => {
-                    if (self.safe) return error.SafeMode;
                     const idx = try readU16(code, &ip);
                     const sym = try self.resolveData(idx);
                     const addr: u64 = @intFromPtr(sym);
@@ -1609,7 +1606,7 @@ pub const VM = struct {
                     if (n == 0 or n > 8) return error.BadMemorySize;
                     const v = try self.pop();
                     const addr: usize = addressFromBits(v.i);
-                    if (self.safe and !memRange(self, @intCast(addr), n)) return error.BadAddress;
+
                     var bits: u64 = 0;
                     var i: usize = 0;
                     while (i < n) : (i += 1) {
@@ -1632,7 +1629,7 @@ pub const VM = struct {
                     const av = try self.pop();
                     const vv = try self.pop();
                     const addr: usize = addressFromBits(av.i);
-                    if (self.safe and !memRange(self, @intCast(addr), n)) return error.BadAddress;
+
                     const bits: u64 = @bitCast(vv.i);
                     var i: usize = 0;
                     while (i < n) : (i += 1) {
@@ -1648,7 +1645,7 @@ pub const VM = struct {
                     const len: usize = @intCast(len_v.i);
                     const dst: [*]u8 = @ptrFromInt(addressFromBits(dst_v.i));
                     const src: [*]const u8 = @ptrFromInt(addressFromBits(src_v.i));
-                    if (self.safe and (!memRange(self, @intCast(addressFromBits(dst_v.i)), len) or !memRange(self, @intCast(addressFromBits(src_v.i)), len))) return error.BadAddress;
+
                     if (@intFromPtr(dst) < @intFromPtr(src)) {
                         std.mem.copyForwards(u8, dst[0..len], src[0..len]);
                     } else if (@intFromPtr(dst) > @intFromPtr(src)) {
@@ -1663,7 +1660,7 @@ pub const VM = struct {
                     const len: usize = @intCast(len_v.i);
                     const dst: [*]u8 = @ptrFromInt(addressFromBits(dst_v.i));
                     const byte: u8 = @truncate(@as(u64, @bitCast(val_v.i)));
-                    if (self.safe and !memRange(self, @intCast(addressFromBits(dst_v.i)), len)) return error.BadAddress;
+
                     @memset(dst[0..len], byte);
                 },
                 OP_CALL_VARIADIC_TYPED => {
@@ -1856,8 +1853,7 @@ pub const VM = struct {
                         }
                         ip = 0;
                     } else {
-                        if (self.safe) return error.SafeMode;
-                        const store = self.plan_store orelse return error.NoPlans;
+                            const store = self.plan_store orelse return error.NoPlans;
                         const p = store.planAt(plan_idx) orelse return error.BadPlan;
                         const plan = store.callPlan(p);
                         const target: *const anyopaque = @ptrFromInt(addressFromBits(tag.i));
@@ -1934,7 +1930,7 @@ pub const VM = struct {
     fn popF80(self: *VM) !f80 {
         const v = try self.pop();
         const addr = addressFromBits(v.i);
-        if (self.safe and !memRange(self, @intCast(addr), 16)) return error.BadAddress;
+
         return @as(*align(1) const f80, @ptrFromInt(addr)).*;
     }
 
@@ -1951,7 +1947,7 @@ pub const VM = struct {
     fn popF128(self: *VM) !f128 {
         const v = try self.pop();
         const addr = addressFromBits(v.i);
-        if (self.safe and !memRange(self, @intCast(addr), 16)) return error.BadAddress;
+
         return @as(*align(1) const f128, @ptrFromInt(addr)).*;
     }
 
@@ -1972,15 +1968,6 @@ fn pointerFromU64(v: u64) *anyopaque {
 
 fn addressFromBits(v: i64) usize {
     return @intCast(@as(u64, @bitCast(v)));
-}
-
-fn memRange(self: *VM, addr: u64, len: usize) bool {
-    const base: usize = @intCast(@intFromPtr(&self.mem[0]));
-    const a: usize = @intCast(addr);
-    if (a < base) return false;
-    const end = a + len;
-    if (end < a) return false;
-    return end <= base + self.mem.len;
 }
 
 fn readU64Ptr(ptr: [*]const u8) u64 {
@@ -2136,7 +2123,7 @@ fn readI64(code: []const u8, ip: *usize) !i64 {
     return @bitCast(bits);
 }
 
-pub const CI_ABI_VERSION: c_int = 1;
+pub const CI_ABI_VERSION: c_int = 2;
 pub const CI_OK: c_int = 0;
 pub const CI_ERROR: c_int = -1;
 pub const CI_E_INVALID_ARGUMENT: c_int = -2;
@@ -2145,11 +2132,10 @@ pub const CI_E_BAD_PACKAGE: c_int = -4;
 pub const CI_E_TARGET: c_int = -5;
 pub const CI_E_PLANS: c_int = -6;
 pub const CI_E_LINK: c_int = -7;
-pub const CI_E_SAFE: c_int = -8;
-pub const CI_E_ENTRY: c_int = -9;
-pub const CI_E_RESOURCE: c_int = -10;
-pub const CI_E_RUNTIME: c_int = -11;
-pub const CI_E_DESTROYED: c_int = -12;
+pub const CI_E_ENTRY: c_int = -8;
+pub const CI_E_RESOURCE: c_int = -9;
+pub const CI_E_RUNTIME: c_int = -10;
+pub const CI_E_DESTROYED: c_int = -11;
 
 pub const CiVmConfig = extern struct {
     struct_size: u32,
@@ -2195,7 +2181,6 @@ fn errorCode(err: anyerror) c_int {
         error.PathTooLong,
         error.TooManyLibraries,
         => CI_E_LINK,
-        error.SafeMode => CI_E_SAFE,
         error.EntryNotFound => CI_E_ENTRY,
         error.StackOverflow,
         error.FrameOverflow,
@@ -2253,10 +2238,8 @@ pub export fn ci_vm_create(stack_size: usize) ?*VM {
 pub export fn ci_vm_create_ex(config: ?*const CiVmConfig) ?*VM {
     const cfg = config orelse return ci_vm_create(0);
     if (cfg.struct_size < @sizeOf(CiVmConfig)) return null;
-    if ((cfg.flags & ~@as(u32, 1)) != 0) return null;
-    const machine = ci_vm_create(cfg.stack_size) orelse return null;
-    machine.safe = (cfg.flags & 1) != 0;
-    return machine;
+    if (cfg.flags != 0) return null;
+    return ci_vm_create(cfg.stack_size);
 }
 
 pub export fn ci_vm_destroy(machine: ?*VM) void {
@@ -2347,13 +2330,6 @@ pub export fn ci_vm_run_args(
 pub export fn ci_vm_result(machine: ?*VM) i64 {
     const m = machine orelse return 0;
     return m.result;
-}
-
-pub export fn ci_vm_set_safe(machine: ?*VM, enabled: c_int) c_int {
-    const m = machine orelse return CI_E_INVALID_ARGUMENT;
-    m.safe = enabled != 0;
-    m.clearError();
-    return CI_OK;
 }
 
 pub export fn ci_vm_last_error(machine: ?*VM) [*:0]const u8 {
