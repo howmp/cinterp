@@ -61,14 +61,6 @@ pub fn symbolOrdinal(handle: ?*anyopaque, ordinal: u16) ?*anyopaque {
     return null;
 }
 
-pub fn alias(name: []const u8) ?[*:0]const u8 {
-    if (comptime is_windows) {
-        if (std.mem.eql(u8, name, "snprintf")) return "_snprintf";
-        if (std.mem.eql(u8, name, "vsnprintf")) return "_vsnprintf";
-    }
-    return null;
-}
-
 pub fn defaultC() ?*anyopaque {
     if (comptime is_windows) {
         if (load("msvcrt.dll")) |h| return h;

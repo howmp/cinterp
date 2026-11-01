@@ -989,3 +989,13 @@ zig build -Dtarget=aarch64-linux-gnu
 - **`signal`**：作为普通 callback 使用，复用现有 trampoline，不新增 VM signal 机制。`examples/ffi_signal.c` 注册内部 handler、`raise(SIGUSR1)` 后返回 42。
 - **GCC builtins**：明确放弃，移出计划；不新增 builtin lowering。
 - 回归已加入 `scripts/test.sh`。
+
+### 20.7 外部符号 alias/wrapper 的通用处理（2026-10-31）
+
+- **信息位置**：头文件只给声明，LLVM IR 也只有声明名；glibc/MSVC 的包装和别名来自链接期的 linker script、`libc_nonshared.a`、导入库或导出名规则，因此仅凭头文件/IR 无法知道 `atexit -> __cxa_atexit` 或 `snprintf -> _snprintf`。
+- **统一元数据**：`compiler/src/cinterp/link/link_wrappers.json` 同时描述：
+  - `targets.<os>.<symbol>`：真实符号、provider、额外参数（argument adapter，如 atexit 的两个零参数）。
+  - `aliases.<os>.<symbol>`：同签名符号改名（如 Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）。
+- **编译期使用**：`cstdapi.alias()` 在 lowering 前改名；`cstdapi.wrapper()` 追加参数并改用真实 plan 名；`cstdapi.lookup()` 为真实符号提供 CIPI provider。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
+- **runtime 简化**：删除 `runtime/src/ffi/native.zig` 的 `alias()` 和 `vm.resolveNative()` 的 alias fallback；运行时只按 CIB provider/显式 `--lib`/系统 fallback 查找，不再硬编码 `snprintf/vsnprintf`。
+- **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4221/4457、standard 396/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。

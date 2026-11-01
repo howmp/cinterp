@@ -6,13 +6,29 @@
       "atexit": {
         "symbol": "__cxa_atexit",
         "providers": [
-          {"kind": 1, "lib": "libc.so.6", "symbol": "__cxa_atexit"}
+          {
+            "kind": 1,
+            "lib": "libc.so.6",
+            "symbol": "__cxa_atexit"
+          }
         ],
         "extra_args": [
-          {"type": "ptr", "const": 0},
-          {"type": "ptr", "const": 0}
+          {
+            "type": "ptr",
+            "const": 0
+          },
+          {
+            "type": "ptr",
+            "const": 0
+          }
         ]
       }
+    }
+  },
+  "aliases": {
+    "windows": {
+      "snprintf": "_snprintf",
+      "vsnprintf": "_vsnprintf"
     }
   }
 }

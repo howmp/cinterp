@@ -531,15 +531,6 @@ pub const VM = struct {
         }
 
         if (self.searchSymbol(cname)) |sym| return sym;
-        if (native.alias(name)) |alt| {
-            const alias_name = std.mem.span(alt);
-            if (alias_name.len < self.symbol_buf.len) {
-                @memcpy(self.symbol_buf[0..alias_name.len], alias_name);
-                self.symbol_buf[alias_name.len] = 0;
-                const acname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
-                if (self.searchSymbol(acname)) |sym| return sym;
-            }
-        }
         if (name.len > 1 and name[0] == '_') {
             if (self.tryName(name[1..])) |sym| return sym;
         }

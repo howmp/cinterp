@@ -1776,6 +1776,9 @@ class Lowerer:
             if fname not in self.func_indices:
                 decl = self.decls.get(fname)
                 is_varargs = decl[2] if decl else ("..." in rhs)
+                aliased = cstdapi.alias(self.abi, fname)
+                if aliased is not None:
+                    fname = aliased
                 wrapped_extra_count = 0
                 wrapped = cstdapi.wrapper(self.abi, fname)
                 if wrapped is not None:

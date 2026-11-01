@@ -58,6 +58,15 @@ def _abi_os(abi: str) -> str:
     return "windows" if abi in ("win64", "win32") else "linux"
 
 
+def alias(abi: str, name: str) -> str | None:
+    """Return a target-specific same-signature symbol alias.
+
+    Symbol aliases belong to link metadata (MSVC underscore names etc.), not
+    to the runtime's symbol resolver.
+    """
+    return _load_wrappers().get("aliases", {}).get(_abi_os(abi), {}).get(name)
+
+
 def wrapper(abi: str, name: str) -> tuple[str, list[str], list[str]] | None:
     """Return a target link-ABI wrapper for an external symbol.
 
