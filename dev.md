@@ -917,7 +917,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
-- **测试集**：csuite 17、c-testsuite 218+2 skip、TCC 97+45 skip、chibicc 15+26 skip、libc-test 49+26 skip、GCC execute 1194+52 skip、GCC compile 1407+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 59+20 skip。总计 4221 通过 / 236 显式 skip；另有 1098 个明确排除的非目标用例。
+- **测试集**：csuite 17、c-testsuite 218+2 skip、TCC 97+45 skip、chibicc 15+26 skip、libc-test 47+28 skip、GCC execute 1194+52 skip、GCC compile 1407+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 59+20 skip。总计 4219 通过 / 238 显式 skip；另有 1098 个明确排除的非目标用例。
 - **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 跑 csuite 17/17，以及 c-testsuite、TCC、GCC、CompCert 各 12 个 upstream smoke，全部通过；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
@@ -932,8 +932,8 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 20.2 测试重构完成状态与边界（2026-10-31）
 
-- **支持集基线**：`make test-suites-full` 为 **4221/4457 通过，236 skip（94.7%）**；另有 **1098** 个 `.excluded` 非目标用例（GCC execute 454、GCC compile 609、CompCert 34、TCC 1）。
-- **标准集**：`make test-suites` 为 **396/495 通过，99 skip**；`make test` 通过。
+- **支持集基线**：`make test-suites-full` 为 **4219/4457 通过，238 skip（94.7%）**；另有 **1098** 个 `.excluded` 非目标用例（GCC execute 454、GCC compile 609、CompCert 34、TCC 1）。
+- **标准集**：`make test-suites` 为 **394/495 通过，101 skip**；`make test` 通过。
 - **跨 ABI**：csuite 17/17；c-testsuite、TCC、GCC、CompCert upstream smoke 在 Win64/Win32/ARM64 各 12/12。Windows 使用 Zig MinGW 头文件，ARM64 使用 qemu。
 - **生成式**：YARPGen 100 seeds 为 77 通过 / 23 明确 skip；Csmith 3/3 已知失败并保存 artifact；20-seed smoke 16 通过 / 4 skip。
 - **fuzz**：load 1000 次、exec 500 次，0 crash / 0 timeout。
@@ -960,7 +960,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **varargs**：额外参数重叠时反向拷贝；实现 `va_copy`；修复 CompCert `varargs1/2`。
 - **ABI**：`<2 x float>`/HFA coerce 参数按位传输；`udiv/urem` 按声明宽度掩码。
 - **符号**：CIVM/plan 名称上限从 32 提升到 128，修复长 inline/符号名。
-- **结果**：full 4221/4457（236 skip）；standard 396/495；TCC97/45、GCC1194/52、CompCert55/20、libc-test49/26、libc-regression48/21。线程/`RLIMIT_STACK` 敏感用例仍显式隔离。
+- **结果**：full 4219/4457（238 skip）；standard 394/495；TCC97/45、GCC1194/52、CompCert55/20、libc-test47/28、libc-regression48/21。线程/`RLIMIT_STACK` 敏感用例仍显式隔离。
 
 ### 20.4 VLA/C11/external data/stdio 补齐（2026-10-31）
 
@@ -968,8 +968,8 @@ zig build -Dtarget=aarch64-linux-gnu
 - **柔性数组**：struct 尾部 `[]` 布局、malloc 扩展和 GEP 访问通过 csuite `vla_fam` 验证。
 - **C11**：`_Generic`、`_Static_assert`、`_Alignas/_Alignof`、`static inline`、`_Noreturn` 通过 `csuite/c11`；新增 aligned alloca opcode，支持 local `_Alignas(32)`。
 - **external data**：补充 `__environ`、`_environ`、`__progname*`、`_pgmptr`、`_tzname`、`_timezone`、`_daylight`、`_opt*` 等数据别名；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 通过 cstdapi helper provider 解析。`csuite/external_data` 四目标通过。
-- **stdio/wide/locale**：修复实际 cinterp 侧 `snprintf`/字符串问题；`strtol/wcstol` 非法 base 增加原生 shim（合法 base 委托宿主 libc，非法 base 设置 `endptr=nptr`、`EINVAL`）。其余 `libc-test` mismatch 已用原生 glibc 复现，标记为 host-libc reference difference（musl expected 不适用于当前宿主），不是 cinterp 回归。若产品要求 musl 语义，应引入显式 musl provider/参考目标，而不是修改 expected 或 skip 冒充通过。
-- **结果**：full 4221/4457（236 skip）；standard 396/495；csuite 17/17；TCC 97/45；libc-test 49/26；跨 ABI csuite 17/17。
+- **stdio/wide/locale**：修复实际 cinterp 侧 `snprintf`/字符串问题；`strtol/wcstol` 的非法 base 差异已在原生 glibc 复现，归为 host-libc reference difference，不再保留 runtime shim。其余 `libc-test` mismatch 同样标记为 musl expected 不适用于当前宿主，不是 cinterp 回归。若产品要求 musl 语义，应引入显式 musl provider/参考目标，而不是修改 expected 或 skip 冒充通过。
+- **结果**：full 4219/4457（238 skip）；standard 394/495；csuite 17/17；TCC 97/45；libc-test 47/28；跨 ABI csuite 17/17。
 
 ### 20.5 ABI callback 边角完成（2026-10-31）
 
@@ -978,7 +978,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **长 double**：SysV x87 `st0` 返回写回 trampoline 并 `fld tbyte`；Win32 增加 80-bit ST0 缓冲区；AArch64 fp128 走向量 loc。
 - **AArch64 HFA**：callback 帧新增 q2/q3 返回槽，HFA 4 向量参数/返回可往返；`readRetArm64` 支持 xmm2/xmm3。
 - **聚合 sret/byval**：回调的隐藏 sret 指针和 byval struct 参数走已有 pointer 通道，24-byte `S24` 回调通过。
-- **回归**：新增 `examples/ffi_callback_hfa.c` + helper，覆盖 F4 HFA、D2 HFA、long double、S24 sret；native 与 AArch64 qemu 均得到 `247`。`make test`、full 4221/4457、standard 396/495、跨 ABI csuite 17/17 均通过。
+- **回归**：新增 `examples/ffi_callback_hfa.c` + helper，覆盖 F4 HFA、D2 HFA、long double、S24 sret；native 与 AArch64 qemu 均得到 `247`。`make test`、full 4219/4457、standard 394/495、跨 ABI csuite 17/17 均通过。
 - **限制**：Win64/Win32 的 HFA/long-double 回调帧已编译通过，但未在远端 Windows 上用专用 helper 做值域回归；不做 vectorcall/COM。
 
 ### 20.6 明确决策：_Complex / atexit / signal / GCC builtins（2026-10-31）
@@ -997,5 +997,5 @@ zig build -Dtarget=aarch64-linux-gnu
   - `targets.<os>.<symbol>`：真实符号、provider、额外参数（argument adapter，如 atexit 的两个零参数）。
   - `aliases.<os>.<symbol>`：同签名符号改名（如 Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）。
 - **编译期使用**：`cstdapi.alias()` 在 lowering 前改名；`cstdapi.wrapper()` 追加参数并改用真实 plan 名；`cstdapi.lookup()` 为真实符号提供 CIPI provider。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
-- **runtime 简化**：删除 `runtime/src/ffi/native.zig` 的 `alias()` 和 `vm.resolveNative()` 的 alias fallback；运行时只按 CIB provider/显式 `--lib`/系统 fallback 查找，不再硬编码 `snprintf/vsnprintf`。
-- **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4221/4457、standard 396/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。
+- **runtime 简化**：删除 `runtime/src/ffi/native.zig` 的 `alias()`、`vm.resolveNative()` 的 alias fallback、`strtol/wcstol` shim，以及 `_`/`@` 名称猜测。运行时现在只按 CIB provider、显式 `--lib` 和系统 fallback 查找，不再包含具体函数名分支。
+- **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4219/4457、standard 394/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。

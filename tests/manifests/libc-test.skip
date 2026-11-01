@@ -25,3 +25,5 @@ tls_local_exec	stdout mismatch
 vfork	mismatch: host vfork/expected difference
 sem_init	mismatch: pthread quarantine (out of scope)
 pthread_robust	mismatch: pthread quarantine (out of scope)
+strtol	mismatch: host-libc reference (musl invalid-base endptr; native glibc differs)
+wcstol	mismatch: host-libc reference (musl invalid-base endptr; native glibc differs)

@@ -115,38 +115,6 @@ pub const OP_STACKRESTORE: u8 = 0x9E;
 pub const OP_ALLOCA_ALIGNED: u8 = 0x9F;
 pub const OP_ALLOCA_DYN_ALIGN: u8 = 0xA0;
 
-fn libcErrnoLocation() ?*c_int {
-    const sym = native.symbol(null, "__errno_location") orelse return null;
-    const fn_ptr: *const fn () callconv(.C) *c_int = @ptrCast(@alignCast(sym));
-    return fn_ptr();
-}
-
-fn setErrno(value: c_int) void {
-    if (libcErrnoLocation()) |p| p.* = value;
-}
-
-fn shimStrtol(nptr: ?[*:0]const u8, endptr: ?*?[*:0]u8, base: c_int) callconv(.C) c_long {
-    if (base != 0 and (base < 2 or base > 36)) {
-        if (endptr) |ep| ep.* = @constCast(nptr);
-        setErrno(22); // EINVAL
-        return 0;
-    }
-    const sym = native.symbol(null, "strtol") orelse return 0;
-    const fn_ptr: *const fn (?[*:0]const u8, ?*?[*:0]u8, c_int) callconv(.C) c_long = @ptrCast(@alignCast(sym));
-    return fn_ptr(nptr, endptr, base);
-}
-
-fn shimWcstol(nptr: ?[*:0]const c_int, endptr: ?*?[*:0]c_int, base: c_int) callconv(.C) c_long {
-    if (base != 0 and (base < 2 or base > 36)) {
-        if (endptr) |ep| ep.* = @constCast(nptr);
-        setErrno(22);
-        return 0;
-    }
-    const sym = native.symbol(null, "wcstol") orelse return 0;
-    const fn_ptr: *const fn (?[*:0]const c_int, ?*?[*:0]c_int, c_int) callconv(.C) c_long = @ptrCast(@alignCast(sym));
-    return fn_ptr(nptr, endptr, base);
-}
-
 fn readU16At(bytes: []const u8, off: usize) u16 {
     return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
 }
@@ -413,14 +381,6 @@ pub const VM = struct {
         return null;
     }
 
-    fn tryName(self: *VM, name: []const u8) ?*const anyopaque {
-        if (name.len >= self.symbol_buf.len) return null;
-        @memcpy(self.symbol_buf[0..name.len], name);
-        self.symbol_buf[name.len] = 0;
-        const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
-        return self.searchSymbol(cname);
-    }
-
     fn cachedProvider(self: *VM, plan_index: u16, provider_index: usize, name: []const u8) !?*anyopaque {
         const slot: usize = @as(usize, plan_index) * link_loader.MAX_PROVIDERS + provider_index;
         if (slot >= self.import_handles.len) return null;
@@ -504,8 +464,6 @@ pub const VM = struct {
     }
 
     fn resolveNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
-        if (std.mem.eql(u8, name, "strtol")) return @ptrCast(&shimStrtol);
-        if (std.mem.eql(u8, name, "wcstol")) return @ptrCast(&shimWcstol);
         if (name.len >= self.symbol_buf.len) return error.SymbolTooLong;
         @memcpy(self.symbol_buf[0..name.len], name);
         self.symbol_buf[name.len] = 0;
@@ -531,14 +489,6 @@ pub const VM = struct {
         }
 
         if (self.searchSymbol(cname)) |sym| return sym;
-        if (name.len > 1 and name[0] == '_') {
-            if (self.tryName(name[1..])) |sym| return sym;
-        }
-        if (std.mem.indexOfScalar(u8, name, '@')) |at| {
-            if (at > 0) {
-                if (self.tryName(name[0..at])) |sym| return sym;
-            }
-        }
         return error.SymbolNotFound;
     }
 
