@@ -139,6 +139,7 @@ provider[]:
 - `plan_index` 绑定 CIPL；`0xffff` 表示 data entry，`ADDR_EXTERN` 使用 entry 索引解析地址。同一符号多次调用可以有多条 entry。
 - provider 按顺序尝试；成功后缓存库 handle 和符号地址。
 - 自动生成的 provider 只能是系统库名/allowlist；运行时会拒绝包含 `/`、`\` 或 `:` 的自动 provider 名，避免 CIB 指定任意路径。显式 `--lib` 仍允许用户路径。
+- 一个进程只执行一个 CIB；CIPI 不提供 CIB-to-CIB 链接/包间导出表，跨包请合并源码后重新生成。
 - `arch_mask` 与 `min_os` 在加载时校验；不匹配返回 `ImportArchMismatch` / `ImportUnavailable`。
 - `kind=data` 已支持 `stdout`/`errno` 类 external data：编译器为未知外部全局生成 data entry，运行时按 provider/`--lib` 解析地址；`ordinal` 解析在 Windows 已支持。
 

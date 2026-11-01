@@ -155,7 +155,8 @@ when available; set `ZIG_LIB_DIR` to override.
 The compiler automatically links used C standard library symbols on all
 targets (libc/libm, UCRT/MSVCRT/NTDLL) and Windows APIs on Windows targets
 (via the vendored winmd index); no `--lib` is required for those. Custom
-libraries still use `--lib` and take precedence over CIB providers.
+libraries still use `--lib` and take precedence over CIB providers. Only one
+CIB is executed at a time; CIB-to-CIB linking is explicitly unsupported.
 
 The compiler currently supports:
 

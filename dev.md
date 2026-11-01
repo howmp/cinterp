@@ -1005,3 +1005,9 @@ zig build -Dtarget=aarch64-linux-gnu
 - 产品诉求是**调用真实导出的外部符号**；这条路径不受外部 inline 链接语义影响。`static inline` 和 IR 中已有的函数体继续解释执行，外部导出函数继续走 CIPI provider/`--lib`/系统 fallback。
 - 明确不作为目标：C99 inline 的外部定义选择、weak 未定义解析为 0、COMDAT/one-definition、跨 TU inline 链接、函数地址身份。TCC 104/104+ 属于这些链接/地址语义测试，继续排除。
 - 如果某个头文件 inline 函数没有真实外部导出符号，它本来就不是“外部导出符号”，需要在 IR 中内联执行或由调用方提供定义。
+
+### 20.9 明确不支持 CIB-to-CIB 链接（2026-10-31）
+
+- 运行时执行模型固定为：**单个 CIB + 宿主系统库/provider + 显式 `--lib`**。CIB 不是目标文件或共享库，不参与另一个 CIB 的符号解析、重定位或入口链接。
+- 需要跨包复用时，应在源码/编译阶段合并后重新生成一个 CIB，或由调用方通过 `--lib` 提供普通共享库；不在运行时做 CIB→CIB 链接。
+- `CIPI` 仍然只描述本包外部 plan 到系统库/`--lib` provider 的映射，不新增包间依赖/导出表。
