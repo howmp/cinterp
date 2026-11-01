@@ -1,0 +1,39 @@
+name: cross-abi
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: sudo apt-get update && sudo apt-get install -y clang python3 make qemu-user gcc-aarch64-linux-gnu
+      - name: ARM64 AAPCS64 cross suite
+        run: ./scripts/test_cross.sh --targets arm64
+      - name: ARM64 load-only fuzz
+        run: python3 scripts/fuzz_cross.py --targets aarch64-linux --iterations 100
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: choco install llvm --no-progress -y
+      - name: Win64 + Win32 cross suite
+        shell: bash
+        run: |
+          export PATH="/c/Program Files/LLVM/bin:$PATH"
+          export PYTHONPATH="$PWD/compiler/src"
+          PYTHON=python ./scripts/test_cross.sh --targets win64,win32
+          python scripts/fuzz_cross.py --targets win64,win32 --iterations 100

@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const abi = @import("ffi/abi.zig");
 const plan_loader = @import("ffi/plan_loader.zig");
 const platform = @import("ffi/platform.zig");
@@ -11,6 +12,8 @@ pub const MAX_NAME: usize = 128;
 pub const MAX_STACK: usize = 8192;
 pub const MAX_FRAMES: usize = 512;
 pub const MAX_MODULE: usize = 2097152;
+pub const DEFAULT_MEMORY: usize = 1024 * 1024;
+pub const MAX_MEMORY: usize = 16 * 1024 * 1024;
 
 pub const OP_RET: u8 = 0x01;
 pub const OP_RET_VOID: u8 = 0x02;
@@ -301,13 +304,13 @@ fn compareFloats(a: f64, b: f64, pred: u8) bool {
 }
 
 pub const VM = struct {
-    module_buf: [MAX_MODULE]u8 = undefined,
+    module_buf: []u8 = &.{},
     module_len: usize = 0,
     functions: [MAX_FUNCS]Function = undefined,
     func_count: usize = 0,
-    values: [MAX_STACK]Value = undefined,
+    values: []Value = &.{},
     sp: usize = 0,
-    mem: [1024 * 1024]u8 align(32) = undefined,
+    mem: []u8 = &.{},
     mem_top: usize = 0,
     plan_store: ?*plan_loader.Store = null,
     target: ?link_loader.TargetInfo = null,
@@ -330,6 +333,8 @@ pub const VM = struct {
     callback_slots: [256]i16 = [_]i16{-1} ** 256,
     callback_active: usize = 0,
     callback_destroying: bool = false,
+    native_targets: [256]usize = [_]usize{0} ** 256,
+    native_target_count: usize = 0,
 
     pub fn setError(self: *VM, msg: []const u8) void {
         const n = @min(msg.len, self.last_error.len - 1);
@@ -350,7 +355,7 @@ pub const VM = struct {
 
     fn rollback(self: *VM, backup: *VM) void {
         if (self.plan_store) |current| {
-            if (current != backup.plan_store) std.heap.page_allocator.destroy(current);
+            if (current != backup.plan_store) current.deinit(std.heap.page_allocator);
         }
         self.* = backup.*;
         std.heap.page_allocator.destroy(backup);
@@ -363,7 +368,7 @@ pub const VM = struct {
     pub fn loadPlans(self: *VM, bytes: []const u8) !void {
         const new_store = try plan_loader.decode(std.heap.page_allocator, bytes);
         if (new_store.abi_id != platform.abi_id) {
-            std.heap.page_allocator.destroy(new_store);
+            new_store.deinit(std.heap.page_allocator);
             return error.BadAbi;
         }
         if (self.plan_store) |old| {
@@ -371,7 +376,7 @@ pub const VM = struct {
             // before freeing it so a retained host callback cannot dispatch
             // through dangling plan metadata.
             self.releaseCallbacks();
-            std.heap.page_allocator.destroy(old);
+            old.deinit(std.heap.page_allocator);
         }
         self.plan_store = new_store;
     }
@@ -395,7 +400,7 @@ pub const VM = struct {
     fn freePlans(self: *VM) void {
         if (self.plan_store) |old| {
             self.releaseCallbacks();
-            std.heap.page_allocator.destroy(old);
+            old.deinit(std.heap.page_allocator);
             self.plan_store = null;
         }
     }
@@ -412,6 +417,7 @@ pub const VM = struct {
     }
 
     fn loadPackageInPlace(self: *VM, bytes: []const u8) !void {
+        if (!platform.libc_supported) return error.UnsupportedLibc;
         if (bytes.len < 15) return error.BadPackage;
         if (!std.mem.eql(u8, bytes[0..5], "CIPKG")) return error.BadPackageMagic;
         const version = bytes[5];
@@ -454,36 +460,34 @@ pub const VM = struct {
 
     pub fn loadPackage(self: *VM, bytes: []const u8) !void {
         // Validate the complete package in a scratch VM before touching this
-        // VM. The scratch VM owns the new plan store; only a validated package
-        // is transferred.
+        // VM. The scratch VM owns the new plan store and module buffer; only a
+        // validated package is transferred.
         const scratch = try std.heap.page_allocator.create(VM);
         initMachine(scratch);
         scratch.loadPackageInPlace(bytes) catch |err| {
             scratch.freePlans();
+            scratch.freeModule();
             std.heap.page_allocator.destroy(scratch);
             return err;
         };
 
-        const old_len = self.module_len;
-        const old_module = try std.heap.page_allocator.alloc(u8, old_len);
-        defer std.heap.page_allocator.free(old_module);
-        @memcpy(old_module, self.module_buf[0..old_len]);
-        @memcpy(self.module_buf[0..scratch.module_len], scratch.module_buf[0..scratch.module_len]);
-        self.module_len = scratch.module_len;
-        self.parseModule() catch |err| {
-            @memcpy(self.module_buf[0..old_len], old_module);
-            self.module_len = old_len;
-            self.parseModule() catch {};
-            scratch.freePlans();
-            std.heap.page_allocator.destroy(scratch);
-            return err;
-        };
         self.freePlans();
+        const old_module = self.module_buf;
+
+        self.module_buf = scratch.module_buf;
+        self.module_len = scratch.module_len;
+        @memcpy(self.functions[0..scratch.func_count], scratch.functions[0..scratch.func_count]);
+        self.func_count = scratch.func_count;
         self.plan_store = scratch.plan_store;
         scratch.plan_store = null;
         self.target = scratch.target;
         self.imports = scratch.imports;
+
+        scratch.module_buf = &.{};
+        scratch.module_len = 0;
+        scratch.func_count = 0;
         std.heap.page_allocator.destroy(scratch);
+        if (old_module.len > 0) std.heap.page_allocator.free(old_module);
     }
 
     fn validateImports(self: *VM, imports: *const link_loader.Table) !void {
@@ -612,6 +616,26 @@ pub const VM = struct {
         return error.SymbolNotFound;
     }
 
+    fn recordNativeTarget(self: *VM, addr: usize) void {
+        if (addr == 0) return;
+        var i: usize = 0;
+        while (i < self.native_target_count) : (i += 1) {
+            if (self.native_targets[i] == addr) return;
+        }
+        if (self.native_target_count < self.native_targets.len) {
+            self.native_targets[self.native_target_count] = addr;
+            self.native_target_count += 1;
+        }
+    }
+
+    fn isNativeTarget(self: *const VM, addr: usize) bool {
+        var i: usize = 0;
+        while (i < self.native_target_count) : (i += 1) {
+            if (self.native_targets[i] == addr) return true;
+        }
+        return false;
+    }
+
     fn resolveNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
         if (name.len >= self.symbol_buf.len) return error.SymbolTooLong;
         @memcpy(self.symbol_buf[0..name.len], name);
@@ -638,6 +662,15 @@ pub const VM = struct {
         }
 
         if (self.searchSymbol(cname)) |sym| return sym;
+        if (name.len > 1 and name[0] == '_') {
+            const bare = name[1..];
+            if (bare.len < self.symbol_buf.len) {
+                @memcpy(self.symbol_buf[0..bare.len], bare);
+                self.symbol_buf[bare.len] = 0;
+                const bare_c: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+                if (self.searchSymbol(bare_c)) |sym| return sym;
+            }
+        }
         return error.SymbolNotFound;
     }
 
@@ -713,10 +746,35 @@ pub const VM = struct {
     }
 
     fn loadModuleBytesInPlace(self: *VM, bytes: []const u8) !void {
-        if (bytes.len > self.module_buf.len) return error.ModuleTooLarge;
-        @memcpy(self.module_buf[0..bytes.len], bytes);
+        if (bytes.len > MAX_MODULE) return error.ModuleTooLarge;
+        const buf = try std.heap.page_allocator.alloc(u8, bytes.len);
+        errdefer std.heap.page_allocator.free(buf);
+        @memcpy(buf, bytes);
+        try self.parseModuleBytes(buf);
+        const old = self.module_buf;
+        self.module_buf = buf;
         self.module_len = bytes.len;
-        try self.parseModule();
+        if (old.len > 0) std.heap.page_allocator.free(old);
+    }
+
+    fn freeModule(self: *VM) void {
+        if (self.module_buf.len > 0) {
+            std.heap.page_allocator.free(self.module_buf);
+            self.module_buf = &.{};
+        }
+        self.module_len = 0;
+        self.func_count = 0;
+    }
+
+    fn ensureRuntimeBuffers(self: *VM) !void {
+        if (self.values.len == 0) {
+            const limit = if (self.stack_limit == 0) MAX_STACK else self.stack_limit;
+            self.values = try std.heap.page_allocator.alloc(Value, limit);
+            self.stack_limit = limit;
+        }
+        if (self.mem.len == 0) {
+            self.mem = try std.heap.page_allocator.alignedAlloc(u8, 32, DEFAULT_MEMORY);
+        }
     }
 
     pub fn loadModuleBytes(self: *VM, bytes: []const u8) !void {
@@ -728,8 +786,8 @@ pub const VM = struct {
         commitCheckpoint(backup);
     }
 
-    fn parseModule(self: *VM) !void {
-        var r = Reader{ .data = self.module_buf[0..self.module_len] };
+    fn parseModuleBytes(self: *VM, data: []const u8) !void {
+        var r = Reader{ .data = data };
         const magic = try r.take(4);
         if (!std.mem.eql(u8, magic, "CIVM")) return error.BadMagic;
         const version = try r.readU8();
@@ -769,16 +827,17 @@ pub const VM = struct {
     }
 
     pub fn runEntryArgs(self: *VM, name: []const u8, cargs: []const []const u8) !i64 {
+        try self.ensureRuntimeBuffers();
         var fi: usize = 0;
         while (fi < self.func_count) : (fi += 1) {
             if (std.mem.eql(u8, self.functions[fi].name, name)) break;
         }
         if (fi == self.func_count) return error.EntryNotFound;
 
-        for (0..MAX_STACK) |i| self.values[i] = .{ .i = 0 };
+        for (0..self.values.len) |i| self.values[i] = .{ .i = 0 };
         self.sp = 0;
         self.mem_top = 0;
-        @memset(&self.mem, 0);
+        @memset(self.mem, 0);
         self.frame_count = 0;
         self.result = 0;
 
@@ -1387,6 +1446,7 @@ pub const VM = struct {
                     const plan = store.callPlan(p);
                     const n: usize = p.name_len;
                     const target = try self.resolveNative(idx, p.name[0..n]);
+                    self.recordNativeTarget(@intFromPtr(target));
                     try self.invokeFfi(plan, target);
                 },
                 OP_FPCLASS => {
@@ -1538,6 +1598,7 @@ pub const VM = struct {
                 OP_ADDR_EXTERN => {
                     const idx = try readU16(code, &ip);
                     const sym = try self.resolveData(idx);
+                    self.recordNativeTarget(@intFromPtr(sym));
                     const addr: u64 = @intFromPtr(sym);
                     try self.push(.{ .i = @bitCast(addr) });
                 },
@@ -1606,6 +1667,7 @@ pub const VM = struct {
                     if (n == 0 or n > 8) return error.BadMemorySize;
                     const v = try self.pop();
                     const addr: usize = addressFromBits(v.i);
+                    if (!validMemoryRange(addr, n)) return error.BadAddress;
 
                     var bits: u64 = 0;
                     var i: usize = 0;
@@ -1629,6 +1691,7 @@ pub const VM = struct {
                     const av = try self.pop();
                     const vv = try self.pop();
                     const addr: usize = addressFromBits(av.i);
+                    if (!validMemoryRange(addr, n)) return error.BadAddress;
 
                     const bits: u64 = @bitCast(vv.i);
                     var i: usize = 0;
@@ -1643,8 +1706,13 @@ pub const VM = struct {
                     const dst_v = try self.pop();
                     if (len_v.i < 0) return error.BadMemorySize;
                     const len: usize = @intCast(len_v.i);
-                    const dst: [*]u8 = @ptrFromInt(addressFromBits(dst_v.i));
-                    const src: [*]const u8 = @ptrFromInt(addressFromBits(src_v.i));
+                    const dst_addr = addressFromBits(dst_v.i);
+                    const src_addr = addressFromBits(src_v.i);
+                    if (len > 0 and (!validMemoryRange(dst_addr, len) or
+                        !validMemoryRange(src_addr, len)))
+                        return error.BadAddress;
+                    const dst: [*]u8 = @ptrFromInt(dst_addr);
+                    const src: [*]const u8 = @ptrFromInt(src_addr);
 
                     if (@intFromPtr(dst) < @intFromPtr(src)) {
                         std.mem.copyForwards(u8, dst[0..len], src[0..len]);
@@ -1658,7 +1726,9 @@ pub const VM = struct {
                     const dst_v = try self.pop();
                     if (len_v.i < 0) return error.BadMemorySize;
                     const len: usize = @intCast(len_v.i);
-                    const dst: [*]u8 = @ptrFromInt(addressFromBits(dst_v.i));
+                    const dst_addr = addressFromBits(dst_v.i);
+                    if (len > 0 and !validMemoryRange(dst_addr, len)) return error.BadAddress;
+                    const dst: [*]u8 = @ptrFromInt(dst_addr);
                     const byte: u8 = @truncate(@as(u64, @bitCast(val_v.i)));
 
                     @memset(dst[0..len], byte);
@@ -1856,7 +1926,9 @@ pub const VM = struct {
                             const store = self.plan_store orelse return error.NoPlans;
                         const p = store.planAt(plan_idx) orelse return error.BadPlan;
                         const plan = store.callPlan(p);
-                        const target: *const anyopaque = @ptrFromInt(addressFromBits(tag.i));
+                        const target_addr = addressFromBits(tag.i);
+                        if (!self.isNativeTarget(target_addr)) return error.BadAddress;
+                        const target: *const anyopaque = @ptrFromInt(target_addr);
                         try self.invokeFfi(plan, target);
                     }
                 },
@@ -1968,6 +2040,11 @@ fn pointerFromU64(v: u64) *anyopaque {
 
 fn addressFromBits(v: i64) usize {
     return @intCast(@as(u64, @bitCast(v)));
+}
+
+inline fn validMemoryRange(addr: usize, len: usize) bool {
+    if (addr == 0) return false;
+    return len <= std.math.maxInt(usize) - addr;
 }
 
 fn readU64Ptr(ptr: [*]const u8) u64 {
@@ -2141,6 +2218,7 @@ pub const CiVmConfig = extern struct {
     struct_size: u32,
     flags: u32,
     stack_size: usize,
+    memory_size: usize,
 };
 
 fn errorCode(err: anyerror) c_int {
@@ -2166,6 +2244,8 @@ fn errorCode(err: anyerror) c_int {
         error.TargetMismatch,
         error.UnsupportedFeature,
         error.RuntimeTooOld,
+        error.UnsupportedOs,
+        error.UnsupportedLibc,
         => CI_E_TARGET,
         error.NoPlans,
         error.BadAbi,
@@ -2199,8 +2279,8 @@ fn errorCode(err: anyerror) c_int {
         error.TruncatedCode,
         error.BadMemorySize,
         error.NullStruct,
-        error.VmDestroyed,
         => CI_E_RUNTIME,
+        error.VmDestroyed => CI_E_DESTROYED,
         else => CI_ERROR,
     };
 }
@@ -2216,7 +2296,7 @@ pub export fn ci_abi_version() c_int {
 }
 
 pub export fn ci_version() [*:0]const u8 {
-    return "0.1.0";
+    return build_options.version.ptr;
 }
 
 fn initMachine(machine: *VM) void {
@@ -2225,21 +2305,38 @@ fn initMachine(machine: *VM) void {
     for (0..machine.callback_slots.len) |i| machine.callback_slots[i] = -1;
 }
 
-pub export fn ci_vm_create(stack_size: usize) ?*VM {
+fn createVm(stack_size: usize, memory_size: usize) ?*VM {
     const limit = if (stack_size == 0) MAX_STACK else stack_size;
     if (limit == 0 or limit > MAX_STACK) return null;
+    const mem_size = if (memory_size == 0) DEFAULT_MEMORY else memory_size;
+    if (mem_size > MAX_MEMORY) return null;
     const machine = std.heap.page_allocator.create(VM) catch return null;
     initMachine(machine);
+    machine.values = std.heap.page_allocator.alloc(Value, limit) catch {
+        std.heap.page_allocator.destroy(machine);
+        return null;
+    };
+    machine.mem = std.heap.page_allocator.alignedAlloc(u8, 32, mem_size) catch {
+        std.heap.page_allocator.free(machine.values);
+        std.heap.page_allocator.destroy(machine);
+        return null;
+    };
     machine.stack_limit = limit;
     machine.clearError();
     return machine;
 }
 
+pub export fn ci_vm_create(stack_size: usize) ?*VM {
+    return createVm(stack_size, 0);
+}
+
 pub export fn ci_vm_create_ex(config: ?*const CiVmConfig) ?*VM {
     const cfg = config orelse return ci_vm_create(0);
-    if (cfg.struct_size < @sizeOf(CiVmConfig)) return null;
+    const minimum = @offsetOf(CiVmConfig, "stack_size") + @sizeOf(usize);
+    if (cfg.struct_size < minimum) return null;
     if (cfg.flags != 0) return null;
-    return ci_vm_create(cfg.stack_size);
+    const memory_size = if (cfg.struct_size >= @sizeOf(CiVmConfig)) cfg.memory_size else 0;
+    return createVm(cfg.stack_size, memory_size);
 }
 
 pub export fn ci_vm_destroy(machine: ?*VM) void {
@@ -2260,6 +2357,9 @@ pub export fn ci_vm_destroy(machine: ?*VM) void {
     while (m.callback_active > 0) callback_cond.wait(&callback_mutex);
     callback_mutex.unlock();
     m.freePlans();
+    if (m.module_buf.len > 0) std.heap.page_allocator.free(m.module_buf);
+    if (m.values.len > 0) std.heap.page_allocator.free(m.values);
+    if (m.mem.len > 0) std.heap.page_allocator.free(m.mem);
     std.heap.page_allocator.destroy(m);
 }
 

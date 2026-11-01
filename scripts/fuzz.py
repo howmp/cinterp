@@ -52,10 +52,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", type=int, default=200)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--runtime", type=Path, default=RUNTIME)
     args = parser.parse_args()
 
-    if not RUNTIME.exists():
-        print(f"missing runtime: {RUNTIME}", file=sys.stderr)
+    runtime = args.runtime.resolve()
+    if not runtime.exists():
+        print(f"missing runtime: {runtime}", file=sys.stderr)
         return 2
     rng = random.Random(args.seed)
     crashes = 0
@@ -71,7 +73,7 @@ def main() -> int:
             runs += 1
             try:
                 proc = subprocess.run(
-                    [str(RUNTIME), "--load-only", str(candidate)],
+                    [str(runtime), "--load-only", str(candidate)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=3,

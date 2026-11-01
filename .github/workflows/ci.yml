@@ -14,6 +14,11 @@ jobs:
       - run: make size
       - run: make fuzz
       - run: make fuzz-exec
+      - run: make fuzz-bytecode
+      - run: make fuzz-ffi-exec
+      - run: make fuzz-capi-asan
+      - run: make fuzz-sanitizer
+      - run: make runtime
       - run: make differential
       - run: make size-cross
       - run: git clone --depth 1 https://github.com/c-testsuite/c-testsuite.git /tmp/c-testsuite

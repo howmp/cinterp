@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef CINTERP_EXPECT_VERSION
+#define CINTERP_EXPECT_VERSION "0.0.0"
+#endif
+
 static unsigned char *read_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -34,7 +38,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (ci_abi_version() != CI_ABI_VERSION) return 3;
-    if (strcmp(ci_version(), "0.1.0") != 0) return 4;
+    if (strcmp(ci_version(), CINTERP_EXPECT_VERSION) != 0) return 4;
 
     size_t hello_size = 0, qsort_size = 0, argv_size = 0;
     unsigned char *hello = read_file(argv[1], &hello_size);
@@ -76,6 +80,28 @@ int main(int argc, char **argv) {
     ci_vm_destroy(a);
     if (ci_vm_run(b, "main") != CI_OK || ci_vm_result(b) != 1) return 22;
     ci_vm_destroy(b);
+
+    /* Configurable linear memory, plus the pre-memory_size config layout. */
+    ci_vm_config small = {sizeof(small), 0, 0, 64 * 1024};
+    ci_vm *m = ci_vm_create_ex(&small);
+    if (!m) return 23;
+    if (load_package(m, hello, hello_size) != CI_OK) return 24;
+    if (ci_vm_run(m, "main") != CI_OK || ci_vm_result(m) != 42) return 25;
+    ci_vm_destroy(m);
+
+    ci_vm_config too_big = {sizeof(too_big), 0, 0, (size_t)17 * 1024 * 1024};
+    if (ci_vm_create_ex(&too_big) != NULL) return 26;
+
+    struct legacy_config {
+        uint32_t struct_size;
+        uint32_t flags;
+        size_t stack_size;
+    } legacy = {sizeof(legacy), 0, 0};
+    ci_vm *old = ci_vm_create_ex((const ci_vm_config *)&legacy);
+    if (!old) return 27;
+    if (load_package(old, hello, hello_size) != CI_OK) return 28;
+    if (ci_vm_run(old, "main") != CI_OK || ci_vm_result(old) != 42) return 29;
+    ci_vm_destroy(old);
 
     free(hello);
     free(qsort_cib);

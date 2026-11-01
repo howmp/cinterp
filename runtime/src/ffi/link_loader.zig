@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const MAX_IMPORTS: usize = 256;
+pub const MAX_IMPORTS: usize = 512;
 pub const MAX_PROVIDERS: usize = 8;
 pub const MAX_IMPORT_NAME: usize = 64;
 pub const MAX_PROVIDER_NAME: usize = 64;

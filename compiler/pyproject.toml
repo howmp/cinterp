@@ -4,13 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cinterp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Build-time C-to-bytecode compiler for the cinterp VM"
 requires-python = ">=3.10"
 dependencies = []
 
+[tool.setuptools.dynamic]
+version = {attr = "cinterp.__version__"}
+
 [project.scripts]
 cinterp = "cinterp.cli:main"
 
+[tool.setuptools]
+license-files = ["../LICENSE"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+cinterp = ["link/*.json", "link/*.json.gz"]

@@ -66,6 +66,7 @@ pub fn defaultC() ?*anyopaque {
         if (load("msvcrt.dll")) |h| return h;
         return load("ucrtbase.dll");
     }
+    if (comptime builtin.abi == .musl) return null;
     if (load("libc.so.6")) |h| return h;
     return load("libc.so");
 }

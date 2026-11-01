@@ -1,0 +1,8 @@
+[package]
+name = "cinterp-sys"
+version = "@VERSION@"
+edition = "2021"
+license = "MIT"
+description = "Raw FFI bindings and a small safe wrapper for the cinterp C embedding ABI"
+links = "cinterp"
+build = "build.rs"

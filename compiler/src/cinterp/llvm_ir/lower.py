@@ -347,6 +347,20 @@ def struct_fields(ty: str, structs: dict[str, list[str]]) -> list[str] | None:
     return None
 
 
+def struct_layout_for(
+    ty: str, structs: dict[str, list[str]], ptr_size: int = 8
+) -> tuple[list[int], int, int]:
+    """Struct layout for a type name; named packed structs keep their marker."""
+    ty = ty.strip()
+    raw = structs.get(ty) if ty.startswith("%") else None
+    if raw is not None:
+        return struct_layout(raw, structs, ptr_size)
+    fields = struct_fields(ty, structs)
+    if fields is None:
+        raise ValueError(f"not an aggregate type {ty}")
+    return struct_layout(fields, structs, ptr_size)
+
+
 def parse_llvm_cstring(body: str) -> bytes:
     out = bytearray()
     i = 0
@@ -435,7 +449,7 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_
     if ((init.startswith("{") and init.endswith("}")) or (init.startswith("<{") and init.endswith("}>"))):
         fields = struct_fields(ty, structs)
         if fields is not None:
-            offsets, _, _ = struct_layout(fields, structs, ptr_size)
+            offsets, _, _ = struct_layout_for(ty, structs, ptr_size)
             inner_init = init[2:-2] if init.startswith("<{") else init[1:-1]
             parts = split_top(inner_init) if inner_init.strip() else []
             for i, part in enumerate(parts):
@@ -545,7 +559,7 @@ def constant_gep_base_offset(
             elif fields is not None:
                 if value < 0 or value >= len(fields):
                     return None
-                offsets, _, _ = struct_layout(fields, structs, ptr_size)
+                offsets, _, _ = struct_layout_for(current, structs, ptr_size)
                 off += offsets[value]
                 current = fields[value]
             else:
@@ -579,7 +593,7 @@ def collect_global_relocs(
         fields = struct_fields(ty, structs)
         if fields is None:
             return out
-        offsets, _, _ = struct_layout(fields, structs, ptr_size)
+        offsets, _, _ = struct_layout_for(ty, structs, ptr_size)
         inner = init[2:-2] if init.startswith("<{") else init[1:-1]
         parts = split_top(inner) if inner.strip() else []
         for i, part in enumerate(parts):
@@ -1089,7 +1103,7 @@ class Lowerer:
                 if not nums:
                     raise ValueError(f"non-constant struct index: {index}")
                 field_idx = int(nums[-1])
-                offsets, _, _ = struct_layout(fields, self.structs, self.ptr_size)
+                offsets, _, _ = struct_layout_for(current, self.structs, self.ptr_size)
                 if field_idx < 0 or field_idx >= len(fields):
                     raise ValueError(f"bad struct field index {field_idx}")
                 off = offsets[field_idx]
@@ -1682,7 +1696,7 @@ class Lowerer:
             fields = struct_fields(agg_ty, self.structs)
             if fields is None:
                 raise ValueError(f"bad extractvalue type {agg_ty}")
-            offsets, _, _ = struct_layout(fields, self.structs, self.ptr_size)
+            offsets, _, _ = struct_layout_for(agg_ty, self.structs, self.ptr_size)
             index = int(index_text)
             if index < 0 or index >= len(fields):
                 raise ValueError(f"bad extractvalue index {index}")

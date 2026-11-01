@@ -1,6 +1,20 @@
 const std = @import("std");
 
-fn addBackend(compile: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+fn readVersion(b: *std.Build) []const u8 {
+    if (b.option([]const u8, "version", "override the package version from VERSION")) |value| {
+        return value;
+    }
+    const path = b.pathFromRoot("../VERSION");
+    const data = std.fs.cwd().readFileAlloc(b.allocator, path, 64) catch
+        @panic("missing VERSION next to runtime/ (or pass -Dversion)");
+    return std.mem.trim(u8, data, " \t\r\n");
+}
+
+fn addBuildOptions(compile: *std.Build.Step.Compile, options: *std.Build.Step.Options) void {
+    compile.root_module.addOptions("build_options", options);
+}
+
+fn addBackend(compile: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, keep_debug: bool) void {
     const t = target.result;
     if (t.os.tag == .windows and t.cpu.arch == .x86_64) {
         compile.addAssemblyFile(compile.step.owner.path("src/ffi/asm/call_x86_64_win64.S"));
@@ -19,13 +33,20 @@ fn addBackend(compile: *std.Build.Step.Compile, target: std.Build.ResolvedTarget
     compile.root_module.unwind_tables = !release;
     compile.root_module.error_tracing = !release;
     compile.root_module.omit_frame_pointer = release;
-    compile.root_module.strip = release;
+    compile.root_module.strip = release and !keep_debug;
     compile.linkLibC();
 }
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const keep_debug = b.option(bool, "keep-debug", "keep symbols for split-debug artifacts") orelse false;
+
+    const version = readVersion(b);
+    const semver = std.SemanticVersion.parse(version) catch @panic("VERSION must be a semver string");
+    const options = b.addOptions();
+    const version_z = b.allocator.dupeZ(u8, version) catch @panic("out of memory");
+    options.addOption([:0]const u8, "version", version_z);
 
     const exe = b.addExecutable(.{
         .name = "cinterp-run",
@@ -33,7 +54,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    addBackend(exe, target, optimize);
+    addBackend(exe, target, optimize, keep_debug);
+    addBuildOptions(exe, options);
     b.installArtifact(exe);
 
     const static_lib = b.addStaticLibrary(.{
@@ -42,7 +64,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    addBackend(static_lib, target, optimize);
+    addBackend(static_lib, target, optimize, keep_debug);
+    addBuildOptions(static_lib, options);
     static_lib.root_module.stack_check = false;
     b.installArtifact(static_lib);
 
@@ -51,9 +74,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/vm.zig"),
         .target = target,
         .optimize = optimize,
-        .version = .{ .major = 0, .minor = 1, .patch = 0 },
+        .version = .{ .major = semver.major, .minor = semver.minor, .patch = semver.patch },
     });
-    addBackend(shared_lib, target, optimize);
+    addBackend(shared_lib, target, optimize, keep_debug);
+    addBuildOptions(shared_lib, options);
     shared_lib.root_module.stack_check = false;
     b.installArtifact(shared_lib);
 
@@ -70,7 +94,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    addBackend(tests, target, optimize);
+    addBackend(tests, target, optimize, false);
+    addBuildOptions(tests, options);
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run runtime unit tests");
     test_step.dependOn(&run_tests.step);

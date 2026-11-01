@@ -7,6 +7,7 @@ cd "$ROOT"
 export PYTHONPATH="$ROOT/compiler/src"
 RUNTIME="$ROOT/runtime/zig-out/bin/cinterp-run"
 OUT="$ROOT/build"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 mkdir -p "$OUT"
 
 echo "== runtime unit tests"
@@ -200,8 +201,8 @@ if "$RUNTIME" "$OUT/missing_symbol.cib" >/dev/null 2>&1; then
     exit 1
 fi
 echo "OK unknown symbol"
-python3 -m cinterp --version 2>&1 | grep -Fq "cinterp 0.1.0"
-"$RUNTIME" --version 2>&1 | grep -Fq "cinterp-run 0.1.0"
+python3 -m cinterp --version 2>&1 | grep -Fq "cinterp $VERSION"
+"$RUNTIME" --version 2>&1 | grep -Fq "cinterp-run $VERSION"
 echo "OK version"
 
 echo "all tests passed"
@@ -240,10 +241,12 @@ echo "OK --link-db override"
 
 echo "== C embedding API (static + shared)"
 python3 -m cinterp compile runtime/tests/capi_argv.c -o "$OUT/capi_argv.cib" >/dev/null
-cc -std=c11 -I runtime/zig-out/include runtime/tests/capi_smoke.c \
+cc -std=c11 -I runtime/zig-out/include -DCINTERP_EXPECT_VERSION="\"$VERSION\"" \
+    runtime/tests/capi_smoke.c \
     runtime/zig-out/lib/libcinterp.a -ldl -lpthread -lm -o "$OUT/capi_smoke"
 "$OUT/capi_smoke" "$OUT/hello.cib" "$OUT/ffi_qsort.cib" "$OUT/capi_argv.cib"
-cc -std=c11 -I runtime/zig-out/include runtime/tests/capi_smoke.c \
+cc -std=c11 -I runtime/zig-out/include -DCINTERP_EXPECT_VERSION="\"$VERSION\"" \
+    runtime/tests/capi_smoke.c \
     -Lruntime/zig-out/lib -Wl,-rpath,"$ROOT/runtime/zig-out/lib" -lcinterp \
     -o "$OUT/capi_smoke_shared"
 "$OUT/capi_smoke_shared" "$OUT/hello.cib" "$OUT/ffi_qsort.cib" "$OUT/capi_argv.cib"

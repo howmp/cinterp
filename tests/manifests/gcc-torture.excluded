@@ -318,8 +318,6 @@ zero-struct-2	resource: cinterp: bad alloca size 0 for %struct.spinlock_t
 20010122-1	bug:compile: exit 1 != 0
 20020107-1	bug:compile: exit 1 != 0
 20021120-3	non-goal:builtin: source regression/test; see upstream case
-20040709-1	non-goal:builtin: source regression/test; see upstream case
-20040709-2	bug:compile: exit -6 != 0
 20071120-1	non-goal:builtin: source regression/test; see upstream case
 20080502-1	bug:compile: exit -6 != 0
 20230630-2	bug:compile: exit -6 != 0

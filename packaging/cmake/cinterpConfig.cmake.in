@@ -1,0 +1,22 @@
+get_filename_component(_cinterp_prefix "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+set(cinterp_VERSION "@VERSION@")
+
+if(NOT TARGET cinterp::cinterp)
+  find_library(CINTERP_LIBRARY NAMES cinterp cinterp_static
+    PATHS "${_cinterp_prefix}/lib" NO_DEFAULT_PATH)
+  find_path(CINTERP_INCLUDE_DIR cinterp.h
+    PATHS "${_cinterp_prefix}/include" NO_DEFAULT_PATH)
+  if(NOT CINTERP_LIBRARY OR NOT CINTERP_INCLUDE_DIR)
+    message(FATAL_ERROR "cinterp: library or header not found under ${_cinterp_prefix}")
+  endif()
+
+  add_library(cinterp::cinterp UNKNOWN IMPORTED)
+  set_target_properties(cinterp::cinterp PROPERTIES
+    IMPORTED_LOCATION "${CINTERP_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CINTERP_INCLUDE_DIR}"
+    INTERFACE_COMPILE_DEFINITIONS "CINTERP_EMBEDDED=1")
+  if(NOT WIN32)
+    set_property(TARGET cinterp::cinterp PROPERTY
+      INTERFACE_LINK_LIBRARIES "dl;pthread;m")
+  endif()
+endif()

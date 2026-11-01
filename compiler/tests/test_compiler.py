@@ -13,8 +13,10 @@ from cinterp.llvm_ir.lower import (
     CallbackTable,
     Function,
     compile_text,
+    parse_constant_bytes,
     parse_globals,
     parse_structs,
+    struct_layout_for,
 )
 
 
@@ -201,6 +203,27 @@ entry:
         self.assertEqual(len(table.plans), 1)
         self.assertEqual(table.plans[0].name, "puts")
         self.assertEqual(table.plans[0].args[0].locs[0].kind, "gpr")
+
+    def test_packed_struct_layout(self):
+        structs = parse_structs(
+            "%struct.G = type <{ i8, i64 }>\n"
+            "%struct.N = type { i8, i64 }\n"
+        )
+        offsets, size, alignment = struct_layout_for("%struct.G", structs)
+        self.assertEqual(offsets, [0, 1])
+        self.assertEqual((size, alignment), (9, 1))
+        offsets, size, alignment = struct_layout_for("%struct.N", structs)
+        self.assertEqual(offsets, [0, 8])
+        self.assertEqual((size, alignment), (16, 8))
+
+    def test_packed_struct_constant_init(self):
+        structs = parse_structs("%struct.G = type <{ i8, i64 }>\n")
+        data = parse_constant_bytes(
+            "%struct.G", "<{ i8 7, i64 1234605616436508552 }>", structs
+        )
+        self.assertEqual(
+            data, bytes([7, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11])
+        )
 
 
 if __name__ == "__main__":

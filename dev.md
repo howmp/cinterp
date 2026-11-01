@@ -1123,11 +1123,11 @@ zig build -Dtarget=aarch64-linux-gnu
 - 修复全局常量地址：literal packed struct（`<{...}>`）的指针字段 reloc、嵌套数组/结构体 initializer、以及 `getelementptr` 常量地址的 addend（例如 `&((items+1)->field)`）。
 - 回收 26 个 GCC execute skip：20040409-{1,1w,2,2w,3,3w}、20050218-1、991201-1、arith-rand、arith-rand-ll、vrp-5、const-addr-expr-1、20081117-1、20100209-1、pr28651、pr33779-{1,2}、pr52129、pr53084、pr7284-1、pr15296、pr60017、conversion、20020108-1、920612-1、930126-1。
 - 验证：full 4319/4519（200 skip），standard 395/495，4 ABI cross suites 通过；C API static/shared smoke 通过。
-- 仍保留的 bitfield 结果宽度项（bitfld-3、pr32244-1、pr34971）属于 GCC 期望与 Clang IR 语义差异；`20040709-3` 是独立的嵌套 aggregate-return 问题，见 §20.22。
+- 仍保留的 bitfield 结果宽度项（bitfld-3、pr32244-1、pr34971）属于 GCC 期望与 Clang IR 语义差异；`20040709-3` 一度归为独立的嵌套 aggregate-return 问题，实际根因是 packed struct GEP 偏移（§20.25）。
 
 ### 20.22 20040709-3 嵌套 aggregate return 调查（2026-11-01）
 
-- 状态：GCC execute `20040709-3` 仍为 skip；`llvm-regression-c` 同名用例是 compile-only，不能作为执行通过证据。
+- 状态：已修复，回收 `20040709-3`；修复前保持 skip，未修改 expected。
 - 现象：`testG()` 单独运行通过，连续运行两次通过；完整 `testF()` 后运行 `testG()` 在第一检查 `x.l != sG.l` 失败。
 - 最小形态：带参数的函数内部执行 `struct F y=sF; struct F z=retmeF(y);` 后，后续 `testG()` 失败；调用者/被调用者任一无参数时不触发。
 - 逐字节比较 `x` 与 `sG` 在失败时为相等，但 `x.l`/`sG.l` 的 load 值不等；说明不是简单的全局字节被覆盖，仍指向嵌套调用后的 slot/返回指针状态。
@@ -1135,20 +1135,44 @@ zig build -Dtarget=aarch64-linux-gnu
   - 给所有内部 aggregate-return 调用增加 caller-owned 16B 复制：未修复，且 `pr38969` 回归（`{ float, float }` 8 字节按值路径被误当指针）。
   - 在 `OP_RET` 中检测返回指针落在当前帧并延迟 `mem_top` 回收：未修复。
 - 子代理结论：内部 aggregate/f80/fp128 值确实是 callee 内存裸指针；`OP_RET` 回收与调用方 alloca/call 覆盖是高风险区域，但单纯的返回槽复制/延迟回收不足以解释 G 的 slot/load 差异。
-- 当前保留 `8bcde4c` 的 f80/fp128 专用 caller-owned 修复；未引入 aggregate 泛化。
+- 保留 `8bcde4c` 的 f80/fp128 专用 caller-owned 修复；未引入 aggregate 泛化。
+- 更正（2026-11-01）：上述 aggregate-return 状态污染结论不成立。实际根因是 packed struct 的字段偏移错误（§20.25）；`x.l` 与 `sG.l` 都从 struct+8 越界读取，只是两处越界尾字节不同。修复后 `20040709-{1,2,3}` 均通过，aggregate-return 路径无需改动。
 
 ### 20.23 alloca 零大小/大对象（2026-11-01）
 
 - `alloca` 静态类型大小为 0（零长数组/空结构）改为合法 `OP_ALLOCA`；大于 65535 的对象改用常量大小的 `OP_ALLOCA_DYN`/`OP_ALLOCA_DYN_ALIGN`，不再编译期拒绝。
-- TCC `35_sizeof` 回收；`119_random_stuff` 的 262144B 大结构不再编译失败，但仍有 stdout mismatch（`tst_pack` 字符串显示为 `@st_pack`），暂不回收。
-- `95_bitfields_ms` 不再因 alloca 失败，但 314 个 imports 超过运行时 256 上限，仍 skip。
+- TCC `35_sizeof` 回收；`119_random_stuff` 的 262144B 大结构不再编译失败。该用例后来由 packed struct 字段偏移修复（§20.25）回收，`@st_pack` 异常不再出现。
+- `95_bitfields_ms` 不再因 alloca 失败；imports 上限已从 256 提升到 512，现可加载执行。输出差异与 native Clang 一致，属于 TCC/Clang 的 `ms_struct` bitfield 方言差异，保留 dialect skip。
 - 当前 full 4319/4519（200 skip），standard 395/495（100 skip）。
 
-### 20.24 当前计划收敛状态（2026-11-01）
+### 20.24 当前计划收敛状态（2026-11-02）
 
-- **已完成**：P0 1–3（可链接 `libcinterp`/header/C API ABI 2、事务性 load、回调多 VM 隔离）、Safe 模式移除、整数宽度/GEP/嵌套 aggregate initializer/f80 返回修复、alloca 零大小与大对象支持。
-- **当前基线**：full 4319/4519（200 skip），standard 395/495（100 skip）；GCC execute 累计回收 26 个；TCC `35_sizeof` 回收；4 ABI cross suites 通过。
-- **P0 5 剩余**：`20040709-3`（§20.22）；bitfield 表达式宽度差异 `bitfld-3`/`pr32244-1`/`pr34971`；外部 inline/weak 等明确 non-goal。
-- **发布阻断**：LICENSE/第三方声明、版本单一来源与 CIB/API 兼容策略、正式 release workflow/SBOM/校验和/split debug。
-- **P1 剩余**：plan store/VM 内存按包配置；musl 明确支持或显式拒绝；sanitizer/结构化 fuzz/跨 ABI fuzz；cross ABI 进 CI；容量文档与错误码表；macOS/未知 OS 目标校验。
-- **明确边界**：单线程、单 VM、可信 CIB；Linux x86_64/aarch64(glibc) 或 Windows x64/x86；无进程内沙箱，不可信输入由宿主隔离。
+- **已完成**：P0 1–3、Safe 模式移除、整数宽度/GEP/嵌套 aggregate initializer/f80 返回修复、alloca 零大小与大对象支持、packed struct 字段偏移修复、§20.26 的发布/版本/绑定/内存/musl/OS 校验/fuzz/cross-ABI CI/文档收口。
+- **当前基线**：full 4323/4521（198 skip），standard 396/495（99 skip）；GCC execute 累计回收 27 个 skip，另回收 2 个 excluded 用例；TCC `119_random_stuff` 回收；4 ABI cross suites 通过。
+- **保留的 dialect skip**：`bitfld-3`/`pr32244-1`/`pr34971`（GCC 期望与 Clang IR 的 bitfield 表达式宽度差异）、TCC `95_bitfields_ms`（Clang `ms_struct` 布局与 TCC 不同，native Clang 输出与 cinterp 一致）。这些不是 cinterp 运行时缺陷。
+- **P0/P1 剩余**：无；外部 inline/weak、GCC builtins、线程/atomics 等仍为明确 non-goal。
+- **明确边界**：单线程、单 VM、可信 CIB；Linux x86_64/aarch64(glibc) 或 Windows x64/x86；无进程内沙箱，不可信输入由宿主隔离；musl/macOS/未知 OS 在 load 阶段显式拒绝。
+
+### 20.25 packed struct 字段偏移修复（2026-11-01）
+
+- 根因：`struct_fields()` 对命名 struct 会剥掉 `__packed__` 标记，而 `struct_layout()` 依赖该标记决定是否做对齐。所有 `struct_layout(struct_fields(...))` 调用点因此把 packed 命名 struct 当非 packed 布局计算：`%struct.G = <{ i8, i64 }>` 的第二个字段被算到 offset 8（应为 1）。
+- 影响面：`emit_gep_address`、`extractvalue`、全局常量 initializer 偏移、常量 GEP addend 与 global reloc 偏移。表现为字段 load/store 落在错误地址，读越界 padding；`testG()` 的 `x.l`/`sG.l` 都从 +8 读取，只是两处尾字节不同，所以逐字节比较相等但 load 不等。
+- 修复：新增 `struct_layout_for(ty, ...)`，命名 struct 直接使用 `structs[ty]` 的原始字段（保留 packed 标记），字面量类型走 `struct_fields()`；上述五处调用点改用该 helper。`struct_fields()` 语义不变，仍返回裸字段列表。
+- 回收：GCC execute `20040709-3`（原 skip）、`20040709-2`（原 excluded，修复前 runtime abort）、`20040709-1`（原 excluded，已验证通过）。
+- 回归：新增 `test_packed_struct_layout` / `test_packed_struct_constant_init` 单测；`make test`、standard full 均通过。full **4322/4521（199 skip）**，standard 395/495；gcc-torture 1287/1306（19 skip）。
+- 连带回收：TCC `119_random_stuff` 的 `@st_pack` 输出异常由同一 packed 布局错误引起，现已通过。
+
+### 20.26 发布与生产质量收口（2026-11-02）
+
+- **许可证/声明**：`LICENSE`（MIT）、`THIRD_PARTY_NOTICES.md`（winmd MIT；cstdapi 上游未声明许可证，仅消费生成的事实性符号表；Zig/Clang/Python 为构建工具）随每个 tarball 发布。
+- **单一版本源**：根 `VERSION` 为唯一来源；Python `cinterp.__version__`、`pyproject.toml` dynamic version、runtime `build_options.version`、`cinterp-run --version`、`ci_version()`、共享库 SONAME 均由它派生。`docs/compatibility.md` 固化 CIPKG/CIVM/CIPL/CIPM/CIPI、`runtime_version`、C ABI 与 N−1 读取保证。
+- **发布链**：`scripts/package_release.sh` 生成四个目标 tarball + wheel + 每目标 SPDX 2.3 SBOM + `SHA256SUMS`，支持 `CINTERP_GPG_KEY` 分离签名；`split_debug` 用 objcopy 生成 `.debug` 和 `.gnu_debuglink`。`.github/workflows/release.yml` 在 tag 上跑集成/差分测试、版本校验、构建、可选签名并发布。GPG 路径已用临时 key 实测 `Good signature`；生产 key 由 release secret 提供。
+- **绑定**：tarball 内含 `pkgconfig/cinterp.pc`、`cmake/cinterpConfig.cmake`、`rust/cinterp-sys`（raw FFI + 小 safe wrapper）。已验证 `pkg-config` + C host、CMake `find_package`、cargo 消费者运行 `result=42`。
+- **内存**：plan store 改为按包内 plan 数分配（旧固定 6.5 MB）；VM 的 value stack、线性内存、module buffer 改为按配置/包分配。`ci_vm_config.memory_size`（默认 1 MiB，最大 16 MiB）与旧 `struct_size` 兼容。实测空 VM ≈ 0.9 MiB（imports 上限从 256 提升到 512 后），原结构约 10 MiB。
+- **OS/libc 校验**：`platform.os_id` 不再把非 Windows 全部映射为 Linux；非 Linux/Windows 返回 `UnsupportedOs`。编译期检查确认 `x86_64-macos` → `os_id=0, os_supported=false`，`x86_64-linux-gnu` → `os_id=1, os_supported=true`。Linux musl 构建在 load 阶段返回 `UnsupportedLibc`；`native.defaultC()` 在 musl 下不再尝试 `libc.so.6`。已用 `-Dtarget=x86_64-linux-musl` 实测。
+- **fuzz**：新增 `fuzz-bytecode`（结构化 CIVM 变异）、`fuzz-ffi-exec`、`fuzz-capi-asan`（C API + ASan/UBSan）、`fuzz-cross`（aarch64/win64/win32 load-only）、`fuzz-sanitizer`（ReleaseSafe + 三套 fuzz）。损坏字节码形成的任意指针按可信包边界计为 expected fault，SIGABRT/真实 sanitizer 报告与 timeout 仍失败。顺带修复空指针 `@ptrFromInt` panic 和 `validMemoryRange` 校验。
+- **cross-ABI CI**：`scripts/test_cross.sh` 默认不再依赖 LAN IP；支持本机 Wine（win64/win32 独立 prefix）、native Windows 和 qemu ARM64，`HOST` 仅作为可选远端。新增 `.github/workflows/cross-abi.yml`（Windows 原生 Win64/Win32 + Ubuntu ARM64 qemu + 跨 ABI fuzz）。
+- **文档**：`docs/cib.md` 容量/错误码与代码对齐（MAX_FUNCS 512、MAX_NAME 128、模块 2 MiB、槽栈 8192、帧 512、CIPL 1024、CIPI 512、错误码表含 `CI_E_DESTROYED`/`UnsupportedOs`/`UnsupportedLibc`）；新增英文 `docs/embedding.md`。
+- **TCC 分诊**：`119_random_stuff` 回收；`95_bitfields_ms` 的 imports 上限问题解决（256→512），剩余输出差异经 native Clang 对照确认为 `ms_struct` 方言差异，保留 skip 并更新原因。
+- **性能回归修复**：Win32 stdcall 装饰名回退最初写成 `plan_store` 查询 + `std.fmt.bufPrint` 大段逻辑，被 LLVM 内联进 `executeLoop`，ReleaseSmall 下 mandelbrot 从 85s 退化到 154s。Clang 已在 IR 中给出 `@12` 装饰，实际只需去掉前导下划线的短回退；移除大段逻辑后恢复 ~86s（基准 85s）。`validMemoryRange` 和 native-target 注册保留并强制内联/放在非热路径。
+- **验证**：`make test`、`make c-testsuite`、`make differential`、standard 396/495（99 skip）、full 4323/4521（198 skip）、全部 fuzz 目标、三目标 cross suite（61 项）、release tarball smoke、pkg-config/CMake/Rust smoke 均通过。

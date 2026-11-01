@@ -3,6 +3,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
+from cinterp import __version__
+
 ARCH_IDS = {"x86_64": 1, "x86": 2, "aarch64": 3}
 OS_IDS = {"linux": 1, "windows": 2}
 ABI_IDS = {"sysv": 1, "win64": 2, "win32": 3, "aapcs64": 4}
@@ -27,7 +29,7 @@ class Target:
     features: int = FEATURE_CALLBACK | FEATURE_VARARGS | FEATURE_AUTO_LINK | FEATURE_STDCALL
     min_runtime: int = 1
     link_db: str = ""
-    producer: str = "cinterp 0.1.0"
+    producer: str = f"cinterp {__version__}"
     flags: int = 0
 
     def with_arch_features(self) -> "Target":

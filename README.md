@@ -54,7 +54,8 @@ PYTHONPATH=compiler/src python3 -m cinterp --version
 PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c \
   --target x86_64-windows -o build/hello-win64.cib
 cd runtime && zig build -Dtarget=x86_64-windows-gnu && cd ..
-# HOST=user@windows-box make cross-test   # Win64/Win32/ARM64 suite
+# make cross-test        # Win64/Win32 (native Windows or wine) + ARM64 (qemu)
+# optional remote runner: HOST=user@windows-box REMOTE='C:/tmp/cinterp/' make cross-test
 
 # C subset suite
 make c-testsuite
@@ -69,9 +70,14 @@ make test
 # release-size check (runtime < 128K, qsort package < 4K)
 make release-check
 
-# fuzz: load-only package/plan mutation and bytecode execution
+# fuzz: loader, execution, structured bytecode, FFI, sanitizer, and cross-ABI
 make fuzz
 make fuzz-exec
+make fuzz-bytecode
+make fuzz-ffi-exec
+make fuzz-capi-asan
+make fuzz-sanitizer
+make fuzz-cross
 
 # native-vs-cinterp differential check
 make differential
@@ -80,7 +86,8 @@ make differential
 make bench
 make size-cross
 
-# release tarballs for all four targets
+# release tarballs (LICENSE, SBOM, split debug, pkg-config/CMake/Rust bindings),
+# wheel, SHA256SUMS and optional GPG signature
 make release-artifacts
 ```
 
@@ -91,7 +98,7 @@ Build profiles:
 - `-Doptimize=ReleaseSmall` (default `make runtime`): strips unwind tables,
   frame pointers, panic tracing and symbols; ELF release artifacts additionally
   drop `.eh_frame`/`.eh_frame_hdr`. Concise error codes and CLI messages remain.
-- Current sizes: Debug ≈ 8.8 MiB, ReleaseSmall ≈ 94 KiB (Linux x64).
+- Current sizes: Debug ≈ 8.8 MiB, ReleaseSmall ≈ 99 KiB (Linux x64).
 
 `make test` runs runtime/compiler unit tests, all end-to-end examples, and
 negative paths (missing input, corrupt/truncated packages, unknown symbol).
@@ -115,7 +122,7 @@ make test-suites-cross      # csuite + upstream smoke on Win64/Win32/ARM64
 make generate-diff          # YARPGen differential smoke
 ```
 
-Current native baseline: 4292 passed / 227 explicitly skipped across csuite,
+Current native baseline: 4323 passed / 198 explicitly skipped across csuite,
 c-testsuite, TCC tests2, chibicc, libc-test, GCC torture, CompCert and LLVM
 SingleSource. Skip files record unsupported features and known failures; they
 are never auto-updated by CI. See [`tests/manifests/README.md`](tests/manifests/README.md).
@@ -240,13 +247,18 @@ ci_vm_destroy(vm);
 
 `ci_vm_run`/`ci_vm_run_args` return a status; the C `main` return value is read
 with `ci_vm_result`. Errors expose `ci_vm_last_error_code` and
-`ci_vm_last_error`. Loaders are transactional. `ci_vm_create` accepts a stack
-slot upper bound (0 = default), and `ci_vm_create_ex` accepts a reserved-flags
-config. Packages still need to be compiled with `cinterp` at build time; the
-runtime does not need clang.
+`ci_vm_last_error`; `CI_E_DESTROYED` is distinct from other runtime errors.
+Loaders are transactional. `ci_vm_create` accepts a stack slot upper bound
+(0 = default), and `ci_vm_create_ex` accepts `stack_size` and `memory_size`
+(0 = default 1 MiB; maximum 16 MiB) plus a reserved flags field. Older callers
+whose `struct_size` stops after `stack_size` are still accepted. Packages still
+need to be compiled with `cinterp` at build time; the runtime does not need
+clang.
 
 The VM is single-threaded per instance, reentrant at the host callback
-boundary, and uses a linear memory for stack/global data. Separate VM instances
+boundary, and uses a linear memory for stack/global data. Module buffers and
+FFI plan stores are allocated per loaded package, so an idle VM costs roughly
+0.9 MiB instead of the former ~10 MiB per instance. Separate VM instances
 do not share interpreter state; callback trampolines are process-wide and are
 retired when their VM is destroyed. For v2 packages it resolves native symbols
 through CIPI providers (with `--lib` as a user override); unlisted custom
@@ -254,6 +266,8 @@ symbols fall back to the process, loaded `--lib` libraries and the platform C
 runtime. Static callback trampolines are available for SysV x64, Win64, Win32
 and AArch64. The runtime executes trusted CIB packages and does not provide
 an in-process sandbox; `--load-only` validates a package without executing it.
+Unsupported runtimes (macOS/unknown OS and musl) reject packages at load time
+with `UnsupportedOs`/`UnsupportedLibc`.
 
 ## Repository layout
 

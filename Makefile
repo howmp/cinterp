@@ -1,4 +1,4 @@
-.PHONY: all test runtime debug-runtime compiler-test integration size release-check cross-test c-testsuite fuzz fuzz-exec differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross fetch-suites generate-diff
+.PHONY: all test runtime debug-runtime compiler-test integration size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross fetch-suites generate-diff
 
 all: test
 
@@ -92,7 +92,30 @@ fuzz: runtime
 	python3 scripts/fuzz.py --iterations 1000
 
 fuzz-exec: runtime
+	python3 scripts/fuzz_exec.py --iterations 500 --tolerate-faults
+
+fuzz-exec-strict: runtime
 	python3 scripts/fuzz_exec.py --iterations 500
+
+fuzz-ffi-exec: runtime
+	python3 scripts/fuzz_exec.py --iterations 300 --ffi --tolerate-faults
+
+fuzz-bytecode: runtime
+	python3 scripts/fuzz_bytecode.py --iterations 500
+
+fuzz-cross: runtime
+	python3 scripts/fuzz_cross.py --iterations 100
+
+fuzz-capi-asan: runtime
+	python3 scripts/fuzz_capi_sanitizer.py --iterations 200
+
+fuzz-sanitizer:
+	mkdir -p build/fuzz-sanitizer
+	cd runtime && zig build -Doptimize=ReleaseSafe
+	cp runtime/zig-out/bin/cinterp-run build/fuzz-sanitizer/cinterp-run
+	python3 scripts/fuzz.py --iterations 500 --runtime build/fuzz-sanitizer/cinterp-run
+	python3 scripts/fuzz_exec.py --iterations 200 --tolerate-faults --runtime build/fuzz-sanitizer/cinterp-run
+	python3 scripts/fuzz_bytecode.py --iterations 300 --runtime build/fuzz-sanitizer/cinterp-run
 
 differential: runtime
 	./scripts/differential.sh

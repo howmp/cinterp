@@ -21,7 +21,13 @@ else
 
 pub const abi_id: u8 = @intFromEnum(abi_kind);
 pub const callback_supported = true;
-pub const os_id: u8 = if (builtin.os.tag == .windows) 2 else 1;
+pub const os_id: u8 = switch (builtin.os.tag) {
+    .linux => 1,
+    .windows => 2,
+    else => 0,
+};
+pub const os_supported = builtin.os.tag == .linux or builtin.os.tag == .windows;
+pub const libc_supported = builtin.os.tag != .linux or builtin.abi != .musl;
 pub const arch_id: u8 = switch (builtin.cpu.arch) {
     .x86_64 => 1,
     .x86 => 2,
@@ -34,6 +40,7 @@ pub const runtime_features: u64 = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) |
     (if (builtin.cpu.arch == .aarch64) @as(u64, 1 << 1) else @as(u64, 1 << 0));
 
 pub fn validateTarget(target: link_loader.TargetInfo) !void {
+    if (!os_supported) return error.UnsupportedOs;
     if (target.arch != arch_id or target.os != os_id or target.abi != abi_id or
         target.ptr_bits != ptr_bits or target.endian != 1)
         return error.TargetMismatch;

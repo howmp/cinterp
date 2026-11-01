@@ -1,0 +1,97 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang python3 make binutils gcc-aarch64-linux-gnu pkg-config cmake
+
+      - name: verify VERSION matches tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "v$(tr -d '[:space:]' < VERSION)" = "${GITHUB_REF_NAME}"
+
+      - name: integration tests
+        run: make test
+
+      - name: local C testsuite
+        run: make c-testsuite
+
+      - name: differential check
+        run: make differential
+
+      - name: build release artifacts (tarballs, wheel, SBOM, checksums)
+        run: make release-artifacts
+
+      - name: pkg-config / CMake / tarball smoke
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/release-smoke
+          tar -xzf build/release/cinterp-*.tar.gz -C /tmp/release-smoke
+          D="$(echo /tmp/release-smoke/cinterp-*-sysv-x86_64)"
+          "$D/bin/cinterp" compile "$D/examples/hello.c" -o /tmp/release-smoke/hello.cib >/dev/null
+          "$D/cinterp-run" /tmp/release-smoke/hello.cib | grep -q "result: 42"
+          export PKG_CONFIG_PATH="$D/pkgconfig"
+          pkg-config --cflags --libs cinterp >/dev/null
+
+      - name: Rust binding check
+        run: |
+          set -euo pipefail
+          D="$(echo /tmp/release-smoke/cinterp-*-sysv-x86_64)"
+          cargo check --manifest-path "$D/rust/cinterp-sys/Cargo.toml" --offline
+
+      - name: import signing key
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: sign checksums
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+        working-directory: build/release
+        run: |
+          KEY="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')"
+          test -n "$KEY"
+          gpg --batch --yes --armor --local-user "$KEY" --detach-sign SHA256SUMS
+          gpg --armor --export "$KEY" > KEYS.asc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cinterp-release
+          path: |
+            build/release/*.tar.gz
+            build/release/*.whl
+            build/release/*.spdx.json
+            build/release/SHA256SUMS
+            build/release/SHA256SUMS.asc
+            build/release/KEYS.asc
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            build/release/*.tar.gz
+            build/release/*.whl
+            build/release/*.spdx.json
+            build/release/SHA256SUMS
+            build/release/SHA256SUMS.asc
+            build/release/KEYS.asc
+          generate_release_notes: true

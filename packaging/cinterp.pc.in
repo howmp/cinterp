@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/..
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: cinterp
+Description: Small C bytecode interpreter with direct C FFI
+Version: @VERSION@
+Libs: -L${libdir} -lcinterp
+Libs.private: -ldl -lpthread -lm
+Cflags: -I${includedir}

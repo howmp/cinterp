@@ -10,7 +10,6 @@
 114_bound_signal	non-goal: threads: stdout mismatch
 116_bound_setjmp2	non-goal: threads: exit -11 != 0
 117_builtins	non-goal: external symbol/inline/asm: stdout mismatch
-119_random_stuff	resource: alloca/module limit: cinterp: bad alloca size 262144 for %struct.big_struct
 120+_alias	harness/test-entry: no runnable main: stdout mismatch
 120_alias	frontend/dialect: unsupported compile: /home/admin/cl/build/suites/tcc/tests/tests2/120_alias.c:11:30: error: definition 'alias_int' cannot also be an alias
 124_atomic_counter	non-goal: inline asm/atomic: cinterp: unsupported instruction: %4 = atomicrmw add ptr %uc, i8 %3 monotonic, align 1
@@ -40,6 +39,6 @@
 85_asm-outside-function	non-goal: external symbol/inline/asm: stdout mismatch
 90_struct-init	frontend/dialect: unsupported compile: /home/admin/cl/build/suites/tcc/tests/tests2/90_struct-init.c:264:14: error: cannot compile this GNU array range designator extension yet
 95_bitfields	non-goal: >64-bit bitfield/aggregate: cinterp: aggregate store unsupported: i88
-95_bitfields_ms	resource: alloca/module limit: cinterp: bad alloca size 18446744073709551632 for %struct.__s.11
+95_bitfields_ms	dialect: Clang ms_struct bitfield width/layout differs from TCC (native clang output matches cinterp)
 96_nodata_wanted	harness/test-entry: no runnable main: stdout mismatch
 98_al_ax_extend	non-goal: external symbol/inline/asm: stdout mismatch

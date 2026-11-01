@@ -152,7 +152,7 @@ provider[]:
 3. 若 entry 允许 fallback，再走旧的进程默认 → `--lib` → CRT 搜索。
 4. 否则返回 `SymbolNotFound`。
 
-没有 CIPI entry 的计划（旧 v1 包或未收录的自定义符号）仍走旧搜索路径。`--safe` 在解析前直接拒绝 `CALL_NATIVE`/`CALL_VARARG`/`ADDR_EXTERN`。
+没有 CIPI entry 的计划（旧 v1 包或未收录的自定义符号）仍走旧搜索路径。
 
 ### 2.6 自动链接数据库
 
@@ -189,7 +189,7 @@ M     code bytes
 
 - `param_count` 是函数参数个数；参数占用函数局部槽的**前 `param_count` 个**。
 - `local_count` 包含参数槽和后续 alloca/SSA 槽；必须 `>= param_count`。
-- 函数名有效上限为运行时的 `MAX_NAME = 32` 字节；函数数上限 `MAX_FUNCS = 512`。
+- 函数名有效上限为运行时的 `MAX_NAME = 128` 字节；函数数上限 `MAX_FUNCS = 512`。
 - code 是字节流，跳转目标是**当前函数 code 内的绝对字节偏移**。
 - 入口默认是 `main`，运行时可指定其他入口。
 
@@ -205,7 +205,7 @@ M     code bytes
 
 ### 3.4 线性内存与 globals
 
-VM 有 1 MiB 线性内存（`mem`），`mem_top` 是 bump pointer：
+VM 默认有 1 MiB 线性内存（`mem`，可由 `ci_vm_config.memory_size` 配置，上限 16 MiB），`mem_top` 是 bump pointer：
 
 - `OP_ADDR_CONST offset` 压入 `&mem[offset]` 的**宿主地址**（不是文件偏移）。
 - `OP_SET_MEM_TOP size` 将 `mem_top` 设为 size。
@@ -412,7 +412,7 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 ### 5.3 字段语义
 
 - `name`：外部符号名。callback 计划的名称是 `callback:<vm-function>`，没有原生符号。
-- `args_count`：实际传入的参数个数；上限 16。
+- `args_count`：实际传入的参数个数；上限 64。
 - `loc_count`：一个参数可拆成多个位置（HFA 的 xmm0/xmm1…）；上限 8。
 - `size`：参数的字节宽度。
 - `offset`：
@@ -519,21 +519,36 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o buil
 # 只加载/校验，不执行；同时查看目标/import 元数据
 ./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib
 
-# safe 模式：禁止原生调用/宿主越界内存操作（fuzz 用）
-./runtime/zig-out/bin/cinterp-run --safe build/hello.cib
-
 # 指定入口
 ./runtime/zig-out/bin/cinterp-run build/hello.cib main
 ```
 
 运行时加载失败会返回错误名（`BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageHeader`、`TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`BadAbi`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`Truncated`、`TrailingBytes`、`BadPlan` 等），CLI 输出 `load failed` / `run failed`。
 
+### 7.1 C ABI 错误码
+
+`ci_vm_*` 返回 `CI_OK`（0）或下列稳定负值；`ci_vm_last_error_code` 给出同一类别，`ci_vm_last_error` 给出具体错误名。
+
+| 值 | 名称 | 覆盖的主要错误名 |
+| ---: | --- | --- |
+| -1 | `CI_ERROR` | `errorCode` 未归类的内部错误 |
+| -2 | `CI_E_INVALID_ARGUMENT` | `InvalidArgument`、`TooManyArgs` |
+| -3 | `CI_E_OUT_OF_MEMORY` | `OutOfMemory` |
+| -4 | `CI_E_BAD_PACKAGE` | `BadPackage*`、`BadMagic`、`BadVersion`、`BadArch`、`BadModule`、`BadLocals`、`TooManyFunctions`、`NameTooLong`、`ModuleTooLarge`、`Truncated`、`TrailingBytes` |
+| -5 | `CI_E_TARGET` | `TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`UnsupportedOs`（非 Linux/Windows 运行时）、`UnsupportedLibc`（musl 运行时） |
+| -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable` |
+| -7 | `CI_E_LINK` | `SymbolNotFound`、`LibraryNotFound`、`SymbolTooLong`、`PathTooLong`、`TooManyLibraries` |
+| -8 | `CI_E_ENTRY` | `EntryNotFound` |
+| -9 | `CI_E_RESOURCE` | `StackOverflow`、`FrameOverflow`、`ReturnTooLarge` |
+| -10 | `CI_E_RUNTIME` | `BadAddress`、`BadOpcode`、`BadFunction`、`BadArgCount`、`BadJump`、`BadCallbackSlot`、`UnsupportedCallback`、`TooManyCallbacks`、`DivisionByZero`、`BadLocal`、`TruncatedCode`、`BadMemorySize`、`NullStruct` |
+| -11 | `CI_E_DESTROYED` | `VmDestroyed`（callback 执行期间 VM 被销毁） |
+
 ## 8. 限制与兼容性
 
 - `CIVM` 当前 v1；`CIPKG` 当前 v2（接受 v1）；`CIPL` 当前 v3（接受 v2）；`CIPM`/`CIPI` 当前 v1。
-- `CIVM` 函数数上限 256、函数名有效上限 32、模块上限 1048576 字节；槽栈 4096、帧 256、线性内存 1 MiB（显式 16 字节对齐）。
-- `CIPL` 计划上限 512、每计划参数 64、每参数 loc 8、名称有效上限 32；FFI arg/stack/ret 缓冲区各 4096 字节。
-- CIPM 目标必须匹配运行时；v1 包没有目标 triple，只能依赖 CIPL ABI 和调用方正确选择运行时。
-- CIPI 上限 256 entry、每 entry 8 provider、名称/符号 64 字节、版本 32 字节；自动 provider 只允许库名，不允许 CIB 携带任意路径。
-- 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。`--safe` 只用于 fuzz，不允许原生调用和越界 VM 内存访问。
+- `CIVM` 函数数上限 512、函数名有效上限 128、模块上限 2097152 字节；槽栈 8192、帧 512、线性内存默认 1 MiB（可配置，上限 16 MiB，显式 32 字节对齐）。
+- `CIPL` 计划上限 1024、每计划参数 64、每参数 loc 8、名称有效上限 128；FFI arg/stack/ret 缓冲区各 4096 字节。
+- CIPM 目标必须匹配运行时；v1 包没有目标 triple，只能依赖 CIPL ABI 和调用方正确选择运行时。macOS/未知 OS 与 musl 运行时在 load 阶段显式返回 `UnsupportedOs`/`UnsupportedLibc`，不会回退到 Linux glibc。
+- CIPI 上限 512 entry、每 entry 8 provider、名称/符号 64 字节、版本 32 字节；自动 provider 只允许库名，不允许 CIB 携带任意路径。
+- 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。运行时不提供进程内沙箱或 Safe 模式。
 - 自动链接覆盖函数符号和基础 external data（`stdout`/`t_status` 等，`CIPI.kind=data` + `ADDR_EXTERN`）；向量、复杂聚合全局初始化仍不在范围内。`CIPKG` 本身不携带 `.so`/`.dll` 二进制。

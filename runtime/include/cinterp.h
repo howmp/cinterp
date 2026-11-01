@@ -41,7 +41,13 @@ typedef struct ci_vm_config {
     uint32_t struct_size; /* set to sizeof(ci_vm_config) */
     uint32_t flags;       /* reserved, must be 0 */
     size_t stack_size;    /* 0 = default; upper bound in VM value slots */
+    size_t memory_size;   /* 0 = default (1 MiB); linear memory bytes */
 } ci_vm_config;
+
+/*
+ * ci_vm_create_ex accepts older callers whose struct_size covers only
+ * stack_size; memory_size then defaults to 1 MiB. The maximum is 16 MiB.
+ */
 
 /* Create a VM. stack_size == 0 selects the default limit. */
 ci_vm *ci_vm_create(size_t stack_size);

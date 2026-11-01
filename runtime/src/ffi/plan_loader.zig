@@ -30,9 +30,14 @@ pub const StoredPlan = struct {
 };
 
 pub const Store = struct {
-    plans: [MAX_PLANS]StoredPlan = undefined,
+    plans: []StoredPlan = &.{},
     count: u16 = 0,
     abi_id: u8 = 0,
+
+    pub fn deinit(self: *Store, allocator: std.mem.Allocator) void {
+        allocator.free(self.plans);
+        allocator.destroy(self);
+    }
 
     pub fn find(self: *const Store, name: []const u8) ?*const StoredPlan {
         const count: usize = self.count;
@@ -142,6 +147,8 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
 
     const store = try allocator.create(Store);
     errdefer allocator.destroy(store);
+    store.plans = try allocator.alloc(StoredPlan, @as(usize, count));
+    errdefer allocator.free(store.plans);
     store.count = count;
     store.abi_id = abi_id;
 
@@ -149,7 +156,6 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
     var pi: usize = 0;
     while (pi < total) : (pi += 1) {
         const plan = &store.plans[pi];
-
         const name_len = try r.readU8();
         const nl: usize = name_len;
         if (nl > MAX_NAME) return error.NameTooLong;

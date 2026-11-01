@@ -68,7 +68,7 @@ comparison flags must remain unchanged.
 - Expected outputs are never auto-updated in CI; `--update-baseline` is not
   implemented for these manifests by design.
 
-## Current native baseline (2026-10-31)
+## Current native baseline (2026-11-01)
 
 TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whitespace, and TCC compiler warnings; this recovered 4 cases without weakening semantic comparisons.
 
@@ -76,10 +76,10 @@ TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whi
 | --- | ---: | ---: |
 | csuite | 17 | 0 |
 | c-testsuite | 218 | 2 |
-| tcc-tests2 | 97 | 45 |
+| tcc-tests2 | 99 | 43 |
 | chibicc | 15 | 26 |
 | libc-test | 47 | 28 |
-| gcc-torture | 1258 | 46 |
+| gcc-torture | 1287 | 19 |
 | gcc-torture-compile | 1411 | 0 |
 | compcert | 55 | 20 |
 | llvm-singlesource | 85 | 8 |
@@ -92,10 +92,10 @@ TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whi
 | tcc-smoke | 24 | 0 native；Windows 23+1 skip |
 | gcc-smoke | 40 | 0 |
 | compcert-smoke | 24 | 0 native；Windows 23+1 skip |
-| **total** | **4292** | **227** |
+| **total** | **4323** | **198** |
 
 `make test-suites-full` is the command that produced this table; generated
 YARPGen/Csmith known-failure seeds are recorded separately in
 `tests/generator-known-failures.json`.
 
-`gcc-torture.excluded` and `gcc-torture-compile.excluded` contain 1036 compile/runtime cases that depend on explicit non-goals (varargs/builtins/asm/vectors/etc). They are separate from the supported subset and not counted as passes or skips.
+`gcc-torture.excluded` and `gcc-torture-compile.excluded` contain 1034 compile/runtime cases that depend on explicit non-goals (varargs/builtins/asm/vectors/etc). They are separate from the supported subset and not counted as passes or skips.

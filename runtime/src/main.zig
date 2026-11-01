@@ -1,5 +1,6 @@
 const std = @import("std");
 const vm = @import("vm.zig");
+const build_options = @import("build_options");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -19,7 +20,7 @@ pub fn main() !void {
     var i: usize = 1;
     while (i < args.len) {
         if (std.mem.eql(u8, args[i], "--version")) {
-            std.debug.print("cinterp-run 0.1.0\n", .{});
+            std.debug.print("cinterp-run {s}\n", .{build_options.version});
             return;
         }
         if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {

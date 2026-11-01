@@ -8,6 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from . import __version__
 from .llvm_ir.lower import compile_text
 from .ffi.plan import UnsupportedFfi
 from .link import cstdapi, winmd
@@ -17,7 +18,7 @@ from .link.target import DEFAULT_TARGET, TARGETS
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cinterp", description="C interpreter compiler")
-    parser.add_argument("--version", action="version", version="cinterp 0.1.0")
+    parser.add_argument("--version", action="version", version=f"cinterp {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     comp = sub.add_parser("compile", help="compile a C file to a CIPKG package")
@@ -64,15 +65,19 @@ def _compile(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="cinterp-") as td:
         ll = Path(td) / (src.stem + ".ll")
         target = TARGETS[args.target] if args.target else DEFAULT_TARGET
-        cmd = [args.clang]
-        if args.target:
-            cmd.append("--target=" + target.triple)
-            if target.os == "windows":
-                windows_include = _zig_windows_include()
-                if windows_include is None:
-                    print("cinterp: Zig Windows headers not found; set ZIG_LIB_DIR", file=sys.stderr)
-                    return 2
-                cmd += ["-isystem", str(windows_include)]
+        if args.target is None and sys.platform not in ("linux", "win32"):
+            print(
+                "cinterp: unsupported host OS for the default target; pass --target explicitly",
+                file=sys.stderr,
+            )
+            return 2
+        cmd = [args.clang, "--target=" + target.triple]
+        if target.os == "windows":
+            windows_include = _zig_windows_include()
+            if windows_include is None:
+                print("cinterp: Zig Windows headers not found; set ZIG_LIB_DIR", file=sys.stderr)
+                return 2
+            cmd += ["-isystem", str(windows_include)]
         cmd += [
             "-S",
             "-emit-llvm",
