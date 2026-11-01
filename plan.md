@@ -1,19 +1,9 @@
 ---
 name: remaining-c-features
-overview: VLA/柔性数组、C11 编译期特性、external data 和可修复的 stdio 行为已完成；本文件只保留剩余未完成项和 host-libc reference 差异。
+overview: 仅保留尚未完成的 C 特性、运行时容量和测试基础设施工作；已完成项和决策见 dev.md §20。
 ---
 
 # 剩余特性计划
-
-> **状态（2026-10-31）：VLA/FAM、C11 编译期特性、external data、stdio 可修 bug 已完成。**
-> 完成证据见 `dev.md` §20.4。当前 full 4221/4457（236 skip），standard 396/495。
-
-## 0. 当前基线
-
-- full：4221/4457 通过，236 skip；standard：396/495。
-- csuite 17/17；Win64/Win32/ARM64 的 csuite 17/17，upstream smoke 12/12。
-- 已完成：VLA/FAM、`_Generic`/`_Static_assert`/`_Alignas`/`_Alignof`/static inline、external data 基础/Windows UCRT 辅助、`strtol/wcstol` 非法 base shim。
-- host-libc reference 差异：`fscanf/sscanf/fnmatch/strftime/mbc/clocale` 的剩余 musl expected 与原生 glibc 一致地不同；只有在提供 musl provider 时才应重新纳入语义比对。
 
 ## 1. P0：`_Complex`
 
@@ -40,10 +30,10 @@ overview: VLA/柔性数组、C11 编译期特性、external data 和可修复的
 - `bswap/ffs/clz/ctz/popcount`、`alloca`、`trap`（产品语义允许时）、`prefetch`（no-op）。
 - 验收：GCC builtin 运行失败下降；不支持的 builtin 编译期明确报错。
 
-## 5. P1：`inline` 链接边界与弱符号
+## 5. P1：外部 `inline` 链接与弱符号
 
-- 当前 static inline 已支持；外部 `inline`/weak 符号地址（TCC 104/104+）仍不具备完整链接语义。
-- 评估 weak symbol 表、COMDAT 和 external function pointer 的结合；不引入动态链接器改动以外的平台假设。
+- 外部 `inline`/weak 符号地址（TCC 104/104+）缺少完整链接语义。
+- 评估 weak symbol 表、COMDAT 与 external function pointer 的结合。
 - 验收：标准 inline 用例通过；weak 地址语义有明确实现或范围说明。
 
 ## 6. P2：ABI callback 边角
@@ -68,12 +58,7 @@ overview: VLA/柔性数组、C11 编译期特性、external data 和可修复的
 - YARPGen/Csmith artifact 做 creduce/内置 delta-debugging。
 - 修复共同根因后加入固定回归；nightly 100 seeds 保持 0 未分类 failure。
 
-## 10. host-libc reference 决策
-
-- `fscanf/sscanf/fnmatch/strftime/mbc/clocale` 的剩余差异已由原生 glibc 复现，当前不作为 cinterp bug 修复。
-- 若产品要求 musl 语义，应引入显式 musl provider/参考目标，而不是改 expected 或改 skip 冒充通过。
-
-## 11. 非目标
+## 10. 非目标
 
 - 多线程、原子操作、汇编/asm goto、向量类型、i128/vector ABI。
 - Win64 vectorcall/COM、Win32 thiscall。

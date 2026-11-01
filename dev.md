@@ -968,5 +968,5 @@ zig build -Dtarget=aarch64-linux-gnu
 - **柔性数组**：struct 尾部 `[]` 布局、malloc 扩展和 GEP 访问通过 csuite `vla_fam` 验证。
 - **C11**：`_Generic`、`_Static_assert`、`_Alignas/_Alignof`、`static inline`、`_Noreturn` 通过 `csuite/c11`；新增 aligned alloca opcode，支持 local `_Alignas(32)`。
 - **external data**：补充 `__environ`、`_environ`、`__progname*`、`_pgmptr`、`_tzname`、`_timezone`、`_daylight`、`_opt*` 等数据别名；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 通过 cstdapi helper provider 解析。`csuite/external_data` 四目标通过。
-- **stdio/wide/locale**：修复实际 cinterp 侧 `snprintf`/字符串问题；`strtol/wcstol` 非法 base 增加原生 shim（合法 base 委托宿主 libc，非法 base 设置 `endptr=nptr`、`EINVAL`）。其余 `libc-test` mismatch 已用原生 glibc 复现，标记为 host-libc reference difference（musl expected 不适用于当前宿主），不是 cinterp 回归。
+- **stdio/wide/locale**：修复实际 cinterp 侧 `snprintf`/字符串问题；`strtol/wcstol` 非法 base 增加原生 shim（合法 base 委托宿主 libc，非法 base 设置 `endptr=nptr`、`EINVAL`）。其余 `libc-test` mismatch 已用原生 glibc 复现，标记为 host-libc reference difference（musl expected 不适用于当前宿主），不是 cinterp 回归。若产品要求 musl 语义，应引入显式 musl provider/参考目标，而不是修改 expected 或 skip 冒充通过。
 - **结果**：full 4221/4457（236 skip）；standard 396/495；csuite 17/17；TCC 97/45；libc-test 49/26；跨 ABI csuite 17/17。
