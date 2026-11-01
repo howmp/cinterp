@@ -125,7 +125,7 @@ def load_skip(manifest: dict, root: Path) -> tuple[dict, set[str]]:
     return skip, excluded
 
 
-def discover_cases(manifest: dict, root: Path) -> list[dict]:
+def discover_cases(manifest: dict, root: Path, include_excluded: bool = False) -> list[dict]:
     skip, excluded = load_skip(manifest, root)
     explicit = manifest.get("cases")
     if explicit:
@@ -133,7 +133,7 @@ def discover_cases(manifest: dict, root: Path) -> list[dict]:
         for item in explicit:
             case = dict(item)
             case["id"] = str(case.get("id") or Path(case["source"]).stem)
-            if case["id"] in excluded:
+            if case["id"] in excluded and not include_excluded:
                 continue
             if case["id"] in skip:
                 case["skip"] = skip[case["id"]]
@@ -149,7 +149,7 @@ def discover_cases(manifest: dict, root: Path) -> list[dict]:
         if not source.is_file():
             continue
         cid = source.stem
-        if cid in excluded:
+        if cid in excluded and not include_excluded:
             continue
         expected = None
         if expected_dir:
@@ -297,6 +297,18 @@ def run_on_target(
     raise RuntimeError(f"unsupported target {target}")
 
 
+def summarize_failure(stderr: str, rc: int) -> str:
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    if not lines:
+        return f"rc={rc}"
+    if any("Traceback (most recent call last):" in line for line in lines):
+        return "compiler crash: " + lines[-1]
+    for line in lines:
+        if line.startswith("cinterp:") or re.search(r"\b(?:fatal error|error):", line, re.IGNORECASE):
+            return line
+    return lines[0]
+
+
 def run_case(
     suite: str,
     case: dict,
@@ -347,7 +359,9 @@ def run_case(
         return result
     if comp.returncode != 0:
         stderr = norm_text(comp.stderr).decode("utf-8", "replace").strip()
-        result.update(status="compile", reason=stderr.splitlines()[0] if stderr else f"rc={comp.returncode}")
+        result.update(status="compile", reason=summarize_failure(stderr, comp.returncode))
+        if stderr:
+            result["detail"] = stderr[-2000:]
         result["duration_ms"] = int((time.monotonic() - started) * 1000)
         return result
     if manifest.get("mode") == "compile":
@@ -413,6 +427,9 @@ def main() -> int:
     ap.add_argument("--qemu", default=os.environ.get("QEMU", "qemu-aarch64"))
     ap.add_argument("--sysroot", default=os.environ.get("SYSROOT", "/usr/aarch64-linux-gnu"))
     ap.add_argument("--include-skipped", action="store_true", help="run skip-listed cases for re-triage")
+    ap.add_argument("--include-excluded", action="store_true", help="include .excluded cases for re-triage")
+    ap.add_argument("--only", action="append", default=[], help="only run IDs (comma-separated, repeatable)")
+    ap.add_argument("--emit-reasons", default="", help="write auditable ID<TAB>status: reason for non-ok cases")
     args = ap.parse_args()
 
     manifests = load_manifests()
@@ -475,7 +492,10 @@ def main() -> int:
         if not root.is_dir():
             print(f"missing suite root for {suite}: {root}", file=sys.stderr)
             return 2
-        cases = discover_cases(manifest, root)
+        cases = discover_cases(manifest, root, args.include_excluded)
+        only = {item.strip() for group in args.only for item in group.split(",") if item.strip()}
+        if only:
+            cases = [case for case in cases if case["id"] in only]
         if args.limit:
             cases = cases[: args.limit]
         env = build_env(manifest, root)
@@ -522,6 +542,16 @@ def main() -> int:
                 print(f"  actual: {item['actual']}", file=sys.stderr)
             if item.get("expected") is not None:
                 print(f"  expected: {item['expected']}", file=sys.stderr)
+    if args.emit_reasons:
+        lines = [
+            f"{item['id']}\t{item['status']}: {item.get('reason', '')}"
+            for item in results
+            if item["status"] != "ok"
+        ]
+        reasons_path = Path(args.emit_reasons)
+        reasons_path.parent.mkdir(parents=True, exist_ok=True)
+        reasons_path.write_text("\n".join(lines) + ("\n" if lines else ""))
+
     report = {
         "target": args.target,
         "excluded": {name: len([1 for line in (ROOT / str(manifest.get("repo_exclude_file", ""))).read_text().splitlines() if line.strip() and not line.startswith("#")]) if manifest.get("repo_exclude_file") and (ROOT / manifest["repo_exclude_file"]).is_file() else 0 for name, manifest in selected.items()},

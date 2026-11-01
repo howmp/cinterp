@@ -5,7 +5,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 
 # 剩余工作：excluded 重分诊与跨 ABI
 
-> 子 agent 只读审查结论（2026-10-31）。当前 full 4219/4457，238 skip；标准集 394/495。
+> 子 agent 只读审查结论（2026-10-31）。当前 full 4269/4507，238 skip；标准集 394/495。
 > 不要直接批量重跑/改 expected：先补 runner 能力，再逐项回收。
 
 ## 0. 结论先行
@@ -24,25 +24,22 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 
 | 文件 | 数量 | 说明 |
 | --- | ---: | --- |
-| `gcc-torture.excluded` | 454 | 约 317 compile + 137 run |
+| `gcc-torture.excluded` | 404 | 约 317 compile + 87 run（已回收 50 个 varargs/HFA） |
 | `gcc-torture-compile.excluded` | 609 | compile-only |
 | `compcert.excluded` | 34 | 多数缺少参考输出，应进入 compile 子集 |
 | `tcc-tests2.excluded` | 1 | `99_fastcall` inline asm 边界 |
 
 ### 1.2 先修证据/工具，不要直接回收
 
-- `scripts/test_suites.py` 目前没有 `--include-excluded`；`.excluded` 在 discovery 阶段直接丢弃，无法重跑。
-- 没有 `--only ID,...`，无法只确认候选。
-- 没有 `--emit-reasons PATH`；应输出 `ID<TAB>status: reason`，由人审阅后修改列表。
-- 失败 reason 取 stderr 第一行，常把 clang **warning** 当成原因；应优先 `error:`/`fatal error:`/`^cinterp:`，并保存 detail。
-- `gcc-torture-compile.skip` 是 609 个 excluded ID 的重复；只删 `.excluded` 会被 skip 文件重新跳过，必须先将其缩成 header-only。
-- 5 个编译器 Python **traceback** 被记录成 unsupported feature；应先改成干净的 resource/compiler 诊断。
-- 建议先实现：`--include-excluded`、`--only`、`--emit-reasons`；可选 `repo_skip_file_by_target` 供 P2b 使用。
+- 已实现 `--include-excluded`、`--only`、`--emit-reasons`；`.excluded` 现在可以只读重跑并输出审计原因。
+- reason 现在优先取 `cinterp:`/`error:`/`fatal error:`，Python traceback 归为 `compiler crash: ...` 并保留 `detail`；不再把首行 clang warning 当根因。
+- `gcc-torture-compile.skip` 已缩成 header-only，不再复制 excluded ID。
+- 仍需清理 5 个编译器 traceback 的 class/具体根因；`--only`/`--emit-reasons` 已可重复使用。
 - 不自动更新 expected/skip；回收时只删除已经确认通过的 excluded 行，保留 diff 和审查报告。
 
 ### 1.3 优先回收候选
 
-- **varargs（约 56 个）**：`va-arg-*`、`stdarg-*`、`9xxxxx-*`、`pr44942`、`pr64979`、`*vprintf*` 等。varargs/`va_copy` 已实现，预计 25–45 个可回收；`va-arg-trap-1` 仍因故意 trap 排除；`*chk` 变体需确认 `__printf_chk` provider。
+- **varargs（已回收 50 个）**：`va-arg-*`、`stdarg-*`、`9xxxxx-*`、`pr44942`、`pr64979`、`*vprintf*`、`*printf*chk*` 等已通过并删除 excluded。剩余 9 个仍失败：`920501-8`、`980608-1`、`stdarg-1/2/3`、`va-arg-5/6/7/8`，已保留并记录实测 exit。
 - **HFA coerce 残留**：`20071102-1`、`981223-1`、`pr55921`、`pr38969`；先区分 HFA struct 与真正的 `_Complex`。
 - **近期能力覆盖的 skip**：`tcc-tests2:128_run_atexit`、CompCert `aligned/alignglob/alias/attribs1`、chibicc 的 `alignof/float/pointer/initializer/variable/commonsym`。
 - **`gcc-ieee` FP bucket**：`cdivchkd`、`copysign1`、`copysign2`、`inf-4`、`pr108540-1`、`pr109386`；这些是真实语义问题，转入 P2c。
@@ -52,8 +49,8 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 - 每个剩余 excluded/skip 行有分类（non-goal/dialect/diagnostics/resource/host/bug）和观察记录。
 - 不再有以 clang warning 或 Python traceback 作为原因的行。
 - `gcc-torture-compile.skip` 不再复制 excluded 列表。
-- full 相对 4219/4457 无回归；确认回收的 ID 列表写入提交信息，expected/compare 标志不变。
-- 优先目标：净回收 ≥40 个通过用例。
+- full 相对 4269/4507 无回归；已回收 50 个（GCC execute 1194→1244），expected/compare 标志不变。
+- P2a 剩余：9 个 varargs 失败、FP/NaN bucket、5 个 compiler traceback 清理，以及其他 excluded 分类。
 
 ## 2. P2b：跨 ABI 子集
 
