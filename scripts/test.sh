@@ -244,3 +244,14 @@ if "$RUNTIME" --safe "$OUT/ffi_printf.cib" >"$OUT/safe-import.txt" 2>&1; then
 fi
 grep -Fq "SafeMode" "$OUT/safe-import.txt"
 echo "OK --safe rejects imported call"
+
+echo "== C embedding API (static + shared)"
+python3 -m cinterp compile runtime/tests/capi_argv.c -o "$OUT/capi_argv.cib" >/dev/null
+cc -std=c11 -I runtime/zig-out/include runtime/tests/capi_smoke.c \
+    runtime/zig-out/lib/libcinterp.a -ldl -lpthread -lm -o "$OUT/capi_smoke"
+"$OUT/capi_smoke" "$OUT/hello.cib" "$OUT/ffi_qsort.cib" "$OUT/capi_argv.cib"
+cc -std=c11 -I runtime/zig-out/include runtime/tests/capi_smoke.c \
+    -Lruntime/zig-out/lib -Wl,-rpath,"$ROOT/runtime/zig-out/lib" -lcinterp \
+    -o "$OUT/capi_smoke_shared"
+"$OUT/capi_smoke_shared" "$OUT/hello.cib" "$OUT/ffi_qsort.cib" "$OUT/capi_argv.cib"
+echo "OK C embedding API"

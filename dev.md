@@ -597,14 +597,24 @@ pub const CallPlan = struct {
 
 ### 12.3 VM C ABI
 
-```zig
-// runtime/src/c_api.zig（导出符号，函数体略）
-export fn ci_vm_create(stack_size: usize) ?*CIVM { ... }
-export fn ci_vm_destroy(vm: ?*CIVM) void { ... }
-export fn ci_vm_load_module(vm: ?*CIVM, data: [*]const u8, size: usize) c_int { ... }
-export fn ci_vm_run(vm: ?*CIVM, entry: [*:0]const u8) c_int { ... }
-export fn ci_vm_last_error(vm: ?*CIVM) [*:0]const u8 { ... }
+公开头文件为 `runtime/include/cinterp.h`，`zig build` 同时安装 `libcinterp.a`、`libcinterp.so`（Windows 为 `cinterp_static.lib`/`cinterp.lib`/`cinterp.dll`）和头文件。C ABI 版本为 1。
+
+```c
+ci_vm *ci_vm_create(size_t stack_size);
+ci_vm *ci_vm_create_ex(const ci_vm_config *config);
+void ci_vm_destroy(ci_vm *vm);
+int ci_vm_load_module(ci_vm *, const uint8_t *, size_t);
+int ci_vm_load_plans(ci_vm *, const uint8_t *, size_t);
+int ci_vm_load_package(ci_vm *, const uint8_t *, size_t);
+int ci_vm_load_library(ci_vm *, const char *);
+int ci_vm_run(ci_vm *, const char *entry);
+int ci_vm_run_args(ci_vm *, const char *entry, int argc, const char *const *argv);
+int64_t ci_vm_result(const ci_vm *);
+const char *ci_vm_last_error(const ci_vm *);
+int ci_vm_last_error_code(const ci_vm *);
 ```
+
+`ci_vm_run`/`ci_vm_run_args` 返回状态码而非 C `main` 返回值；返回值通过 `ci_vm_result` 获取。loader 是事务性的，失败不会替换已加载包。callback 注册表按 VM 隔离，进程级 trampoline 槽在 VM 销毁/重载 plan 后退休，避免悬空回调；同一 VM 仍要求单线程调用。
 
 ### 12.4 固定汇编调用引擎（示意）
 

@@ -7,7 +7,7 @@ OUT="$ROOT/build/release"
 mkdir -p "$OUT"
 build() {
     local target="$1" name="$2" src
-    (cd runtime && zig build -Dtarget="$target" -Doptimize=ReleaseSmall >/dev/null)
+    (cd runtime && rm -rf zig-out && zig build -Dtarget="$target" -Doptimize=ReleaseSmall >/dev/null)
     case "$target" in
         *windows*) src="runtime/zig-out/bin/cinterp-run.exe" ;;
         *) src="runtime/zig-out/bin/cinterp-run" ;;
@@ -26,6 +26,12 @@ build() {
     mkdir -p "$dest"
     cp "$src" "$dest/"
     cp README.md "$dest/"
+    mkdir -p "$dest/include" "$dest/lib"
+    cp runtime/zig-out/include/cinterp.h "$dest/include/"
+    cp -a runtime/zig-out/lib/. "$dest/lib/"
+    for dll in runtime/zig-out/bin/*.dll; do
+        if [ -e "$dll" ]; then cp "$dll" "$dest/"; fi
+    done
     cat > "$dest/VERSION" <<<"$VERSION"
     tar -C "$OUT" -czf "$OUT/cinterp-$VERSION-$name.tar.gz" "cinterp-$VERSION-$name"
     rm -rf "$dest"

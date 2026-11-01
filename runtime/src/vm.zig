@@ -223,8 +223,14 @@ const CallbackEntry = struct {
     plan: abi.CallPlan,
 };
 
-var callback_entries: [256]?CallbackEntry = [_]?CallbackEntry{null} ** 256;
-var callback_vm: ?*VM = null;
+// Callback trampolines have a fixed slot in assembly. Slots are allocated
+// process-wide but entries and VM ownership are per-VM; a slot is retired when
+// its VM is destroyed so a retained host function pointer can never dispatch
+// into a recycled VM.
+var callback_owners: [256]?*VM = [_]?*VM{null} ** 256;
+var callback_retired: [256]bool = [_]bool{false} ** 256;
+var callback_mutex: std.Thread.Mutex = .{};
+var callback_cond: std.Thread.Condition = .{};
 
 fn f32FromValue(v: Value) f32 {
     const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
@@ -317,13 +323,42 @@ pub const VM = struct {
     frame_count: usize = 0,
     jumps: [32]JumpEntry = [_]JumpEntry{.{}} ** 32,
     result: i64 = 0,
+    stack_limit: usize = MAX_STACK,
     safe: bool = false,
     last_error: [128]u8 = undefined,
+    last_error_code: c_int = 0,
+    callback_entries: [256]?CallbackEntry = [_]?CallbackEntry{null} ** 256,
+    callback_slots: [256]i16 = [_]i16{-1} ** 256,
+    callback_active: usize = 0,
+    callback_destroying: bool = false,
 
     pub fn setError(self: *VM, msg: []const u8) void {
         const n = @min(msg.len, self.last_error.len - 1);
         @memcpy(self.last_error[0..n], msg[0..n]);
         self.last_error[n] = 0;
+    }
+
+    pub fn clearError(self: *VM) void {
+        self.last_error[0] = 0;
+        self.last_error_code = 0;
+    }
+
+    fn checkpoint(self: *VM) !*VM {
+        const backup = try std.heap.page_allocator.create(VM);
+        backup.* = self.*;
+        return backup;
+    }
+
+    fn rollback(self: *VM, backup: *VM) void {
+        if (self.plan_store) |current| {
+            if (current != backup.plan_store) std.heap.page_allocator.destroy(current);
+        }
+        self.* = backup.*;
+        std.heap.page_allocator.destroy(backup);
+    }
+
+    fn commitCheckpoint(backup: *VM) void {
+        std.heap.page_allocator.destroy(backup);
     }
 
     pub fn loadPlans(self: *VM, bytes: []const u8) !void {
@@ -332,12 +367,35 @@ pub const VM = struct {
             std.heap.page_allocator.destroy(new_store);
             return error.BadAbi;
         }
-        if (self.plan_store) |old| std.heap.page_allocator.destroy(old);
+        if (self.plan_store) |old| {
+            // Callback plans point into the old store. Retire their trampolines
+            // before freeing it so a retained host callback cannot dispatch
+            // through dangling plan metadata.
+            self.releaseCallbacks();
+            std.heap.page_allocator.destroy(old);
+        }
         self.plan_store = new_store;
+    }
+
+    fn releaseCallbacks(self: *VM) void {
+        callback_mutex.lock();
+        defer callback_mutex.unlock();
+        for (0..self.callback_slots.len) |slot| {
+            const mapped = self.callback_slots[slot];
+            if (mapped < 0) continue;
+            const g: usize = @intCast(mapped);
+            if (g < callback_owners.len and callback_owners[g] == self) {
+                callback_owners[g] = null;
+                callback_retired[g] = true;
+            }
+            self.callback_entries[g] = null;
+            self.callback_slots[slot] = -1;
+        }
     }
 
     fn freePlans(self: *VM) void {
         if (self.plan_store) |old| {
+            self.releaseCallbacks();
             std.heap.page_allocator.destroy(old);
             self.plan_store = null;
         }
@@ -354,7 +412,7 @@ pub const VM = struct {
         self.library_count += 1;
     }
 
-    pub fn loadPackage(self: *VM, bytes: []const u8) !void {
+    fn loadPackageInPlace(self: *VM, bytes: []const u8) !void {
         if (bytes.len < 15) return error.BadPackage;
         if (!std.mem.eql(u8, bytes[0..5], "CIPKG")) return error.BadPackageMagic;
         const version = bytes[5];
@@ -366,7 +424,7 @@ pub const VM = struct {
             if (15 + m + p != bytes.len) return error.BadPackageSize;
             self.target = null;
             self.imports = .{};
-            try self.loadModuleBytes(bytes[15 .. 15 + m]);
+            try self.loadModuleBytesInPlace(bytes[15 .. 15 + m]);
             try self.loadPlans(bytes[15 + m .. 15 + m + p]);
             return;
         }
@@ -388,11 +446,45 @@ pub const VM = struct {
         try platform.validateTarget(target);
         const import_bytes = bytes[25 + m + p + mt .. 25 + m + p + mt + im];
         const imports = try link_loader.decodeImports(import_bytes);
-        try self.loadModuleBytes(bytes[25 .. 25 + m]);
+        try self.loadModuleBytesInPlace(bytes[25 .. 25 + m]);
         try self.loadPlans(bytes[25 + m .. 25 + m + p]);
         try self.validateImports(&imports);
         self.target = target;
         self.imports = imports;
+    }
+
+    pub fn loadPackage(self: *VM, bytes: []const u8) !void {
+        // Validate the complete package in a scratch VM before touching this
+        // VM. The scratch VM owns the new plan store; only a validated package
+        // is transferred.
+        const scratch = try std.heap.page_allocator.create(VM);
+        initMachine(scratch);
+        scratch.loadPackageInPlace(bytes) catch |err| {
+            scratch.freePlans();
+            std.heap.page_allocator.destroy(scratch);
+            return err;
+        };
+
+        const old_len = self.module_len;
+        const old_module = try std.heap.page_allocator.alloc(u8, old_len);
+        defer std.heap.page_allocator.free(old_module);
+        @memcpy(old_module, self.module_buf[0..old_len]);
+        @memcpy(self.module_buf[0..scratch.module_len], scratch.module_buf[0..scratch.module_len]);
+        self.module_len = scratch.module_len;
+        self.parseModule() catch |err| {
+            @memcpy(self.module_buf[0..old_len], old_module);
+            self.module_len = old_len;
+            self.parseModule() catch {};
+            scratch.freePlans();
+            std.heap.page_allocator.destroy(scratch);
+            return err;
+        };
+        self.freePlans();
+        self.plan_store = scratch.plan_store;
+        scratch.plan_store = null;
+        self.target = scratch.target;
+        self.imports = scratch.imports;
+        std.heap.page_allocator.destroy(scratch);
     }
 
     fn validateImports(self: *VM, imports: *const link_loader.Table) !void {
@@ -621,11 +713,20 @@ pub const VM = struct {
         }
     }
 
-    pub fn loadModuleBytes(self: *VM, bytes: []const u8) !void {
+    fn loadModuleBytesInPlace(self: *VM, bytes: []const u8) !void {
         if (bytes.len > self.module_buf.len) return error.ModuleTooLarge;
         @memcpy(self.module_buf[0..bytes.len], bytes);
         self.module_len = bytes.len;
         try self.parseModule();
+    }
+
+    pub fn loadModuleBytes(self: *VM, bytes: []const u8) !void {
+        const backup = try self.checkpoint();
+        self.loadModuleBytesInPlace(bytes) catch |err| {
+            self.rollback(backup);
+            return err;
+        };
+        commitCheckpoint(backup);
     }
 
     fn parseModule(self: *VM) !void {
@@ -685,7 +786,7 @@ pub const VM = struct {
         const entry_fn = self.functions[fi];
         const entry_locals: usize = entry_fn.local_count;
         self.sp = entry_locals;
-        if (self.sp > MAX_STACK) return error.StackOverflow;
+        if (self.sp > self.stack_limit) return error.StackOverflow;
 
         const argc, const argv_addr, const envp_addr = try self.buildArgArea(cargs);
         if (entry_fn.param_count > 0) self.values[0] = .{ .u = @intCast(argc) };
@@ -773,7 +874,7 @@ pub const VM = struct {
         const saved_mem_top = self.mem_top;
         const base = saved_sp;
         const locals: usize = f.local_count;
-        if (base + locals > MAX_STACK) return error.StackOverflow;
+        if (base + locals > self.stack_limit) return error.StackOverflow;
         for (args, 0..) |v, i| self.values[base + i] = v;
         var i: usize = args.len;
         while (i < locals) : (i += 1) self.values[base + i] = .{ .i = 0 };
@@ -1243,18 +1344,39 @@ pub const VM = struct {
                     const slot = try readU16(code, &ip);
                     const func = try readU16(code, &ip);
                     const plan_idx = try readU16(code, &ip);
-                    if (slot >= callback_entries.len) return error.BadCallbackSlot;
+                    if (slot >= self.callback_entries.len) return error.BadCallbackSlot;
                     const fidx: usize = func;
                     if (fidx >= self.func_count) return error.BadFunction;
                     const store = self.plan_store orelse return error.NoPlans;
                     const pidx: usize = plan_idx;
                     const p = store.planAt(pidx) orelse return error.BadPlan;
-                    callback_entries[slot] = .{
+
+                    callback_mutex.lock();
+                    defer callback_mutex.unlock();
+                    if (self.callback_destroying) return error.VmDestroyed;
+                    var global_slot: usize = undefined;
+                    const mapped = self.callback_slots[slot];
+                    if (mapped >= 0) {
+                        global_slot = @intCast(mapped);
+                    } else {
+                        var g: usize = 0;
+                        var found = false;
+                        while (g < callback_owners.len) : (g += 1) {
+                            if (!callback_retired[g] and callback_owners[g] == null) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) return error.TooManyCallbacks;
+                        global_slot = g;
+                        self.callback_slots[slot] = @intCast(g);
+                    }
+                    self.callback_entries[global_slot] = .{
                         .func = fidx,
                         .plan = store.callPlan(p),
                     };
-                    callback_vm = self;
-                    const addr = platform.callbackTable(slot) orelse return error.UnsupportedCallback;
+                    callback_owners[global_slot] = self;
+                    const addr = platform.callbackTable(global_slot) orelse return error.UnsupportedCallback;
                     const addr64: u64 = @intCast(@intFromPtr(addr));
                     try self.push(.{ .i = @bitCast(addr64) });
                 },
@@ -1602,7 +1724,7 @@ pub const VM = struct {
                     va_sizes = sizes;
                     va_type_count = @intCast(extra);
                     self.sp = extra_base + extra;
-                    if (self.sp > MAX_STACK) return error.StackOverflow;
+                    if (self.sp > self.stack_limit) return error.StackOverflow;
                     ip = 0;
                 },
                 OP_CALL_VARIADIC => {
@@ -1654,7 +1776,7 @@ pub const VM = struct {
                     va_named = 0;
                     va_count = extra;
                     self.sp = extra_base + extra;
-                    if (self.sp > MAX_STACK) return error.StackOverflow;
+                    if (self.sp > self.stack_limit) return error.StackOverflow;
                     ip = 0;
                 },
                 OP_CALL => {
@@ -1687,7 +1809,7 @@ pub const VM = struct {
                     va_count = 0;
                     va_type_count = 0;
                     self.sp = callee_base + locals;
-                    if (self.sp > MAX_STACK) return error.StackOverflow;
+                    if (self.sp > self.stack_limit) return error.StackOverflow;
                     var li: usize = params;
                     while (li < locals) : (li += 1) {
                         self.values[callee_base + li] = .{ .i = 0 };
@@ -1727,7 +1849,7 @@ pub const VM = struct {
                         va_named = 0;
                         va_count = 0;
                         self.sp = callee_base + locals;
-                        if (self.sp > MAX_STACK) return error.StackOverflow;
+                        if (self.sp > self.stack_limit) return error.StackOverflow;
                         var li: usize = params;
                         while (li < locals) : (li += 1) {
                             self.values[callee_base + li] = .{ .i = 0 };
@@ -1773,7 +1895,7 @@ pub const VM = struct {
                     va_count = 0;
                     va_type_count = 0;
                     self.sp = callee_base + locals;
-                    if (self.sp > MAX_STACK) return error.StackOverflow;
+                    if (self.sp > self.stack_limit) return error.StackOverflow;
                     var li: usize = params;
                     while (li < locals) : (li += 1) {
                         self.values[callee_base + li] = .{ .i = 0 };
@@ -1789,7 +1911,7 @@ pub const VM = struct {
     }
 
     fn push(self: *VM, v: Value) !void {
-        if (self.sp >= MAX_STACK) return error.StackOverflow;
+        if (self.sp >= self.stack_limit) return error.StackOverflow;
         self.values[self.sp] = v;
         self.sp += 1;
     }
@@ -1867,9 +1989,32 @@ fn readU64Ptr(ptr: [*]const u8) u64 {
 
 pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) callconv(.C) void {
     const s: usize = @intCast(slot);
-    if (s >= callback_entries.len) return;
-    const entry = callback_entries[s] orelse return;
-    const machine = callback_vm orelse return;
+    callback_mutex.lock();
+    if (s >= callback_owners.len) {
+        callback_mutex.unlock();
+        return;
+    }
+    const machine = callback_owners[s] orelse {
+        callback_mutex.unlock();
+        return;
+    };
+    const entry = machine.callback_entries[s] orelse {
+        callback_mutex.unlock();
+        return;
+    };
+    if (machine.callback_destroying) {
+        callback_mutex.unlock();
+        return;
+    }
+    machine.callback_active += 1;
+    callback_mutex.unlock();
+    defer {
+        callback_mutex.lock();
+        machine.callback_active -= 1;
+        callback_cond.broadcast();
+        callback_mutex.unlock();
+    }
+
     platform.validate(entry.plan) catch return;
     const n: usize = entry.plan.args.len;
     if (n > 8) return;
@@ -1991,74 +2136,238 @@ fn readI64(code: []const u8, ip: *usize) !i64 {
     return @bitCast(bits);
 }
 
+pub const CI_ABI_VERSION: c_int = 1;
+pub const CI_OK: c_int = 0;
+pub const CI_ERROR: c_int = -1;
+pub const CI_E_INVALID_ARGUMENT: c_int = -2;
+pub const CI_E_OUT_OF_MEMORY: c_int = -3;
+pub const CI_E_BAD_PACKAGE: c_int = -4;
+pub const CI_E_TARGET: c_int = -5;
+pub const CI_E_PLANS: c_int = -6;
+pub const CI_E_LINK: c_int = -7;
+pub const CI_E_SAFE: c_int = -8;
+pub const CI_E_ENTRY: c_int = -9;
+pub const CI_E_RESOURCE: c_int = -10;
+pub const CI_E_RUNTIME: c_int = -11;
+pub const CI_E_DESTROYED: c_int = -12;
+
+pub const CiVmConfig = extern struct {
+    struct_size: u32,
+    flags: u32,
+    stack_size: usize,
+};
+
+fn errorCode(err: anyerror) c_int {
+    return switch (err) {
+        error.OutOfMemory => CI_E_OUT_OF_MEMORY,
+        error.TooManyArgs, error.InvalidArgument => CI_E_INVALID_ARGUMENT,
+        error.BadPackage,
+        error.BadPackageMagic,
+        error.BadPackageVersion,
+        error.BadPackageHeader,
+        error.BadPackageSize,
+        error.BadMagic,
+        error.BadVersion,
+        error.BadArch,
+        error.BadModule,
+        error.BadLocals,
+        error.TooManyFunctions,
+        error.NameTooLong,
+        error.ModuleTooLarge,
+        error.Truncated,
+        error.TrailingBytes,
+        => CI_E_BAD_PACKAGE,
+        error.TargetMismatch,
+        error.UnsupportedFeature,
+        error.RuntimeTooOld,
+        => CI_E_TARGET,
+        error.NoPlans,
+        error.BadAbi,
+        error.BadPlan,
+        error.BadImportPlan,
+        error.BadImportProvider,
+        error.ImportArchMismatch,
+        error.ImportUnavailable,
+        => CI_E_PLANS,
+        error.SymbolNotFound,
+        error.LibraryNotFound,
+        error.SymbolTooLong,
+        error.PathTooLong,
+        error.TooManyLibraries,
+        => CI_E_LINK,
+        error.SafeMode => CI_E_SAFE,
+        error.EntryNotFound => CI_E_ENTRY,
+        error.StackOverflow,
+        error.FrameOverflow,
+        error.ReturnTooLarge,
+        => CI_E_RESOURCE,
+        error.BadAddress,
+        error.BadOpcode,
+        error.BadFunction,
+        error.BadArgCount,
+        error.BadJump,
+        error.BadCallbackSlot,
+        error.UnsupportedCallback,
+        error.TooManyCallbacks,
+        error.DivisionByZero,
+        error.BadLocal,
+        error.TruncatedCode,
+        error.BadMemorySize,
+        error.NullStruct,
+        error.VmDestroyed,
+        => CI_E_RUNTIME,
+        else => CI_ERROR,
+    };
+}
+
+fn fail(m: *VM, err: anyerror) c_int {
+    m.last_error_code = errorCode(err);
+    m.setError(@errorName(err));
+    return CI_ERROR;
+}
+
+pub export fn ci_abi_version() c_int {
+    return CI_ABI_VERSION;
+}
+
+pub export fn ci_version() [*:0]const u8 {
+    return "0.1.0";
+}
+
+fn initMachine(machine: *VM) void {
+    machine.* = undefined;
+    @memset(std.mem.asBytes(machine), 0);
+    for (0..machine.callback_slots.len) |i| machine.callback_slots[i] = -1;
+}
+
 pub export fn ci_vm_create(stack_size: usize) ?*VM {
-    _ = stack_size;
+    const limit = if (stack_size == 0) MAX_STACK else stack_size;
+    if (limit == 0 or limit > MAX_STACK) return null;
     const machine = std.heap.page_allocator.create(VM) catch return null;
-    machine.* = .{};
-    machine.setError("");
+    initMachine(machine);
+    machine.stack_limit = limit;
+    machine.clearError();
+    return machine;
+}
+
+pub export fn ci_vm_create_ex(config: ?*const CiVmConfig) ?*VM {
+    const cfg = config orelse return ci_vm_create(0);
+    if (cfg.struct_size < @sizeOf(CiVmConfig)) return null;
+    if ((cfg.flags & ~@as(u32, 1)) != 0) return null;
+    const machine = ci_vm_create(cfg.stack_size) orelse return null;
+    machine.safe = (cfg.flags & 1) != 0;
     return machine;
 }
 
 pub export fn ci_vm_destroy(machine: ?*VM) void {
-    if (machine) |m| {
-        m.freePlans();
-        std.heap.page_allocator.destroy(m);
+    const m = machine orelse return;
+    callback_mutex.lock();
+    m.callback_destroying = true;
+    for (0..m.callback_slots.len) |slot| {
+        const mapped = m.callback_slots[slot];
+        if (mapped >= 0) {
+            const g: usize = @intCast(mapped);
+            if (g < callback_owners.len and callback_owners[g] == m) {
+                callback_owners[g] = null;
+                callback_retired[g] = true;
+            }
+            m.callback_slots[slot] = -1;
+        }
     }
+    while (m.callback_active > 0) callback_cond.wait(&callback_mutex);
+    callback_mutex.unlock();
+    m.freePlans();
+    std.heap.page_allocator.destroy(m);
 }
 
 pub export fn ci_vm_load_module(machine: ?*VM, data: [*]const u8, size: usize) c_int {
-    const m = machine orelse return -1;
-    m.loadModuleBytes(data[0..size]) catch |err| {
-        m.setError(@errorName(err));
-        return -1;
-    };
-    return 0;
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);
+    m.loadModuleBytes(data[0..size]) catch |err| return fail(m, err);
+    m.clearError();
+    return CI_OK;
 }
 
 pub export fn ci_vm_load_plans(machine: ?*VM, data: [*]const u8, size: usize) c_int {
-    const m = machine orelse return -1;
-    m.loadPlans(data[0..size]) catch |err| {
-        m.setError(@errorName(err));
-        return -1;
-    };
-    return 0;
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);
+    m.loadPlans(data[0..size]) catch |err| return fail(m, err);
+    m.clearError();
+    return CI_OK;
 }
 
 pub export fn ci_vm_load_package(machine: ?*VM, data: [*]const u8, size: usize) c_int {
-    const m = machine orelse return -1;
-    m.loadPackage(data[0..size]) catch |err| {
-        m.setError(@errorName(err));
-        return -1;
-    };
-    return 0;
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);
+    m.loadPackage(data[0..size]) catch |err| return fail(m, err);
+    m.clearError();
+    return CI_OK;
 }
 
 pub export fn ci_vm_load_library(machine: ?*VM, path: [*:0]const u8) c_int {
-    const m = machine orelse return -1;
-    m.loadLibrary(std.mem.span(path)) catch |err| {
-        m.setError(@errorName(err));
-        return -1;
-    };
-    return 0;
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    if (@intFromPtr(path) == 0) return fail(m, error.InvalidArgument);
+    m.loadLibrary(std.mem.span(path)) catch |err| return fail(m, err);
+    m.clearError();
+    return CI_OK;
 }
 
 pub export fn ci_vm_run(machine: ?*VM, entry: [*:0]const u8) c_int {
-    const m = machine orelse return -1;
-    const result = m.runEntry(std.mem.span(entry)) catch |err| {
-        m.setError(@errorName(err));
-        return -1;
-    };
-    m.result = result;
-    return @truncate(result);
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    if (@intFromPtr(entry) == 0) return fail(m, error.InvalidArgument);
+    m.result = m.runEntry(std.mem.span(entry)) catch |err| return fail(m, err);
+    m.clearError();
+    return CI_OK;
+}
+
+pub export fn ci_vm_run_args(
+    machine: ?*VM,
+    entry: [*:0]const u8,
+    argc: c_int,
+    argv: ?[*]const ?[*:0]const u8,
+) c_int {
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    if (@intFromPtr(entry) == 0) return fail(m, error.InvalidArgument);
+    if (argc < 0 or argc > 256) return fail(m, error.TooManyArgs);
+    var args_buf: [256][]const u8 = undefined;
+    const n: usize = @intCast(argc);
+    if (n > 0) {
+        const av = argv orelse return fail(m, error.TooManyArgs);
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            const item = av[i] orelse return fail(m, error.TooManyArgs);
+            args_buf[i] = std.mem.span(item);
+        }
+    }
+    m.result = m.runEntryArgs(std.mem.span(entry), args_buf[0..n]) catch |err| return fail(m, err);
+    m.clearError();
+    return CI_OK;
+}
+
+pub export fn ci_vm_result(machine: ?*VM) i64 {
+    const m = machine orelse return 0;
+    return m.result;
 }
 
 pub export fn ci_vm_set_safe(machine: ?*VM, enabled: c_int) c_int {
-    const m = machine orelse return -1;
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
     m.safe = enabled != 0;
-    return 0;
+    m.clearError();
+    return CI_OK;
 }
 
 pub export fn ci_vm_last_error(machine: ?*VM) [*:0]const u8 {
     const m = machine orelse return "";
     return @ptrCast(&m.last_error[0]);
+}
+
+pub export fn ci_vm_last_error_code(machine: ?*VM) c_int {
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    return m.last_error_code;
+}
+
+pub export fn ci_vm_clear_error(machine: ?*VM) c_int {
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    m.clearError();
+    return CI_OK;
 }

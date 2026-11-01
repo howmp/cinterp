@@ -220,22 +220,41 @@ Detailed byte layout, opcode table, CIPL/CIPM/CIPI fields and an annotated
 ./runtime/zig-out/bin/cinterp-run <package.cib> [entry]
 ```
 
-The runtime exports a C ABI from `runtime/src/vm.zig`:
+The runtime also ships an embedding library:
 
-```c
-ci_vm_create, ci_vm_destroy,
-ci_vm_load_module, ci_vm_load_plans, ci_vm_load_package, ci_vm_load_library,
-ci_vm_run, ci_vm_last_error
+```bash
+cd runtime && zig build -Doptimize=ReleaseSmall
+# zig-out/include/cinterp.h
+# zig-out/lib/libcinterp.a, libcinterp.so (or cinterp_static.lib/cinterp.lib/cinterp.dll)
 ```
 
-The VM is single-threaded, reentrant at the host C ABI boundary, uses a linear
-memory for stack/global data. For v2 packages it resolves native symbols
+```c
+#include <cinterp.h>
+
+ci_vm *vm = ci_vm_create(0);
+int rc = ci_vm_load_package(vm, cib_bytes, cib_size);
+if (rc == CI_OK) rc = ci_vm_run_args(vm, "main", argc, argv);
+int64_t value = ci_vm_result(vm);
+ci_vm_destroy(vm);
+```
+
+`ci_vm_run`/`ci_vm_run_args` return a status; the C `main` return value is read
+with `ci_vm_result`. Errors expose `ci_vm_last_error_code` and
+`ci_vm_last_error`. Loaders are transactional. `ci_vm_create` accepts a stack
+slot upper bound (0 = default), and `ci_vm_create_ex` adds the safe flag.
+Packages still need to be compiled with `cinterp` at build time; the runtime
+does not need clang.
+
+The VM is single-threaded per instance, reentrant at the host callback
+boundary, and uses a linear memory for stack/global data. Separate VM instances
+do not share interpreter state; callback trampolines are process-wide and are
+retired when their VM is destroyed. For v2 packages it resolves native symbols
 through CIPI providers (with `--lib` as a user override); unlisted custom
 symbols fall back to the process, loaded `--lib` libraries and the platform C
 runtime. Static callback trampolines are available for SysV x64, Win64, Win32
-and AArch64. `--safe`
-disables native calls and restricts memory operations to the VM linear memory
-for bytecode fuzzing; `--load-only` validates a package without executing it.
+and AArch64. `--safe` disables native calls and restricts memory operations to
+the VM linear memory for bytecode fuzzing; `--load-only` validates a package
+without executing it.
 
 ## Repository layout
 
