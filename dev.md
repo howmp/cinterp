@@ -1122,5 +1122,24 @@ zig build -Dtarget=aarch64-linux-gnu
 - 修复内部 `x86_fp80`/`fp128` 返回值：调用前预留 caller-owned 16B 槽，返回后复制到稳定槽，避免被调用帧 `mem_top` 回退覆盖。
 - 修复全局常量地址：literal packed struct（`<{...}>`）的指针字段 reloc、嵌套数组/结构体 initializer、以及 `getelementptr` 常量地址的 addend（例如 `&((items+1)->field)`）。
 - 回收 26 个 GCC execute skip：20040409-{1,1w,2,2w,3,3w}、20050218-1、991201-1、arith-rand、arith-rand-ll、vrp-5、const-addr-expr-1、20081117-1、20100209-1、pr28651、pr33779-{1,2}、pr52129、pr53084、pr7284-1、pr15296、pr60017、conversion、20020108-1、920612-1、930126-1。
-- 验证：full 4318/4519（201 skip），standard 394/495，4 ABI cross suites 通过；C API static/shared smoke 通过。
+- 验证：full 4319/4519（200 skip），standard 395/495，4 ABI cross suites 通过；C API static/shared smoke 通过。
 - 仍保留的 bitfield 结果宽度项（bitfld-3、pr32244-1、pr34971、20040709-3）属于 GCC 期望与 Clang IR 语义差异，暂不改变 expected。
+
+### 20.22 20040709-3 嵌套 aggregate return 调查（2026-11-01）
+
+- 状态：GCC execute `20040709-3` 仍为 skip；`llvm-regression-c` 同名用例是 compile-only，不能作为执行通过证据。
+- 现象：`testG()` 单独运行通过，连续运行两次通过；完整 `testF()` 后运行 `testG()` 在第一检查 `x.l != sG.l` 失败。
+- 最小形态：带参数的函数内部执行 `struct F y=sF; struct F z=retmeF(y);` 后，后续 `testG()` 失败；调用者/被调用者任一无参数时不触发。
+- 逐字节比较 `x` 与 `sG` 在失败时为相等，但 `x.l`/`sG.l` 的 load 值不等；说明不是简单的全局字节被覆盖，仍指向嵌套调用后的 slot/返回指针状态。
+- 已尝试并回退：
+  - 给所有内部 aggregate-return 调用增加 caller-owned 16B 复制：未修复，且 `pr38969` 回归（`{ float, float }` 8 字节按值路径被误当指针）。
+  - 在 `OP_RET` 中检测返回指针落在当前帧并延迟 `mem_top` 回收：未修复。
+- 子代理结论：内部 aggregate/f80/fp128 值确实是 callee 内存裸指针；`OP_RET` 回收与调用方 alloca/call 覆盖是高风险区域，但单纯的返回槽复制/延迟回收不足以解释 G 的 slot/load 差异。
+- 当前保留 `8bcde4c` 的 f80/fp128 专用 caller-owned 修复；未引入 aggregate 泛化。
+
+### 20.23 alloca 零大小/大对象（2026-11-01）
+
+- `alloca` 静态类型大小为 0（零长数组/空结构）改为合法 `OP_ALLOCA`；大于 65535 的对象改用常量大小的 `OP_ALLOCA_DYN`/`OP_ALLOCA_DYN_ALIGN`，不再编译期拒绝。
+- TCC `35_sizeof` 回收；`119_random_stuff` 的 262144B 大结构不再编译失败，但仍有 stdout mismatch（`tst_pack` 字符串显示为 `@st_pack`），暂不回收。
+- `95_bitfields_ms` 不再因 alloca 失败，但 314 个 imports 超过运行时 256 上限，仍 skip。
+- 当前 full 4319/4519（200 skip），standard 395/495（100 skip）。

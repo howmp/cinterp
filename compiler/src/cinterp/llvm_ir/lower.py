@@ -1241,15 +1241,26 @@ class Lowerer:
                 self.store_slot(self.slot_for(result))
                 return
             size = self.type_size(ty)
-            if size <= 0 or size > 0xFFFF:
+            if size < 0:
                 raise ValueError(f"bad alloca size {size} for {ty}")
-            if alloc_align > 8:
-                self.emit_u8(OP_ALLOCA_ALIGNED)
-                self.emit_u16(size)
-                self.emit_u8(alloc_align)
+            if size <= 0xFFFF:
+                if alloc_align > 8:
+                    self.emit_u8(OP_ALLOCA_ALIGNED)
+                    self.emit_u16(size)
+                    self.emit_u8(alloc_align)
+                else:
+                    self.emit_u8(OP_ALLOCA)
+                    self.emit_u16(size)
             else:
-                self.emit_u8(OP_ALLOCA)
-                self.emit_u16(size)
+                # The fixed-size alloca opcode carries a u16 size. Large
+                # objects (including zero-sized structs? no: large only) use
+                # the dynamic alloca path with a constant size operand.
+                self.emit_const(size)
+                if alloc_align > 8:
+                    self.emit_u8(OP_ALLOCA_DYN_ALIGN)
+                    self.emit_u8(alloc_align)
+                else:
+                    self.emit_u8(OP_ALLOCA_DYN)
             self.store_slot(self.slot_for(result))
             return
 

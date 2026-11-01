@@ -31,7 +31,6 @@
 150_return_qualifiers	diagnostic/frontend: expected compile error/dialect: /home/admin/cl/build/suites/tcc/tests/tests2/150_return_qualifiers.c:12:5: error: conflicting types for 'const_return'
 151_atomic_header	frontend/dialect: unsupported compile: cinterp: unsupported type volatile
 34_array_assignment	diagnostic/frontend: expected compile error/dialect: /home/admin/cl/build/suites/tcc/tests/tests2/34_array_assignment.c:16:6: error: array type 'int[4]' is not assignable
-35_sizeof	resource: alloca/module limit: cinterp: bad alloca size 0 for [0 x i32]
 46_grep	mismatch: platform/diagnostic: stdout mismatch
 60_errors_and_warnings	harness/test-entry: no runnable main: stdout mismatch
 70_floating_point_literals	mismatch: platform/diagnostic: stdout mismatch

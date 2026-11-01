@@ -17,7 +17,7 @@ overview: 生产嵌入调查结论；P0 1–3 已完成，P0 5 已回收 26 个�
 
 ## 已验证的基础
 
-- full：4292/4519 通过，227 skip；standard：394/495 通过，101 skip。
+- full：4319/4519 通过，200 skip；standard：395/495 通过，100 skip。
 - 4 个 ABI：x86_64-linux、x86_64-windows、i686-windows、aarch64-linux；cross suite 保持通过。
 - 运行 CIB 不需要 clang；编译器是构建期 Python 工具。
 - 无 JIT、无运行期 codegen、无可执行内存；CIB 目标/ABI/指针宽度/端序在 load 时校验。
@@ -42,8 +42,8 @@ overview: 生产嵌入调查结论；P0 1–3 已完成，P0 5 已回收 26 个�
 
 5. **正确性系统性缺口（部分完成）**
    - 已修复整数宽度归一化（`add/sub/mul/icmp/ret` 及转换边界）和全局常量 GEP 地址/打包字面量结构 reloc；回收 26 个 GCC execute skip。
-   - full 从 4292/4519 提升到 4318/4519（skip 201）。
-   - 剩余 GCC execute skip：bitfield 结果宽度（GCC 方言/Clang 前端差异）、`20040709-3`，以及外部 inline/非目标项；不是全部都能在不改变 expected 的前提下修复。
+   - full 从 4292/4519 提升到 4319/4519（skip 200）。
+   - 剩余 GCC execute skip：bitfield 结果宽度（GCC 方言/Clang 前端差异）、`20040709-3`，以及外部 inline/非目标项；`20040709-3` 的嵌套 aggregate-return 调查记录见 `dev.md §20.22`，暂未修复。
 
 6. **发布与法律合同缺失**
    - 仓库没有 LICENSE；release tarball 已包含 header/lib/DLL，但仍不含许可证。
@@ -59,7 +59,7 @@ overview: 生产嵌入调查结论；P0 1–3 已完成，P0 5 已回收 26 个�
 
 - 将 plan store 改为按包大小分配；让 stack/memory 可配置；减少约 10 MB/实例。
 - 支持 musl 或明确拒绝并给出清晰错误；当前 Linux provider 硬编码 `libc.so.6`/`libm.so.6`。
-- 修复 `alloca` 大小为 0/溢出的前端限制，并重新标注误导性的 `resource:` 分类。
+- 修复 `alloca` 大小为 0/超大对象的静态 alloca 限制（零大小和 >64KiB 使用动态 alloca）；`35_sizeof` 已回收。
 - 增加 sanitizer、结构化 bytecode fuzz、启用 FFI 的 exec fuzz、跨 ABI fuzz。
 - 把 cross-ABI 测试放进 CI，去掉手工 LAN IP 依赖。
 - 修正 `docs/cib.md` 与代码不一致的容量限制，补英文嵌入指南和错误码表。
