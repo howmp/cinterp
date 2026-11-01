@@ -1066,3 +1066,11 @@ zig build -Dtarget=aarch64-linux-gnu
 - 每目标约145：Win64/Win32 143 ok +2 platform skip；ARM64 144 ok +1 qemu skip。
 - Windows TCC `22_floating_point`、CompCert `binops` 因 CRT float/long-double 格式差异 per-target skip；ARM64 c-testsuite `00040` qemu timeout skip；CompCert `casts3` timeout 90。
 - 使用现有 per-case `skip_by_target`，没有新增 per-target expected 文件。
+
+### 20.17 剩余 excluded 审计状态与决策（2026-10-31）
+
+- 当前 excluded：`gcc-torture.excluded` 396（dialect/asm/vector/_Complex/builtin/resource）、`gcc-torture-compile.excluded` 609、`compcert.excluded` 34、`tcc-tests2.excluded` 1。
+- HFA coerce 残留待确认：`20071102-1`、`981223-1`、`pr55921`；`pr38969` 已回收。若确认不是 `_Complex` 且实测通过再回收。
+- GCC compile excluded 主要是 gnu89/implicit-int/K&R（non-goal）、warning-first 需重观察、resource/asm/vector/builtin（non-goal）。
+- 已确认决策：C17；`_Complex`/GCC builtins/外部 inline/weak/CIB-to-CIB/线程原子汇编 vector/可增长内存 non-goal；诊断文本一致性 non-goal；跨 ABI nightly；runner triage flags 已实现。
+- 当前基线：full 4282/4515（233 skip）；standard 394/495；跨 ABI 每目标约145。
