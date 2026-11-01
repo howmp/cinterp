@@ -30,6 +30,23 @@ KNOWN_DATA = {
     "daylight",
     "program_invocation_name",
     "program_invocation_short_name",
+    "__environ",
+    "_environ",
+    "__progname",
+    "__progname_full",
+    "_pgmptr",
+    "_wpgmptr",
+    "__argc",
+    "__argv",
+    "__wargv",
+    "_wenviron",
+    "_tzname",
+    "_timezone",
+    "_daylight",
+    "_optarg",
+    "_optind",
+    "_opterr",
+    "_optopt",
 }
 
 

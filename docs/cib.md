@@ -306,6 +306,10 @@ VM 有 1 MiB 线性内存（`mem`），`mem_top` 是 bump pointer：
 | 0x9A | `VA_START` | — | 按目标 ABI 初始化 va_list，溢出参数放到 VM 内存 |
 | 0x9B | `VA_COPY` | — | 复制目标 ABI 的 va_list |
 | 0x9C | `CALL_INDIRECT_NATIVE` | u16 plan | 间接调用内部函数或原生 FFI 地址 |
+| 0x9D | `STACKSAVE` | — | 压入当前 `mem_top` |
+| 0x9E | `STACKRESTORE` | — | 恢复 `mem_top` |
+| 0x9F | `ALLOCA_ALIGNED` | u16 size,u8 align | 对齐的静态 alloca |
+| 0xA0 | `ALLOCA_DYN_ALIGN` | u8 align | 对齐的动态 alloca（size 在栈顶） |
 
 ### 4.1 浮点谓词
 

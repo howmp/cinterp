@@ -110,6 +110,42 @@ pub const OP_CALL_VARIADIC: u8 = 0x99;
 pub const OP_VA_START: u8 = 0x9A;
 pub const OP_VA_COPY: u8 = 0x9B;
 pub const OP_CALL_INDIRECT_NATIVE: u8 = 0x9C;
+pub const OP_STACKSAVE: u8 = 0x9D;
+pub const OP_STACKRESTORE: u8 = 0x9E;
+pub const OP_ALLOCA_ALIGNED: u8 = 0x9F;
+pub const OP_ALLOCA_DYN_ALIGN: u8 = 0xA0;
+
+fn libcErrnoLocation() ?*c_int {
+    const sym = native.symbol(null, "__errno_location") orelse return null;
+    const fn_ptr: *const fn () callconv(.C) *c_int = @ptrCast(@alignCast(sym));
+    return fn_ptr();
+}
+
+fn setErrno(value: c_int) void {
+    if (libcErrnoLocation()) |p| p.* = value;
+}
+
+fn shimStrtol(nptr: ?[*:0]const u8, endptr: ?*?[*:0]u8, base: c_int) callconv(.C) c_long {
+    if (base != 0 and (base < 2 or base > 36)) {
+        if (endptr) |ep| ep.* = @constCast(nptr);
+        setErrno(22); // EINVAL
+        return 0;
+    }
+    const sym = native.symbol(null, "strtol") orelse return 0;
+    const fn_ptr: *const fn (?[*:0]const u8, ?*?[*:0]u8, c_int) callconv(.C) c_long = @ptrCast(@alignCast(sym));
+    return fn_ptr(nptr, endptr, base);
+}
+
+fn shimWcstol(nptr: ?[*:0]const c_int, endptr: ?*?[*:0]c_int, base: c_int) callconv(.C) c_long {
+    if (base != 0 and (base < 2 or base > 36)) {
+        if (endptr) |ep| ep.* = @constCast(nptr);
+        setErrno(22);
+        return 0;
+    }
+    const sym = native.symbol(null, "wcstol") orelse return 0;
+    const fn_ptr: *const fn (?[*:0]const c_int, ?*?[*:0]c_int, c_int) callconv(.C) c_long = @ptrCast(@alignCast(sym));
+    return fn_ptr(nptr, endptr, base);
+}
 
 fn readU16At(bytes: []const u8, off: usize) u16 {
     return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
@@ -239,7 +275,7 @@ pub const VM = struct {
     func_count: usize = 0,
     values: [MAX_STACK]Value = undefined,
     sp: usize = 0,
-    mem: [1024 * 1024]u8 align(16) = undefined,
+    mem: [1024 * 1024]u8 align(32) = undefined,
     mem_top: usize = 0,
     plan_store: ?*plan_loader.Store = null,
     target: ?link_loader.TargetInfo = null,
@@ -468,6 +504,8 @@ pub const VM = struct {
     }
 
     fn resolveNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
+        if (std.mem.eql(u8, name, "strtol")) return @ptrCast(&shimStrtol);
+        if (std.mem.eql(u8, name, "wcstol")) return @ptrCast(&shimWcstol);
         if (name.len >= self.symbol_buf.len) return error.SymbolTooLong;
         @memcpy(self.symbol_buf[0..name.len], name);
         self.symbol_buf[name.len] = 0;
@@ -1226,6 +1264,16 @@ pub const VM = struct {
                     const target = try self.resolveNative(idx, p.name[0..n]);
                     try self.invokeFfi(plan, target);
                 },
+                OP_STACKSAVE => {
+                    try self.push(.{ .i = @intCast(self.mem_top) });
+                },
+                OP_STACKRESTORE => {
+                    const v = try self.pop();
+                    if (v.i < 0) return error.BadMemorySize;
+                    const n: usize = @intCast(v.i);
+                    if (n > self.mem.len) return error.OutOfMemory;
+                    self.mem_top = n;
+                },
                 OP_VA_START => {
                     const pv = try self.pop();
                     const extra = if (va_count > va_named) va_count - va_named else 0;
@@ -1364,11 +1412,36 @@ pub const VM = struct {
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
                     try self.push(.{ .i = @bitCast(addr) });
                 },
+                OP_ALLOCA_ALIGNED => {
+                    const size = try readU16(code, &ip);
+                    const align_raw = try readU8(code, &ip);
+                    const alignment: usize = if (align_raw == 0) 8 else align_raw;
+                    const start = (self.mem_top + alignment - 1) & ~(alignment - 1);
+                    const n: usize = size;
+                    if (start + n > self.mem.len) return error.OutOfMemory;
+                    @memset(self.mem[start .. start + n], 0);
+                    self.mem_top = start + n;
+                    const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
+                    try self.push(.{ .i = @bitCast(addr) });
+                },
                 OP_ALLOCA_DYN => {
                     const sv = try self.pop();
                     if (sv.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(sv.i);
                     const start = (self.mem_top + 7) & ~@as(usize, 7);
+                    if (start + n > self.mem.len) return error.OutOfMemory;
+                    @memset(self.mem[start .. start + n], 0);
+                    self.mem_top = start + n;
+                    const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
+                    try self.push(.{ .i = @bitCast(addr) });
+                },
+                OP_ALLOCA_DYN_ALIGN => {
+                    const align_raw = try readU8(code, &ip);
+                    const alignment: usize = if (align_raw == 0) 8 else align_raw;
+                    const sv = try self.pop();
+                    if (sv.i < 0) return error.BadMemorySize;
+                    const n: usize = @intCast(sv.i);
+                    const start = (self.mem_top + alignment - 1) & ~(alignment - 1);
                     if (start + n > self.mem.len) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;

@@ -108,6 +108,10 @@ OP_CALL_VARIADIC = 0x99
 OP_VA_START = 0x9A
 OP_VA_COPY = 0x9B
 OP_CALL_INDIRECT_NATIVE = 0x9C
+OP_STACKSAVE = 0x9D
+OP_STACKRESTORE = 0x9E
+OP_ALLOCA_ALIGNED = 0x9F
+OP_ALLOCA_DYN_ALIGN = 0xA0
 
 LLVM_LIBC_INTRINSICS = {
     "llvm.fabs.f32": "fabsf",
@@ -1111,7 +1115,10 @@ class Lowerer:
         if rhs.startswith("alloca "):
             if result is None:
                 raise ValueError("alloca without result")
-            ty = re.sub(r",\s*align\s+\d+\s*$", "", rhs[len("alloca "):]).strip()
+            raw_alloc = rhs[len("alloca "):]
+            am = re.search(r",\s*align\s+(\d+)\s*$", raw_alloc)
+            alloc_align = int(am.group(1)) if am else 8
+            ty = re.sub(r",\s*align\s+\d+\s*$", "", raw_alloc).strip()
             parts = split_top(ty, ",")
             ty = parts[0].strip()
             if len(parts) > 1:
@@ -1120,14 +1127,23 @@ class Lowerer:
                 if size != 1:
                     self.emit_const(size)
                     self.emit_u8(OP_MUL)
-                self.emit_u8(OP_ALLOCA_DYN)
+                if alloc_align > 8:
+                    self.emit_u8(OP_ALLOCA_DYN_ALIGN)
+                    self.emit_u8(alloc_align)
+                else:
+                    self.emit_u8(OP_ALLOCA_DYN)
                 self.store_slot(self.slot_for(result))
                 return
             size = self.type_size(ty)
             if size <= 0 or size > 0xFFFF:
                 raise ValueError(f"bad alloca size {size} for {ty}")
-            self.emit_u8(OP_ALLOCA)
-            self.emit_u16(size)
+            if alloc_align > 8:
+                self.emit_u8(OP_ALLOCA_ALIGNED)
+                self.emit_u16(size)
+                self.emit_u8(alloc_align)
+            else:
+                self.emit_u8(OP_ALLOCA)
+                self.emit_u16(size)
             self.store_slot(self.slot_for(result))
             return
 
@@ -1615,12 +1631,6 @@ class Lowerer:
         if re.match(r"(?:tail\s+)?call\s+void\s+null\(\)$", rhs):
             return
 
-        if re.match(r"(?:tail\s+)?call\s+(?:ptr|void)\s+@llvm\.stack(save|restore)", rhs):
-            if result is not None:
-                self.emit_const(0)
-                self.store_slot(self.slot_for(result))
-            return
-
         if re.match(r"(?:tail\s+)?call\s+void\s+@llvm\.(lifetime|dbg)\.", rhs):
             return
 
@@ -1717,6 +1727,17 @@ class Lowerer:
                 if result is not None:
                     self.emit_const(0)
                     self.store_slot(self.slot_for(result))
+                return
+            if fname in ("llvm.stacksave.p0", "llvm.stacksave"):
+                self.emit_u8(OP_STACKSAVE)
+                if result is not None:
+                    self.store_slot(self.slot_for(result))
+                return
+            if fname in ("llvm.stackrestore.p0", "llvm.stackrestore"):
+                if not args:
+                    raise ValueError(f"bad stackrestore: {line}")
+                self.emit_operand(args[0].strip())
+                self.emit_u8(OP_STACKRESTORE)
                 return
             if fname in ("llvm.va_start.p0", "llvm.va_start"):
                 if not args:

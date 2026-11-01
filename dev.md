@@ -861,7 +861,7 @@ make fuzz                 # 1000 load-only mutations
 make fuzz-exec            # 500 safe execution mutations
 make differential
 make bench
-make size                 # native runtime 95,264B；qsort.cib 646B
+make size                 # native runtime 95,920B；qsort.cib 646B
 make size-cross           # static sysv 77,544 / win64 85,504 / win32 101,888 / arm64 88,824
 make release-artifacts
 HOST=admin@192.168.153.132 ./scripts/test_cross.sh
@@ -917,8 +917,8 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
-- **测试集**：csuite 14、c-testsuite 218+2 skip、TCC 95+47 skip、chibicc 15+26 skip、libc-test 47+28 skip、GCC execute 1194+52 skip、GCC compile 1407+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 59+20 skip。总计 4214 通过 / 240 显式 skip；另有 1098 个明确排除的非目标用例。
-- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 跑 csuite 14/14，以及 c-testsuite、TCC、GCC、CompCert 各 12 个 upstream smoke，全部通过；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
+- **测试集**：csuite 17、c-testsuite 218+2 skip、TCC 97+45 skip、chibicc 15+26 skip、libc-test 49+26 skip、GCC execute 1194+52 skip、GCC compile 1407+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 59+20 skip。总计 4221 通过 / 236 显式 skip；另有 1098 个明确排除的非目标用例。
+- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 跑 csuite 17/17，以及 c-testsuite、TCC、GCC、CompCert 各 12 个 upstream smoke，全部通过；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
 - **策略**：不自动更新 expected/skip；新增失败必须先分类（compile/runtime/mismatch/timeout/harness），再修复或写入显式 skip；`build/suites` 不进入版本库。TCC harness 对 `__FILE__` 绝对路径、行尾空白和 TCC 编译器警告做语义归一化；已恢复 4 个误判用例。
@@ -927,14 +927,14 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - `make debug-runtime` / `zig build -Doptimize=Debug`：保留 unwind tables、frame pointer、error tracing 和 panic 栈回溯；约 8.8 MiB（含调试符号）。
 - `make runtime`：ReleaseSmall 关闭 unwind tables、frame pointer、error tracing，strip 符号，并对 ELF 额外移除 `.eh_frame`/`.eh_frame_hdr`；保留必要的 CLI/VM 错误码和简短错误信息，移除崩溃栈回溯和详细运行时诊断。
-- 当前 ReleaseSmall：native dynamic Linux x64 95,264B（裁 `.eh_frame` 后）；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
+- 当前 ReleaseSmall：native dynamic Linux x64 95,920B（裁 `.eh_frame` 后）；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
 - 发布产物使用 ReleaseSmall；调试/定位崩溃使用 Debug 或 ReleaseSafe。`--dump-target`/`--dump-imports` 等包检查命令仍保留，便于诊断 CIB 内容。
 
 ### 20.2 测试重构完成状态与边界（2026-10-31）
 
-- **支持集基线**：`make test-suites-full` 为 **4214/4454 通过，240 skip（94.6%）**；另有 **1098** 个 `.excluded` 非目标用例（GCC execute 454、GCC compile 609、CompCert 34、TCC 1）。
-- **标准集**：`make test-suites` 为 **389/492 通过，103 skip**；`make test` 通过。
-- **跨 ABI**：csuite 14/14；c-testsuite、TCC、GCC、CompCert upstream smoke 在 Win64/Win32/ARM64 各 12/12。Windows 使用 Zig MinGW 头文件，ARM64 使用 qemu。
+- **支持集基线**：`make test-suites-full` 为 **4221/4457 通过，236 skip（94.7%）**；另有 **1098** 个 `.excluded` 非目标用例（GCC execute 454、GCC compile 609、CompCert 34、TCC 1）。
+- **标准集**：`make test-suites` 为 **396/495 通过，99 skip**；`make test` 通过。
+- **跨 ABI**：csuite 17/17；c-testsuite、TCC、GCC、CompCert upstream smoke 在 Win64/Win32/ARM64 各 12/12。Windows 使用 Zig MinGW 头文件，ARM64 使用 qemu。
 - **生成式**：YARPGen 100 seeds 为 77 通过 / 23 明确 skip；Csmith 3/3 已知失败并保存 artifact；20-seed smoke 16 通过 / 4 skip。
 - **fuzz**：load 1000 次、exec 500 次，0 crash / 0 timeout。
 - **最近补齐的语言/运行时能力**：
@@ -960,4 +960,13 @@ zig build -Dtarget=aarch64-linux-gnu
 - **varargs**：额外参数重叠时反向拷贝；实现 `va_copy`；修复 CompCert `varargs1/2`。
 - **ABI**：`<2 x float>`/HFA coerce 参数按位传输；`udiv/urem` 按声明宽度掩码。
 - **符号**：CIVM/plan 名称上限从 32 提升到 128，修复长 inline/符号名。
-- **结果**：full 4214/4454（240 skip）；standard 389/492；TCC95/47、GCC1194/52、CompCert55/20、libc-test47/28、libc-regression48/21。线程/`RLIMIT_STACK` 敏感用例仍显式隔离。
+- **结果**：full 4221/4457（236 skip）；standard 396/495；TCC97/45、GCC1194/52、CompCert55/20、libc-test49/26、libc-regression48/21。线程/`RLIMIT_STACK` 敏感用例仍显式隔离。
+
+### 20.4 VLA/C11/external data/stdio 补齐（2026-10-31）
+
+- **VLA**：实现 `llvm.stacksave/stackrestore`，恢复 `mem_top`；VLA 在循环/作用域结束时复用栈区。TCC `79_vla_continue`、`122_vla_reuse` 通过。
+- **柔性数组**：struct 尾部 `[]` 布局、malloc 扩展和 GEP 访问通过 csuite `vla_fam` 验证。
+- **C11**：`_Generic`、`_Static_assert`、`_Alignas/_Alignof`、`static inline`、`_Noreturn` 通过 `csuite/c11`；新增 aligned alloca opcode，支持 local `_Alignas(32)`。
+- **external data**：补充 `__environ`、`_environ`、`__progname*`、`_pgmptr`、`_tzname`、`_timezone`、`_daylight`、`_opt*` 等数据别名；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 通过 cstdapi helper provider 解析。`csuite/external_data` 四目标通过。
+- **stdio/wide/locale**：修复实际 cinterp 侧 `snprintf`/字符串问题；`strtol/wcstol` 非法 base 增加原生 shim（合法 base 委托宿主 libc，非法 base 设置 `endptr=nptr`、`EINVAL`）。其余 `libc-test` mismatch 已用原生 glibc 复现，标记为 host-libc reference difference（musl expected 不适用于当前宿主），不是 cinterp 回归。
+- **结果**：full 4221/4457（236 skip）；standard 396/495；csuite 17/17；TCC 97/45；libc-test 49/26；跨 ABI csuite 17/17。

@@ -56,7 +56,17 @@ def _symbol_name(name: str) -> str:
     return base
 
 
+_WINDOWS_UCRT_HELPERS = {
+    "_errno",
+    "__acrt_iob_func",
+    "__p__environ",
+    "__p__wenviron",
+}
+
+
 def lookup(target: Target, name: str) -> list[Provider] | None:
+    if target.os == "windows" and name in _WINDOWS_UCRT_HELPERS:
+        return [Provider(kind=1, name="ucrtbase.dll", symbol=name)]
     data = _load()
     target_data = data.get("targets", {}).get(target.name)
     if not target_data:
