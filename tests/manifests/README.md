@@ -36,7 +36,7 @@ make test-suites-smoke      # csuite + critical metadata
 make test-suites            # csuite, c-testsuite, TCC, chibicc, libc-test
 make test-suites-full       # adds GCC torture, CompCert, LLVM UnitTests
 make test-suites-nightly    # all fixed suites
-make test-suites-cross      # csuite + upstream smoke on Win64/Win32/ARM64
+make test-suites-cross      # csuite + ~145 portable cases on Win64/Win32/ARM64
 make generate-diff          # YARPGen differential smoke
 ```
 
@@ -85,8 +85,10 @@ TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whi
 | compcert-compile | 30 | 4 |
 | llvm-regression-c | 935 | 0 |
 | libc-test-regression | 48 | 21 |
-| c-testsuite-smoke | 12 | 0 |
-| tcc-smoke / gcc-smoke / compcert-smoke | 12 each | 0 |
+| c-testsuite-smoke | 40 | 0 native；ARM64 39+1 skip |
+| tcc-smoke | 24 | 0 native；Windows 23+1 skip |
+| gcc-smoke | 40 | 0 |
+| compcert-smoke | 24 | 0 native；Windows 23+1 skip |
 | **total** | **4282** | **233** |
 
 `make test-suites-full` is the command that produced this table; generated

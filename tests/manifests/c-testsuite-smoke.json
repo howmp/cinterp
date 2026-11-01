@@ -70,6 +70,150 @@
       "id": "00012",
       "source": "tests/single-exec/00012.c",
       "expected_stdout": "tests/single-exec/00012.c.expected"
+    },
+    {
+      "id": "00013",
+      "source": "tests/single-exec/00013.c",
+      "expected_stdout": "tests/single-exec/00013.c.expected"
+    },
+    {
+      "id": "00014",
+      "source": "tests/single-exec/00014.c",
+      "expected_stdout": "tests/single-exec/00014.c.expected"
+    },
+    {
+      "id": "00015",
+      "source": "tests/single-exec/00015.c",
+      "expected_stdout": "tests/single-exec/00015.c.expected"
+    },
+    {
+      "id": "00016",
+      "source": "tests/single-exec/00016.c",
+      "expected_stdout": "tests/single-exec/00016.c.expected"
+    },
+    {
+      "id": "00017",
+      "source": "tests/single-exec/00017.c",
+      "expected_stdout": "tests/single-exec/00017.c.expected"
+    },
+    {
+      "id": "00018",
+      "source": "tests/single-exec/00018.c",
+      "expected_stdout": "tests/single-exec/00018.c.expected"
+    },
+    {
+      "id": "00019",
+      "source": "tests/single-exec/00019.c",
+      "expected_stdout": "tests/single-exec/00019.c.expected"
+    },
+    {
+      "id": "00020",
+      "source": "tests/single-exec/00020.c",
+      "expected_stdout": "tests/single-exec/00020.c.expected"
+    },
+    {
+      "id": "00021",
+      "source": "tests/single-exec/00021.c",
+      "expected_stdout": "tests/single-exec/00021.c.expected"
+    },
+    {
+      "id": "00022",
+      "source": "tests/single-exec/00022.c",
+      "expected_stdout": "tests/single-exec/00022.c.expected"
+    },
+    {
+      "id": "00023",
+      "source": "tests/single-exec/00023.c",
+      "expected_stdout": "tests/single-exec/00023.c.expected"
+    },
+    {
+      "id": "00024",
+      "source": "tests/single-exec/00024.c",
+      "expected_stdout": "tests/single-exec/00024.c.expected"
+    },
+    {
+      "id": "00025",
+      "source": "tests/single-exec/00025.c",
+      "expected_stdout": "tests/single-exec/00025.c.expected"
+    },
+    {
+      "id": "00026",
+      "source": "tests/single-exec/00026.c",
+      "expected_stdout": "tests/single-exec/00026.c.expected"
+    },
+    {
+      "id": "00027",
+      "source": "tests/single-exec/00027.c",
+      "expected_stdout": "tests/single-exec/00027.c.expected"
+    },
+    {
+      "id": "00028",
+      "source": "tests/single-exec/00028.c",
+      "expected_stdout": "tests/single-exec/00028.c.expected"
+    },
+    {
+      "id": "00029",
+      "source": "tests/single-exec/00029.c",
+      "expected_stdout": "tests/single-exec/00029.c.expected"
+    },
+    {
+      "id": "00030",
+      "source": "tests/single-exec/00030.c",
+      "expected_stdout": "tests/single-exec/00030.c.expected"
+    },
+    {
+      "id": "00031",
+      "source": "tests/single-exec/00031.c",
+      "expected_stdout": "tests/single-exec/00031.c.expected"
+    },
+    {
+      "id": "00032",
+      "source": "tests/single-exec/00032.c",
+      "expected_stdout": "tests/single-exec/00032.c.expected"
+    },
+    {
+      "id": "00033",
+      "source": "tests/single-exec/00033.c",
+      "expected_stdout": "tests/single-exec/00033.c.expected"
+    },
+    {
+      "id": "00034",
+      "source": "tests/single-exec/00034.c",
+      "expected_stdout": "tests/single-exec/00034.c.expected"
+    },
+    {
+      "id": "00035",
+      "source": "tests/single-exec/00035.c",
+      "expected_stdout": "tests/single-exec/00035.c.expected"
+    },
+    {
+      "id": "00036",
+      "source": "tests/single-exec/00036.c",
+      "expected_stdout": "tests/single-exec/00036.c.expected"
+    },
+    {
+      "id": "00037",
+      "source": "tests/single-exec/00037.c",
+      "expected_stdout": "tests/single-exec/00037.c.expected"
+    },
+    {
+      "id": "00038",
+      "source": "tests/single-exec/00038.c",
+      "expected_stdout": "tests/single-exec/00038.c.expected"
+    },
+    {
+      "id": "00039",
+      "source": "tests/single-exec/00039.c",
+      "expected_stdout": "tests/single-exec/00039.c.expected"
+    },
+    {
+      "id": "00040",
+      "source": "tests/single-exec/00040.c",
+      "expected_stdout": "tests/single-exec/00040.c.expected",
+      "timeout": 90,
+      "skip_by_target": {
+        "aarch64-linux": "qemu timeout/non-portable runtime behavior"
+      }
     }
   ]
 }

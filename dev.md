@@ -918,7 +918,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
 - **测试集**：csuite 17、c-testsuite 218+2 skip、TCC 97+45 skip、chibicc 15+26 skip、libc-test 47+28 skip、GCC execute 1252+52 skip、GCC compile 1407+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 64+15 skip。总计 4282 通过 / 233 显式 skip；另有 1040 个明确排除的非目标用例。
-- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 跑 csuite 17/17，以及 c-testsuite、TCC、GCC、CompCert 各 12 个 upstream smoke，全部通过；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
+- **跨 ABI**：`make test-suites-cross` 每目标约 145 个：csuite 17/17，c-testsuite-smoke 40、GCC-smoke 40、CompCert-smoke 24、TCC-smoke 24；Windows/ARM 平台差异有显式 per-target skip。Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
 - **策略**：不自动更新 expected/skip；新增失败必须先分类（compile/runtime/mismatch/timeout/harness），再修复或写入显式 skip；`build/suites` 不进入版本库。TCC harness 对 `__FILE__` 绝对路径、行尾空白和 TCC 编译器警告做语义归一化；已恢复 4 个误判用例。
@@ -934,7 +934,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **支持集基线**：`make test-suites-full` 为 **4282/4515 通过，233 skip（94.7%）**；另有 **1040** 个 `.excluded` 非目标用例（GCC execute 396、GCC compile 609、CompCert 34、TCC 1）。
 - **标准集**：`make test-suites` 为 **394/495 通过，101 skip**；`make test` 通过。
-- **跨 ABI**：csuite 17/17；c-testsuite、TCC、GCC、CompCert upstream smoke 在 Win64/Win32/ARM64 各 12/12。Windows 使用 Zig MinGW 头文件，ARM64 使用 qemu。
+- **跨 ABI**：csuite 17/17；扩展 smoke 每目标约 145（c-testsuite 40、GCC 40、CompCert 24、TCC 24），Windows/ARM 平台差异使用 per-target skip。Windows 使用 Zig MinGW 头文件，ARM64 使用 qemu。
 - **生成式**：YARPGen 100 seeds 为 77 通过 / 23 明确 skip；Csmith 3/3 已知失败并保存 artifact；20-seed smoke 16 通过 / 4 skip。
 - **fuzz**：load 1000 次、exec 500 次，0 crash / 0 timeout。
 - **最近补齐的语言/运行时能力**：
@@ -1059,3 +1059,10 @@ zig build -Dtarget=aarch64-linux-gnu
 - 按范围决策只回收 2 个：`pr27285`（global const）和 `20040313-1`（packed literal struct）。
 - `20020411-1`/`20050607-1`/`complex-3/7` 仍属 vector/_Complex non-goal；GCC builtin 类不回收。
 - excluded 1042→1040；GCC execute 398→396；full 4282/4515，233 skip。
+
+### 20.16 跨 ABI 扩展（2026-10-31）
+
+- c-testsuite-smoke 12→40、gcc-smoke 12→40、compcert-smoke 12→24、tcc-smoke 12→24；csuite 保持17。
+- 每目标约145：Win64/Win32 143 ok +2 platform skip；ARM64 144 ok +1 qemu skip。
+- Windows TCC `22_floating_point`、CompCert `binops` 因 CRT float/long-double 格式差异 per-target skip；ARM64 c-testsuite `00040` qemu timeout skip；CompCert `casts3` timeout 90。
+- 使用现有 per-case `skip_by_target`，没有新增 per-target expected 文件。

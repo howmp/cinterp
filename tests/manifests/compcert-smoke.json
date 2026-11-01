@@ -72,6 +72,71 @@
       "id": "int64",
       "source": "regression/int64.c",
       "expected_stdout": "regression/Results/int64"
+    },
+    {
+      "id": "binops",
+      "source": "regression/binops.c",
+      "expected_stdout": "regression/Results/binops",
+      "skip_by_target": {
+        "x86_64-windows": "Windows long-double formatting differs from reference",
+        "i686-windows": "Windows long-double formatting differs from reference"
+      }
+    },
+    {
+      "id": "bitfields1",
+      "source": "regression/bitfields1.c",
+      "expected_stdout": "regression/Results/bitfields1"
+    },
+    {
+      "id": "bitfields2",
+      "source": "regression/bitfields2.c",
+      "expected_stdout": "regression/Results/bitfields2"
+    },
+    {
+      "id": "bitfields10",
+      "source": "regression/bitfields10.c",
+      "expected_stdout": "regression/Results/bitfields10"
+    },
+    {
+      "id": "casts3",
+      "source": "regression/casts3.c",
+      "expected_stdout": "regression/Results/casts3",
+      "timeout": 90
+    },
+    {
+      "id": "consteval",
+      "source": "regression/consteval.c",
+      "expected_stdout": "regression/Results/consteval"
+    },
+    {
+      "id": "expr6",
+      "source": "regression/expr6.c",
+      "expected_stdout": "regression/Results/expr6"
+    },
+    {
+      "id": "funct3",
+      "source": "regression/funct3.c",
+      "expected_stdout": "regression/Results/funct3"
+    },
+    {
+      "id": "funptr2",
+      "source": "regression/funptr2.c",
+      "expected_stdout": "regression/Results/funptr2"
+    },
+    {
+      "id": "generic",
+      "source": "regression/generic.c",
+      "expected_stdout": "regression/Results/generic"
+    },
+    {
+      "id": "ifconv",
+      "source": "regression/ifconv.c",
+      "expected_stdout": "regression/Results/ifconv"
+    },
+    {
+      "id": "instrsel",
+      "source": "regression/instrsel.c",
+      "expected_stdout": "regression/Results/instrsel"
     }
   ]
 }

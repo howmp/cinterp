@@ -70,6 +70,70 @@
       "id": "12_hashdefine",
       "source": "tests/tests2/12_hashdefine.c",
       "expected_stdout": "tests/tests2/12_hashdefine.expect"
+    },
+    {
+      "id": "13_integer_literals",
+      "source": "tests/tests2/13_integer_literals.c",
+      "expected_stdout": "tests/tests2/13_integer_literals.expect"
+    },
+    {
+      "id": "14_if",
+      "source": "tests/tests2/14_if.c",
+      "expected_stdout": "tests/tests2/14_if.expect"
+    },
+    {
+      "id": "15_recursion",
+      "source": "tests/tests2/15_recursion.c",
+      "expected_stdout": "tests/tests2/15_recursion.expect"
+    },
+    {
+      "id": "16_nesting",
+      "source": "tests/tests2/16_nesting.c",
+      "expected_stdout": "tests/tests2/16_nesting.expect"
+    },
+    {
+      "id": "17_enum",
+      "source": "tests/tests2/17_enum.c",
+      "expected_stdout": "tests/tests2/17_enum.expect"
+    },
+    {
+      "id": "19_pointer_arithmetic",
+      "source": "tests/tests2/19_pointer_arithmetic.c",
+      "expected_stdout": "tests/tests2/19_pointer_arithmetic.expect"
+    },
+    {
+      "id": "20_pointer_comparison",
+      "source": "tests/tests2/20_pointer_comparison.c",
+      "expected_stdout": "tests/tests2/20_pointer_comparison.expect"
+    },
+    {
+      "id": "21_char_array",
+      "source": "tests/tests2/21_char_array.c",
+      "expected_stdout": "tests/tests2/21_char_array.expect"
+    },
+    {
+      "id": "22_floating_point",
+      "source": "tests/tests2/22_floating_point.c",
+      "expected_stdout": "tests/tests2/22_floating_point.expect",
+      "skip_by_target": {
+        "x86_64-windows": "Windows float formatting differs from glibc reference",
+        "i686-windows": "Windows float formatting differs from glibc reference"
+      }
+    },
+    {
+      "id": "23_type_coercion",
+      "source": "tests/tests2/23_type_coercion.c",
+      "expected_stdout": "tests/tests2/23_type_coercion.expect"
+    },
+    {
+      "id": "26_character_constants",
+      "source": "tests/tests2/26_character_constants.c",
+      "expected_stdout": "tests/tests2/26_character_constants.expect"
+    },
+    {
+      "id": "28_strings",
+      "source": "tests/tests2/28_strings.c",
+      "expected_stdout": "tests/tests2/28_strings.expect"
     }
   ],
   "normalize_source_paths": true,

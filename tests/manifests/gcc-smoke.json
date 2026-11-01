@@ -59,6 +59,118 @@
     {
       "id": "20000314-3",
       "source": "gcc/testsuite/gcc.c-torture/execute/20000314-3.c"
+    },
+    {
+      "id": "20000121-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000121-1.c"
+    },
+    {
+      "id": "20000402-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000402-1.c"
+    },
+    {
+      "id": "20000412-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000412-1.c"
+    },
+    {
+      "id": "20000412-5",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000412-5.c"
+    },
+    {
+      "id": "20000412-6",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000412-6.c"
+    },
+    {
+      "id": "20000419-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000419-1.c"
+    },
+    {
+      "id": "20000422-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000422-1.c"
+    },
+    {
+      "id": "20000511-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000511-1.c"
+    },
+    {
+      "id": "20000519-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000519-1.c"
+    },
+    {
+      "id": "20000519-2",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000519-2.c"
+    },
+    {
+      "id": "20000528-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000528-1.c"
+    },
+    {
+      "id": "20000605-2",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000605-2.c"
+    },
+    {
+      "id": "20000605-3",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000605-3.c"
+    },
+    {
+      "id": "20000622-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000622-1.c"
+    },
+    {
+      "id": "20000706-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000706-1.c"
+    },
+    {
+      "id": "20000706-2",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000706-2.c"
+    },
+    {
+      "id": "20000706-3",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000706-3.c"
+    },
+    {
+      "id": "20000706-4",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000706-4.c"
+    },
+    {
+      "id": "20000706-5",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000706-5.c"
+    },
+    {
+      "id": "20000707-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000707-1.c"
+    },
+    {
+      "id": "20000715-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000715-1.c"
+    },
+    {
+      "id": "20000715-2",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000715-2.c"
+    },
+    {
+      "id": "20000717-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000717-1.c"
+    },
+    {
+      "id": "20000717-2",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000717-2.c"
+    },
+    {
+      "id": "20000717-4",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000717-4.c"
+    },
+    {
+      "id": "20000717-5",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000717-5.c"
+    },
+    {
+      "id": "20000722-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000722-1.c"
+    },
+    {
+      "id": "20000726-1",
+      "source": "gcc/testsuite/gcc.c-torture/execute/20000726-1.c"
     }
   ]
 }
