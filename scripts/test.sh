@@ -153,6 +153,19 @@ hfacb_out="$("$RUNTIME" --lib "$OUT/libffi_callback_hfa_helper.so" "$OUT/ffi_cal
 printf '%s\n' "$hfacb_out" | grep -Fq "result: 247"
 echo "OK ffi_callback_hfa -> 247"
 
+echo "== ordinary signal callback"
+python3 -m cinterp compile examples/ffi_signal.c -o "$OUT/ffi_signal.cib" >/dev/null
+signal_out="$("$RUNTIME" "$OUT/ffi_signal.cib" 2>&1)"
+printf '%s\n' "$signal_out" | grep -Fq "result: 42"
+echo "OK ffi_signal -> 42"
+
+echo "== ordinary atexit symbol"
+python3 -m cinterp compile examples/ffi_atexit.c -o "$OUT/ffi_atexit.cib" >/dev/null
+atexit_out="$("$RUNTIME" "$OUT/ffi_atexit.cib" 2>&1)"
+printf '%s\n' "$atexit_out" | grep -Fq "result: 42"
+printf '%s\n' "$atexit_out" | grep -Fq "bye"
+echo "OK ffi_atexit -> 42 + bye"
+
 echo "== error paths"
 if python3 -m cinterp compile "$OUT/does-not-exist.c" >/dev/null 2>&1; then
     echo "FAIL missing input accepted" >&2

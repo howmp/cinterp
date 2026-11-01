@@ -126,4 +126,6 @@ pub fn main() !void {
     };
     machine.result = result;
     std.debug.print("result: {d}\n", .{@as(i32, @truncate(result))});
+    // Keep the VM alive while libc runs ordinary atexit handlers.
+    std.c.exit(0);
 }

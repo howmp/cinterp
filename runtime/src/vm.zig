@@ -125,6 +125,12 @@ fn setErrno(value: c_int) void {
     if (libcErrnoLocation()) |p| p.* = value;
 }
 
+fn shimAtexit(cb: ?*const anyopaque) callconv(.C) c_int {
+    const sym = native.symbol(null, "__cxa_atexit") orelse return -1;
+    const fn_ptr: *const fn (?*const anyopaque, ?*anyopaque, ?*anyopaque) callconv(.C) c_int = @ptrCast(@alignCast(sym));
+    return fn_ptr(cb, null, null);
+}
+
 fn shimStrtol(nptr: ?[*:0]const u8, endptr: ?*?[*:0]u8, base: c_int) callconv(.C) c_long {
     if (base != 0 and (base < 2 or base > 36)) {
         if (endptr) |ep| ep.* = @constCast(nptr);
@@ -504,6 +510,7 @@ pub const VM = struct {
     }
 
     fn resolveNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
+        if (platform.os_id == 1 and std.mem.eql(u8, name, "atexit")) return @ptrCast(&shimAtexit);
         if (std.mem.eql(u8, name, "strtol")) return @ptrCast(&shimStrtol);
         if (std.mem.eql(u8, name, "wcstol")) return @ptrCast(&shimWcstol);
         if (name.len >= self.symbol_buf.len) return error.SymbolTooLong;

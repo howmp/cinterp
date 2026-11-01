@@ -885,7 +885,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 19.7 计划完成状态
 
-- **计划状态**：HFA/long double/聚合回调边角已完成；剩余 `_Complex`、`atexit`、`signal`、builtins、weak inline、内存配额和 excluded/generator 工作见 `plan.md`。
+- **计划状态**：HFA/long double/聚合回调边角已完成；`_Complex`/GCC builtins 明确不做，atexit/signal 已按普通 libc 符号/callback 处理；剩余 weak inline、内存配额和 excluded/generator 工作见 `plan.md`。
 - **2026-10-31 新增完成**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。
 - **明确范围外**：向量类型/vector ABI、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV `i128`/向量参数；Win32 fastcall 已单独支持。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
@@ -980,3 +980,11 @@ zig build -Dtarget=aarch64-linux-gnu
 - **聚合 sret/byval**：回调的隐藏 sret 指针和 byval struct 参数走已有 pointer 通道，24-byte `S24` 回调通过。
 - **回归**：新增 `examples/ffi_callback_hfa.c` + helper，覆盖 F4 HFA、D2 HFA、long double、S24 sret；native 与 AArch64 qemu 均得到 `247`。`make test`、full 4221/4457、standard 396/495、跨 ABI csuite 17/17 均通过。
 - **限制**：Win64/Win32 的 HFA/long-double 回调帧已编译通过，但未在远端 Windows 上用专用 helper 做值域回归；不做 vectorcall/COM。
+
+### 20.6 明确决策：_Complex / atexit / signal / GCC builtins（2026-10-31）
+
+- **`_Complex`**：明确不支持，已移出 `plan.md`，列入非目标；不为 complex ABI 增加实现。
+- **`atexit`**：作为普通 libc 符号处理，不实现 VM 级退出栈。glibc 不动态导出 `atexit`，运行时用 `__cxa_atexit` shim 映射；CLI 在 VM 仍存活时调用 libc `exit`，保证回调可执行。`examples/ffi_atexit.c` 输出 `result: 42` 后执行 `bye`。
+- **`signal`**：作为普通 callback 使用，复用现有 trampoline，不新增 VM signal 机制。`examples/ffi_signal.c` 注册内部 handler、`raise(SIGUSR1)` 后返回 42。
+- **GCC builtins**：明确放弃，移出计划；不新增 builtin lowering。
+- 回归已加入 `scripts/test.sh`。
