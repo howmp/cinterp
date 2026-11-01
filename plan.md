@@ -13,8 +13,8 @@ overview: 仅保留尚未完成的 excluded/skip 分类审计；当前基线 428
 
 ## 2. CompCert/TCC 候选
 
-- 只回收与已实现能力直接相关且 native/cross 实测通过的 skip；诊断文本一致性继续保持 non-goal。
-- 每个回收/保留项保留分类 token 和观察记录。
+- 已用 include-skipped 重跑：CompCert 55 通过/20 失败、TCC 97 通过/45 失败，无新增回收。
+- 剩余项属于平台差异、外部 inline、诊断文本或 non-goal；只保留审计说明。
 
 ## 3. 验收
 

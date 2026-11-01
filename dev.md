@@ -1074,3 +1074,10 @@ zig build -Dtarget=aarch64-linux-gnu
 - GCC compile excluded 主要是 gnu89/implicit-int/K&R（non-goal）、warning-first 需重观察、resource/asm/vector/builtin（non-goal）。
 - 已确认决策：C17；`_Complex`/GCC builtins/外部 inline/weak/CIB-to-CIB/线程原子汇编 vector/可增长内存 non-goal；诊断文本一致性 non-goal；跨 ABI nightly；runner triage flags 已实现。
 - 当前基线：full 4286/4519（233 skip）；standard 394/495；跨 ABI 每目标约145。
+
+### 20.18 剩余 candidate 重分诊（2026-10-31）
+
+- CompCert include-skipped：55 通过、20 失败（compile 12、mismatch 8），无新增回收。
+- TCC include-skipped：97 通过、45 失败（compile 20、mismatch 24、run 1），无新增回收。
+- GCC compile excluded 全量 609 重跑：20 通过；回收 `20071102-1`、`920615-1`、`pr113603`、`pr43191`；其余通过项为 vector/_Complex non-goal。compile excluded 减少到 605。
+- 之后没有新的无需产品决策的回收项；剩余为 dialect/asm/vector/builtin/diagnostic 分类和平台 skip。
