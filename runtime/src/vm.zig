@@ -1768,16 +1768,57 @@ pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) ca
     platform.validate(entry.plan) catch return;
     const n: usize = entry.plan.args.len;
     if (n > 8) return;
+    var scratch: [8192]u8 align(16) = undefined;
+    var scratch_used: usize = 0;
     var values: [8]Value = undefined;
     for (entry.plan.args, 0..) |arg, i| {
-        values[i] = if (arg.is_struct)
-            .{ .u = platform.callbackStructPtr(frame, arg.locs[0]) }
-        else
-            .{ .u = platform.callbackReadArg(frame, arg.locs[0]) };
+        if (arg.is_struct) {
+            if (arg.locs.len == 1 and arg.locs[0].kind == .stack) {
+                values[i] = .{ .u = platform.callbackStructPtr(frame, arg.locs[0]) };
+                continue;
+            }
+            const start = scratch_used;
+            const size: usize = @intCast(arg.size);
+            if (start + size > scratch.len) return;
+            @memset(scratch[start .. start + size], 0);
+            const first_off: usize = @intCast(arg.locs[0].offset);
+            for (arg.locs) |loc| {
+                const off: usize = @intCast(loc.offset);
+                if (off < first_off) continue;
+                const dst_off = off - first_off;
+                if (dst_off >= size) continue;
+                const count = @min(@as(usize, loc.size), size - dst_off);
+                platform.callbackReadBytes(frame, loc, scratch[start + dst_off .. start + dst_off + count], count);
+            }
+            const addr: u64 = @intCast(@intFromPtr(&scratch[start]));
+            values[i] = .{ .u = addr };
+            scratch_used += (size + 15) & ~@as(usize, 15);
+        } else {
+            values[i] = .{ .u = platform.callbackReadArg(frame, arg.locs[0]) };
+        }
     }
     const result = machine.runCallback(entry.func, values[0..n]) catch return;
-    if (entry.plan.ret_locs.len == 0) return;
-    platform.callbackWriteRet(frame, entry.plan.ret_locs[0], @bitCast(result));
+    if (entry.plan.sret or entry.plan.ret_locs.len == 0) return;
+    const result_bits: u64 = @bitCast(result);
+    if (entry.plan.ret_size > 8) {
+        const src: [*]const u8 = @ptrFromInt(addressFromBits(result));
+        for (entry.plan.ret_locs) |loc| {
+            const off: usize = @intCast(loc.offset);
+            const count = @min(@as(usize, loc.size), @as(usize, entry.plan.ret_size) - @min(off, @as(usize, entry.plan.ret_size)));
+            if (count == 0) continue;
+            platform.callbackWriteBytes(frame, loc, src[off..][0..count], count);
+        }
+    } else if (entry.plan.ret_locs.len > 1) {
+        const bytes = std.mem.asBytes(&result_bits);
+        for (entry.plan.ret_locs) |loc| {
+            const off: usize = @intCast(loc.offset);
+            if (off >= bytes.len) continue;
+            const count = @min(@as(usize, loc.size), bytes.len - off);
+            platform.callbackWriteBytes(frame, loc, bytes[off..][0..count], count);
+        }
+    } else {
+        platform.callbackWriteRet(frame, entry.plan.ret_locs[0], result_bits);
+    }
 }
 
 const Reader = struct {

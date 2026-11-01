@@ -115,6 +115,9 @@ pub const SysVCbFrame = extern struct {
     ret_rdx: u64,
     ret_xmm0: [2]u64,
     ret_xmm1: [2]u64,
+    ret_st0: [16]u8,
+    ret_x87: u8,
+    _ret_pad: [7]u8,
 };
 
 pub const Win64CbFrame = extern struct {
@@ -137,6 +140,7 @@ pub const Win32CbFrame = extern struct {
     ret_st0: f64,
     ret_x87: u8,
     _pad: [7]u8,
+    ret_st0_f80: [16]u8,
 };
 
 pub const Arm64CbFrame = extern struct {
@@ -151,6 +155,8 @@ pub const Arm64CbFrame = extern struct {
     ret_v0: [2]u64,
     ret_v1: [2]u64,
     saved_v8_15: [8]u64,
+    ret_v2: [2]u64,
+    ret_v3: [2]u64,
     sret: u64,
     _pad2: u64,
 };
@@ -165,21 +171,21 @@ pub const CallbackFrame = switch (abi_kind) {
 comptime {
     switch (abi_kind) {
         .sysv => {
-            if (@sizeOf(SysVCbFrame) != 240) @compileError("bad sysv cb size");
+            if (@sizeOf(SysVCbFrame) != 264) @compileError("bad sysv cb size");
         },
         .win64 => {
             if (@sizeOf(Win64CbFrame) != 320) @compileError("bad win64 cb size");
             if (@offsetOf(Win64CbFrame, "saved_xmm6_15") != 160) @compileError("bad win64 cb saved");
         },
         .win32 => {
-            if (@sizeOf(Win32CbFrame) != 32) @compileError("bad win32 cb size");
+            if (@sizeOf(Win32CbFrame) != 48) @compileError("bad win32 cb size");
             if (@offsetOf(Win32CbFrame, "ret_st0") != 16) @compileError("bad win32 cb st0");
         },
         .aapcs64 => {
-            if (@sizeOf(Arm64CbFrame) != 352) @compileError("bad arm64 cb size");
+            if (@sizeOf(Arm64CbFrame) != 384) @compileError("bad arm64 cb size");
             if (@offsetOf(Arm64CbFrame, "vec") != 80) @compileError("bad arm64 cb vec");
             if (@offsetOf(Arm64CbFrame, "ret_v0") != 240) @compileError("bad arm64 cb v0");
-            if (@offsetOf(Arm64CbFrame, "sret") != 336) @compileError("bad arm64 cb sret");
+            if (@offsetOf(Arm64CbFrame, "sret") != 368) @compileError("bad arm64 cb sret");
         },
     }
 }
@@ -574,6 +580,50 @@ fn callbackReadArm64(frame: *Arm64CbFrame, loc: abi.Loc) u64 {
     };
 }
 
+pub fn callbackReadBytes(frame: *CallbackFrame, loc: abi.Loc, dst: []u8, n: usize) void {
+    const count = @min(n, @as(usize, loc.size));
+    switch (abi_kind) {
+        .sysv => {
+            const f: *SysVCbFrame = @ptrCast(frame);
+            switch (loc.kind) {
+                .gpr => @memcpy(dst[0..count], std.mem.asBytes(&f.gpr[@intCast(loc.index)])[0..count]),
+                .xmm => @memcpy(dst[0..count], std.mem.asBytes(&f.xmm[@intCast(loc.index)])[0..count]),
+                .stack => @memcpy(dst[0..count], f.stack_args[@intCast(loc.index)..][0..count]),
+                .sret => @memcpy(dst[0..@min(count, 8)], std.mem.asBytes(&f.gpr[0])[0..@min(count, 8)]),
+                else => {},
+            }
+        },
+        .win64 => {
+            const f: *Win64CbFrame = @ptrCast(frame);
+            switch (loc.kind) {
+                .gpr => @memcpy(dst[0..count], std.mem.asBytes(&f.gpr[@intCast(loc.index)])[0..count]),
+                .xmm => @memcpy(dst[0..count], std.mem.asBytes(&f.xmm[@intCast(loc.index)])[0..count]),
+                .stack => @memcpy(dst[0..count], f.stack_args[@intCast(loc.index)..][0..count]),
+                .sret => @memcpy(dst[0..@min(count, 8)], std.mem.asBytes(&f.gpr[0])[0..@min(count, 8)]),
+                else => {},
+            }
+        },
+        .win32 => {
+            const f: *Win32CbFrame = @ptrCast(frame);
+            switch (loc.kind) {
+                .stack => @memcpy(dst[0..count], f.stack_args[@intCast(loc.index)..][0..count]),
+                .sret => @memcpy(dst[0..@min(count, 8)], f.stack_args[0..@min(count, 8)]),
+                else => {},
+            }
+        },
+        .aapcs64 => {
+            const f: *Arm64CbFrame = @ptrCast(frame);
+            switch (loc.kind) {
+                .gpr => @memcpy(dst[0..count], std.mem.asBytes(&f.gpr[@intCast(loc.index)])[0..count]),
+                .xmm => @memcpy(dst[0..count], std.mem.asBytes(&f.vec[@intCast(loc.index)])[0..count]),
+                .stack => @memcpy(dst[0..count], f.stack_args[@intCast(loc.index)..][0..count]),
+                .sret => @memcpy(dst[0..@min(count, 8)], std.mem.asBytes(&f.sret)[0..@min(count, 8)]),
+                else => {},
+            }
+        },
+    }
+}
+
 pub fn callbackReadArg(frame: *CallbackFrame, loc: abi.Loc) u64 {
     return switch (abi_kind) {
         .sysv => callbackReadSysV(@ptrCast(frame), loc),
@@ -667,6 +717,60 @@ fn callbackWriteArm64(frame: *Arm64CbFrame, loc: abi.Loc, bits: u64) void {
         .xmm0 => frame.ret_v0[0] = bits,
         .xmm1 => frame.ret_v1[0] = bits,
         else => {},
+    }
+}
+
+pub fn callbackWriteBytes(frame: *CallbackFrame, loc: abi.Loc, src: []const u8, n: usize) void {
+    const count = @min(n, @as(usize, loc.size));
+    switch (abi_kind) {
+        .sysv => {
+            const f: *SysVCbFrame = @ptrCast(frame);
+            switch (loc.kind) {
+                .rax => @memcpy(std.mem.asBytes(&f.ret_rax)[0..count], src[0..count]),
+                .rdx => @memcpy(std.mem.asBytes(&f.ret_rdx)[0..count], src[0..count]),
+                .xmm0 => @memcpy(std.mem.asBytes(&f.ret_xmm0)[0..count], src[0..count]),
+                .xmm1 => @memcpy(std.mem.asBytes(&f.ret_xmm1)[0..count], src[0..count]),
+                .st0 => {
+                    @memcpy(f.ret_st0[0..count], src[0..count]);
+                    f.ret_x87 = 1;
+                },
+                else => {},
+            }
+        },
+        .win64 => {
+            const f: *Win64CbFrame = @ptrCast(frame);
+            switch (loc.kind) {
+                .rax => @memcpy(std.mem.asBytes(&f.ret_rax)[0..count], src[0..count]),
+                .rdx => @memcpy(std.mem.asBytes(&f.ret_rdx)[0..count], src[0..count]),
+                .xmm0 => @memcpy(std.mem.asBytes(&f.ret_xmm0)[0..count], src[0..count]),
+                .xmm1 => @memcpy(std.mem.asBytes(&f.ret_xmm1)[0..count], src[0..count]),
+                else => {},
+            }
+        },
+        .win32 => {
+            const f: *Win32CbFrame = @ptrCast(frame);
+            switch (loc.kind) {
+                .rax => @memcpy(std.mem.asBytes(&f.ret_eax)[0..@min(count, 4)], src[0..@min(count, 4)]),
+                .rdx => @memcpy(std.mem.asBytes(&f.ret_edx)[0..@min(count, 4)], src[0..@min(count, 4)]),
+                .xmm0, .st0 => {
+                    @memcpy(f.ret_st0_f80[0..count], src[0..count]);
+                    f.ret_x87 = 2;
+                },
+                else => {},
+            }
+        },
+        .aapcs64 => {
+            const f: *Arm64CbFrame = @ptrCast(frame);
+            switch (loc.kind) {
+                .rax => @memcpy(std.mem.asBytes(&f.ret_x0)[0..count], src[0..count]),
+                .rdx => @memcpy(std.mem.asBytes(&f.ret_x1)[0..count], src[0..count]),
+                .xmm0 => @memcpy(std.mem.asBytes(&f.ret_v0)[0..count], src[0..count]),
+                .xmm1 => @memcpy(std.mem.asBytes(&f.ret_v1)[0..count], src[0..count]),
+                .xmm2 => @memcpy(std.mem.asBytes(&f.ret_v2)[0..count], src[0..count]),
+                .xmm3 => @memcpy(std.mem.asBytes(&f.ret_v3)[0..count], src[0..count]),
+                else => {},
+            }
+        },
     }
 }
 

@@ -6,6 +6,7 @@
 .equ CB_EDX, 12
 .equ CB_ST0, 16
 .equ CB_X87, 24
+.equ CB_ST0_F80, 32
 
 .text
 
@@ -15,7 +16,7 @@ ci_cb_win32_entry:
     push ebx
     push esi
     push edi
-    sub esp, 32
+    sub esp, 64
     and esp, -16
     mov ebx, esp
     mov eax, [ebp + 4]
@@ -36,9 +37,16 @@ ci_cb_win32_entry:
     add esp, 16
     mov eax, [ebx + CB_EAX]
     mov edx, [ebx + CB_EDX]
-    cmp byte ptr [ebx + CB_X87], 0
-    je .Lcb_no_x87
+    cmp byte ptr [ebx + CB_X87], 1
+    je .Lcb_x87_f64
+    cmp byte ptr [ebx + CB_X87], 2
+    je .Lcb_x87_f80
+    jmp .Lcb_no_x87
+.Lcb_x87_f64:
     fld qword ptr [ebx + CB_ST0]
+    jmp .Lcb_no_x87
+.Lcb_x87_f80:
+    fld tbyte ptr [ebx + CB_ST0_F80]
 .Lcb_no_x87:
     lea esp, [ebp - 12]
     pop edi

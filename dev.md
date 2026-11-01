@@ -740,20 +740,20 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 ## 15. 当前边界与明确不支持
 
 - **平台**：Linux x64、Windows x64、Windows x86、Linux ARM64 已支持；Linux i386/ARM32、macOS、Windows ARM64 不在目标。
-- **C11**：`_Atomic`、`_Thread_local`、`_Complex`、`setjmp`/`longjmp`、内联汇编、向量类型、`indirectbr` 不支持；仅保证 clang `-O0` IR（已支持 phi/VLA/内部函数指针）。
+- **C11**：`_Atomic`、`_Thread_local`、`_Complex`、内联汇编、向量类型、`indirectbr` 不支持；`_Generic`、`_Static_assert`、`_Alignas/_Alignof`、VLA、`setjmp/longjmp`、static inline 已支持（仅保证 clang `-O0` IR）。
 - **long double**：x86 使用精确 f80，AArch64 使用 IEEE f128；FFI/varargs 已接入；Windows CRT `%Lf` 与原生 MinGW 输出一致（原生本身不支持该格式）。
-- **变长参数**：支持调用外部 varargs 和忽略额外参数的 varargs 定义；`va_start`/`va_arg` 尚不支持；varargs 中 struct/`long double` 受限。
-- **callback**：SysV/Win64/Win32/AArch64 静态 trampoline 已接入；HFA callback >2 向量、long double callback 未覆盖。
-- **Win32**：cdecl/stdcall 计划与符号解析已接入；`fastcall`/`thiscall` 不支持。
-- **AAPCS64**：HFA 3/4、栈 HFA 已覆盖；HFA callback >2 向量、部分大结构体组合未覆盖。
+- **变长参数**：内部/外部 varargs、`va_start`/`va_arg`/`va_end`/`va_copy` 已支持；struct/`long double` varargs 仍有边界限制。
+- **callback**：SysV/Win64/Win32/AArch64 静态 trampoline 已接入；HFA 参数/返回、long double ST0、sret/byval 聚合已覆盖；Windows HFA 专用 helper 未做远端值域回归。
+- **Win32**：cdecl/stdcall/fastcall 已接入；`thiscall` 不支持。
+- **AAPCS64**：HFA 3/4、栈 HFA、HFA callback 4 向量和 fp128/long double callback 已覆盖；少数大结构体组合仍需分诊。
 - **SysV**：packed/未对齐、MEMORY/sret、mixed aggregate 已覆盖；>2 eightbyte 非 MEMORY 聚合、i128、向量类型未纳入。
-- **外部数据符号**：`stdout`/`errno` 等 external global 未解析；c-testsuite 对应测试 skip。
+- **外部数据符号**：`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*` 等已解析，Windows UCRT helper 也接入；更冷门的数据符号仍按 provider/fallback 处理。
 - **工具链/信任**：clang `-O0`；VM 指针就是宿主指针，恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
 
 ## 16. 剩余风险与后续方向
 
-- **外部数据符号**：需要 native data symbol 地址槽/重定位，才能支持 `stdout`、`errno` 等。
-- **向量/复杂 ABI**：Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV i128/vector、HFA callback >2 向量仍是明确范围外。
+- **外部数据符号**：基础 data provider 已完成；剩余为非常见 libc/平台全局，遇未解析符号时按显式 skip 记录。
+- **向量/复杂 ABI**：Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV i128/vector 仍是明确范围外。
 - **long double**：Windows CRT 限制是宿主运行时问题；如需精确 `%Lf`，需提供自有格式化 shim。
 - **跨 ABI 执行 fuzz**：当前 safe bytecode fuzz 在 native 运行时；其他 ABI 需要对应运行时/Windows/qemu 上的 fuzz 流程。
 - **CI 外部环境**：Windows/ARM64 CI 使用托管 runner 的 smoke；完整 Windows SSH/qemu 矩阵仍需自托管环境。
@@ -879,18 +879,18 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 19.6 当前边界
 
 - external data 已支持基础场景；向量类型、复杂聚合全局初始化仍有 skip。
-- HFA callback >2 向量、long double callback、Win64 vectorcall/COM、Win32 fastcall/thiscall、SysV i128/vector：明确范围外。
+- Win64 vectorcall/COM、Win32 thiscall、SysV i128/vector：明确范围外；HFA/long double callback 已覆盖。
 - Windows CRT `%Lf` 与原生 MinGW 一致，不额外提供格式化 shim。
 - safe 字节码 fuzz 目前只在 native 运行时执行；其他 ABI 的完整执行 fuzz 依赖对应 runner。
 
 ### 19.7 计划完成状态
 
-- **无未完成计划项**：多 ABI、精确 long double、跨 ABI callback、ABI 边界、上游 c-testsuite 支持集、fuzz/差分/CI、性能/体积/发布打包均完成。
+- **计划状态**：HFA/long double/聚合回调边角已完成；剩余 `_Complex`、`atexit`、`signal`、builtins、weak inline、内存配额和 excluded/generator 工作见 `plan.md`。
 - **2026-10-31 新增完成**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。
-- **明确范围外**：向量类型、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `fastcall`/`thiscall`、SysV `i128`/向量参数、HFA callback >2 向量、long double callback；这些不是当前 C/ABI 子集的计划项。
+- **明确范围外**：向量类型/vector ABI、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV `i128`/向量参数；Win32 fastcall 已单独支持。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
 - **信任模型**：恶意 package 必须在 OS 沙箱中运行；`--safe` 仅用于 fuzz。
-- 交付物与验证数字见 19.5；旧 CIB 目标/自动链接计划已合并到 §19.8，`plan.md` 现在只保留测试结果提升计划。
+- 交付物与验证数字见 19.5；旧 CIB 目标/自动链接设计已合并到 §19.8，`plan.md` 现在只保留剩余特性和容量工作。
 
 ### 19.8 目标声明与外部符号自动链接（2026-10-31）
 
@@ -970,3 +970,13 @@ zig build -Dtarget=aarch64-linux-gnu
 - **external data**：补充 `__environ`、`_environ`、`__progname*`、`_pgmptr`、`_tzname`、`_timezone`、`_daylight`、`_opt*` 等数据别名；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 通过 cstdapi helper provider 解析。`csuite/external_data` 四目标通过。
 - **stdio/wide/locale**：修复实际 cinterp 侧 `snprintf`/字符串问题；`strtol/wcstol` 非法 base 增加原生 shim（合法 base 委托宿主 libc，非法 base 设置 `endptr=nptr`、`EINVAL`）。其余 `libc-test` mismatch 已用原生 glibc 复现，标记为 host-libc reference difference（musl expected 不适用于当前宿主），不是 cinterp 回归。若产品要求 musl 语义，应引入显式 musl provider/参考目标，而不是修改 expected 或 skip 冒充通过。
 - **结果**：full 4221/4457（236 skip）；standard 396/495；csuite 17/17；TCC 97/45；libc-test 49/26；跨 ABI csuite 17/17。
+
+### 20.5 ABI callback 边角完成（2026-10-31）
+
+- **HFA/聚合参数**：callback dispatch 不再只读 `arg.locs[0]`；按 xmm/gpr/stack 各 loc 重建 struct 字节，支持 4-float/2-double HFA 和混合寄存器参数。
+- **多寄存器返回**：按 `ret_locs` 写回 xmm0/xmm1/xmm2/xmm3、rax/rdx；聚合返回通过 VM 结果指针按 offset 拆分。
+- **长 double**：SysV x87 `st0` 返回写回 trampoline 并 `fld tbyte`；Win32 增加 80-bit ST0 缓冲区；AArch64 fp128 走向量 loc。
+- **AArch64 HFA**：callback 帧新增 q2/q3 返回槽，HFA 4 向量参数/返回可往返；`readRetArm64` 支持 xmm2/xmm3。
+- **聚合 sret/byval**：回调的隐藏 sret 指针和 byval struct 参数走已有 pointer 通道，24-byte `S24` 回调通过。
+- **回归**：新增 `examples/ffi_callback_hfa.c` + helper，覆盖 F4 HFA、D2 HFA、long double、S24 sret；native 与 AArch64 qemu 均得到 `247`。`make test`、full 4221/4457、standard 396/495、跨 ABI csuite 17/17 均通过。
+- **限制**：Win64/Win32 的 HFA/long-double 回调帧已编译通过，但未在远端 Windows 上用专用 helper 做值域回归；不做 vectorcall/COM。

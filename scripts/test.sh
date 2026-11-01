@@ -146,6 +146,13 @@ bigcb_out="$("$RUNTIME" --lib "$OUT/libffi_callback_big_helper.so" "$OUT/ffi_cal
 printf '%s\n' "$bigcb_out" | grep -Fq "result: 246"
 echo "OK ffi_callback_big -> 246"
 
+echo "== callback HFA + long double"
+cc -shared -fPIC -O0 examples/ffi_callback_hfa_helper.c -o "$OUT/libffi_callback_hfa_helper.so"
+python3 -m cinterp compile examples/ffi_callback_hfa.c -o "$OUT/ffi_callback_hfa.cib" >/dev/null
+hfacb_out="$("$RUNTIME" --lib "$OUT/libffi_callback_hfa_helper.so" "$OUT/ffi_callback_hfa.cib" 2>&1)"
+printf '%s\n' "$hfacb_out" | grep -Fq "result: 247"
+echo "OK ffi_callback_hfa -> 247"
+
 echo "== error paths"
 if python3 -m cinterp compile "$OUT/does-not-exist.c" >/dev/null 2>&1; then
     echo "FAIL missing input accepted" >&2

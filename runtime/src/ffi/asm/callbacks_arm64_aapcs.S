@@ -5,7 +5,7 @@ ci_cb_arm64_entry:
     mov x10, sp
     stp x29, x30, [sp, #-16]!
     mov x29, sp
-    sub sp, sp, #352
+    sub sp, sp, #384
     mov x11, sp
     str x9, [x11, #0]
     stp x0, x1, [x11, #8]
@@ -17,11 +17,13 @@ ci_cb_arm64_entry:
     stp q4, q5, [x11, #144]
     stp q6, q7, [x11, #176]
     str x10, [x11, #208]
-    str x8, [x11, #336]
+    str x8, [x11, #368]
     stp xzr, xzr, [x11, #216]
     str xzr, [x11, #232]
     stp xzr, xzr, [x11, #240]
     stp xzr, xzr, [x11, #256]
+    stp xzr, xzr, [x11, #336]
+    stp xzr, xzr, [x11, #352]
     stp d8, d9, [x11, #272]
     stp d10, d11, [x11, #288]
     stp d12, d13, [x11, #304]
@@ -29,9 +31,10 @@ ci_cb_arm64_entry:
     mov x0, x9
     mov x1, x11
     bl ci_callback_dispatch
-    sub x11, x29, #352
+    sub x11, x29, #384
     ldp x0, x1, [x11, #216]
     ldp q0, q1, [x11, #240]
+    ldp q2, q3, [x11, #336]
     ldp d8, d9, [x11, #272]
     ldp d10, d11, [x11, #288]
     ldp d12, d13, [x11, #304]

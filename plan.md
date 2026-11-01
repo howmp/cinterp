@@ -36,29 +36,24 @@ overview: 仅保留尚未完成的 C 特性、运行时容量和测试基础设�
 - 评估 weak symbol 表、COMDAT 与 external function pointer 的结合。
 - 验收：标准 inline 用例通过；weak 地址语义有明确实现或范围说明。
 
-## 6. P2：ABI callback 边角
-
-- HFA callback >2 向量、long double callback、复杂聚合参数/返回。
-- 验收：四 ABI callback 回归；不支持组合明确报错。
-
-## 7. P2：可增长线性内存与配额
+## 6. P2：可增长线性内存与配额
 
 - 固定 1 MiB 线性内存改为可配置/可增长模型。
 - per-package stack/frame/plan/import/callback/库句柄配额；保留 `--safe` 边界。
 - 验收：OOM/配额压力测试和恶意 CIB 负路径。
 
-## 8. P2：重新分诊 excluded 与跨 ABI
+## 7. P2：重新分诊 excluded 与跨 ABI
 
 - 重新运行 `.excluded` 中已具备条件的 varargs/vector/builtin 用例，能通过则回收。
 - 跨 ABI 从 17-case csuite + 12-case upstream smoke 扩到可移植上游子集。
 - 每个 excluded/skip 保留原因；不自动更新 expected。
 
-## 9. P2：生成式失败最小化
+## 8. P2：生成式失败最小化
 
 - YARPGen/Csmith artifact 做 creduce/内置 delta-debugging。
 - 修复共同根因后加入固定回归；nightly 100 seeds 保持 0 未分类 failure。
 
-## 10. 非目标
+## 9. 非目标
 
 - 多线程、原子操作、汇编/asm goto、向量类型、i128/vector ABI。
 - Win64 vectorcall/COM、Win32 thiscall。

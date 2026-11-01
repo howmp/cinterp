@@ -9,6 +9,8 @@
 .equ CB_RET_RDX,   200
 .equ CB_RET_XMM0,  208
 .equ CB_RET_XMM1,  224
+.equ CB_RET_ST0,   240
+.equ CB_RET_X87,   256
 
 .text
 
@@ -20,7 +22,7 @@ ci_cb_sysv_entry:
     push r13
     push r14
     push r15
-    sub rsp, 248
+    sub rsp, 280
     mov rbx, rsp
 
     mov [rbx + CB_SLOT], r11
@@ -43,6 +45,7 @@ ci_cb_sysv_entry:
 
     lea rax, [rbp + 16]
     mov [rbx + CB_STACK], rax
+    mov byte ptr [rbx + CB_RET_X87], 0
 
     mov rdi, [rbx + CB_SLOT]
     mov rsi, rbx
@@ -52,6 +55,10 @@ ci_cb_sysv_entry:
     mov rdx, [rbx + CB_RET_RDX]
     movups xmm0, [rbx + CB_RET_XMM0]
     movups xmm1, [rbx + CB_RET_XMM1]
+    cmp byte ptr [rbx + CB_RET_X87], 0
+    je .Lcb_sysv_no_x87
+    fld tbyte ptr [rbx + CB_RET_ST0]
+.Lcb_sysv_no_x87:
 
     lea rsp, [rbp - 40]
     pop r15

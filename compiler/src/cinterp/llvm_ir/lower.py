@@ -128,8 +128,12 @@ LLVM_LIBC_INTRINSICS = {
     "llvm.copysign.f64": "copysign",
     "llvm.fma.f32": "fmaf",
     "llvm.fma.f64": "fma",
+    "llvm.fma.f80": "fmal",
+    "llvm.fma.f128": "fmal",
     "llvm.fmuladd.f32": "fmaf",
     "llvm.fmuladd.f64": "fma",
+    "llvm.fmuladd.f80": "fmal",
+    "llvm.fmuladd.f128": "fmal",
     "llvm.fmin.f32": "fminf",
     "llvm.fmin.f64": "fmin",
     "llvm.fmax.f32": "fmaxf",
@@ -653,7 +657,7 @@ def parse_decls(text: str) -> dict[str, tuple[str, list[str], bool]]:
             if p == "...":
                 is_varargs = True
                 continue
-            tm = re.match(r"(\[[^\]]*\]|%[\w.$-]+|\S+)", p)
+            tm = re.match(r"(\[[^\]]*\]|<[^>]*>|%[\w.$-]+|\S+)", p)
             if tm:
                 types.append(tm.group(1))
         decls[name] = (ret, types, is_varargs)
@@ -1715,7 +1719,7 @@ class Lowerer:
             arg_values: list[str] = []
             for arg in args:
                 type_match = re.search(
-                    r"(\[[^\]]*\]|\{[^}]*\}|%[\w.$-]+|x86_fp80\b|fp128\b|double\b|float\b|ptr\b|i\d+\b)",
+                    r"(\[[^\]]*\]|\{[^}]*\}|<[^>]*>|%[\w.$-]+|x86_fp80\b|fp128\b|double\b|float\b|ptr\b|i\d+\b)",
                     arg,
                 )
                 if not type_match:
@@ -1866,7 +1870,7 @@ def parse_functions(text: str) -> list[Function]:
             if p.strip() == "...":
                 is_varargs = True
                 continue
-            pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80|fp128|<[^>]+>)\s+.*%([\w.$-]+)", p)
+            pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80|fp128|<[^>]+>|\[[^\]]*\])\s+.*%([\w.$-]+)", p)
             if not pm:
                 raise ValueError(f"bad parameter: {p!r}")
             params.append((pm.group(1), pm.group(2)))

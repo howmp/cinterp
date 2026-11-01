@@ -6,6 +6,7 @@ arg block and the fixed assembly engine performs the native call.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -43,6 +44,8 @@ class CallPlan:
 
 def _type_info(ty: str) -> tuple[str, int]:
     ty = ty.strip()
+    if ty.startswith("<") and ty.endswith(">"):
+        return "xmm", _vector_size(ty)
     if ty.startswith("ptr"):
         return "gpr", 8
     if ty == "float":
@@ -125,6 +128,14 @@ def _type_align(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -> in
             return 1
         return max(_type_align(f, structs, ptr_size) for f in fields)
     ty = ty.strip()
+    if ty.startswith("<") and ty.endswith(">"):
+        m = re.match(r"<\s*(\d+)\s+x\s+(.+)>$", ty)
+        if not m:
+            raise UnsupportedFfi(f"unsupported vector type {ty!r}")
+        return int(m.group(1)) * _type_size(m.group(2), structs, ptr_size)
+    am = re.match(r"\[(\d+)\s+x\s+(.+)\]$", ty)
+    if am:
+        return int(am.group(1)) * _type_size(am.group(2), structs, ptr_size)
     if ty == "ptr":
         return ptr_size
     if ty == "x86_fp80":
@@ -155,6 +166,14 @@ def _type_size(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -> int
                 align = max(align, fa)
         return off if packed else _align_up(off, align)
     ty = ty.strip()
+    if ty.startswith("<") and ty.endswith(">"):
+        m = re.match(r"<\s*(\d+)\s+x\s+(.+)>$", ty)
+        if not m:
+            raise UnsupportedFfi(f"unsupported vector type {ty!r}")
+        return int(m.group(1)) * _type_size(m.group(2), structs, ptr_size)
+    am = re.match(r"\[(\d+)\s+x\s+(.+)\]$", ty)
+    if am:
+        return int(am.group(1)) * _type_size(am.group(2), structs, ptr_size)
     if ty == "ptr":
         return ptr_size
     if ty == "x86_fp80":
@@ -176,6 +195,11 @@ def _is_aggregate(ty: str, structs: dict[str, list[str]]) -> bool:
 
 
 def _hfa_info(ty: str, structs: dict[str, list[str]], ptr_size: int = 8):
+    am = re.match(r"\[(\d+)\s+x\s+(float|double)\]$", ty.strip())
+    if am:
+        count = int(am.group(1))
+        elem_size = 4 if am.group(2) == "float" else 8
+        return count, elem_size, count * elem_size
     fields = _aggregate_fields(ty, structs)
     if fields is None:
         return None
@@ -191,8 +215,24 @@ def _hfa_info(ty: str, structs: dict[str, list[str]], ptr_size: int = 8):
     return len(fields), 4 if elem == "float" else 8, _type_size(ty, structs, ptr_size)
 
 
+def _vector_size(ty: str) -> int:
+    m = re.match(r"<\s*(\d+)\s+x\s+(.+?)>$", ty.strip())
+    if not m:
+        raise UnsupportedFfi(f"unsupported vector type {ty!r}")
+    elem = m.group(2).strip()
+    es = {"float": 4, "double": 8}.get(elem)
+    if es is None:
+        m2 = re.match(r"i(\d+)$", elem)
+        if not m2:
+            raise UnsupportedFfi(f"unsupported vector element {elem!r}")
+        es = max(1, (int(m2.group(1)) + 7) // 8)
+    return int(m.group(1)) * es
+
+
 def _scalar_info(ty: str, ptr_size: int = 8) -> tuple[str, int]:
     ty = ty.strip()
+    if ty.startswith("<") and ty.endswith(">"):
+        return "xmm", _vector_size(ty)
     if ty.startswith("ptr"):
         return "gpr", ptr_size
     if ty == "float":
