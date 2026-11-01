@@ -91,7 +91,7 @@ Build profiles:
 - `-Doptimize=ReleaseSmall` (default `make runtime`): strips unwind tables,
   frame pointers, panic tracing and symbols; ELF release artifacts additionally
   drop `.eh_frame`/`.eh_frame_hdr`. Concise error codes and CLI messages remain.
-- Current sizes: Debug ≈ 8.8 MiB, ReleaseSmall ≈ 87 KiB (Linux x64).
+- Current sizes: Debug ≈ 8.8 MiB, ReleaseSmall ≈ 93 KiB (Linux x64).
 
 `make test` runs runtime/compiler unit tests, all end-to-end examples, and
 negative paths (missing input, corrupt/truncated packages, unknown symbol).
@@ -115,7 +115,7 @@ make test-suites-cross      # csuite + upstream smoke on Win64/Win32/ARM64
 make generate-diff          # YARPGen differential smoke
 ```
 
-Current native baseline: 4172 passed / 282 explicitly skipped across csuite,
+Current native baseline: 4214 passed / 240 explicitly skipped across csuite,
 c-testsuite, TCC tests2, chibicc, libc-test, GCC torture, CompCert and LLVM
 SingleSource. Skip files record unsupported features and known failures; they
 are never auto-updated by CI. See [`tests/manifests/README.md`](tests/manifests/README.md).

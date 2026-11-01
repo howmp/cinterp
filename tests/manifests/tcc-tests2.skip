@@ -1,11 +1,10 @@
-# refreshed after va_list/setjmp/argv fixes
+# refreshed after P1/P2 bug fixes
 100_c99array-decls	compile: /home/admin/cl/build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
-101_cleanup	compile: cinterp: unsupported type <2 x float>
+101_cleanup	compile: Traceback (most recent call last):
 102_alignas	compile: /home/admin/cl/build/suites/tcc/tests/tests2/102_alignas.c:4:14: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
 104+_inline	mismatch: stdout mismatch
 104_inline	mismatch: stdout mismatch
 108_constructor	mismatch: stdout mismatch
-109_float_struct_calling	compile: cinterp: bad parameter: '<2 x float> %p.coerce'
 112_backtrace	mismatch: stdout mismatch
 113_btdll	mismatch: stdout mismatch
 114_bound_signal	mismatch: stdout mismatch
@@ -21,7 +20,6 @@
 127_asm_goto	compile: cinterp: unsupported instruction: callbr void asm sideeffect "jmp ${0:l}", "!i,~{dirflag},~{fpsr},~{flags}"()
 128_run_atexit	mismatch: stdout mismatch
 136_atomic_gcc_style	compile: cinterp: unsupported instruction: %7 = cmpxchg ptr %atomic_var1, i32 %5, i32 %6 seq_cst seq_cst, align 4
-137_funcall_struct_args	compile: /home/admin/cl/build/suites/tcc/tests/tests2/137_funcall_struct_args.c:17:1: warning: return type of 'main' is not 'int' [-Wmain-return-type]
 138_arm64_encoding	compile: /home/admin/cl/build/suites/tcc/tests/tests2/138_arm64_encoding.c:182:32: error: unknown register name 'x0' in asm
 139_arm64_errors	mismatch: stdout mismatch
 140_arm64_extasm	compile: /home/admin/cl/build/suites/tcc/tests/tests2/140_arm64_extasm.c:156:52: error: value '200' out of range for constraint 'I'
@@ -35,12 +33,10 @@
 151_atomic_header	compile: cinterp: unsupported type volatile
 34_array_assignment	compile: /home/admin/cl/build/suites/tcc/tests/tests2/34_array_assignment.c:16:6: error: array type 'int[4]' is not assignable
 35_sizeof	compile: /home/admin/cl/build/suites/tcc/tests/tests2/35_sizeof.c:8:34: warning: format specifies type 'int' but the argument has type 'unsigned long' [-Wformat]
-36_array_initialisers	mismatch: stdout mismatch
-42_function_pointer	mismatch: stdout mismatch
 46_grep	mismatch: stdout mismatch
 60_errors_and_warnings	mismatch: stdout mismatch
 70_floating_point_literals	mismatch: stdout mismatch
-73_arm64	compile: cinterp: bad parameter: '<2 x float> %a.coerce'
+73_arm64	mismatch: stdout mismatch
 76_dollars_in_identifiers	compile: cinterp: unsupported operand: '%"$"'
 79_vla_continue	mismatch: stdout mismatch
 83_utf8_in_identifiers	mismatch: stdout mismatch

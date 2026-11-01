@@ -1,4 +1,4 @@
-# regenerated after P0/P1 semantic changes
+# refreshed after P1/P2 bug fixes
 alignof	run: exit 1 != 0
 alloca	compile: In file included from /home/admin/cl/build/suites/chibicc/test/alloca.c:1:
 asm	compile: In file included from /home/admin/cl/build/suites/chibicc/test/asm.c:1:
@@ -24,5 +24,4 @@ struct	compile: In file included from /home/admin/cl/build/suites/chibicc/test/s
 tls	compile: In file included from /home/admin/cl/build/suites/chibicc/test/tls.c:1:
 typedef	compile: In file included from /home/admin/cl/build/suites/chibicc/test/typedef.c:1:
 unicode	compile: In file included from /home/admin/cl/build/suites/chibicc/test/unicode.c:1:
-varargs	run: exit 1 != 0
 variable	run: exit 1 != 0

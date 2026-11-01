@@ -7,7 +7,7 @@ const native = @import("ffi/native.zig");
 const link_loader = @import("ffi/link_loader.zig");
 
 pub const MAX_FUNCS: usize = 512;
-pub const MAX_NAME: usize = 32;
+pub const MAX_NAME: usize = 128;
 pub const MAX_STACK: usize = 8192;
 pub const MAX_FRAMES: usize = 512;
 pub const MAX_MODULE: usize = 2097152;
@@ -108,6 +108,8 @@ pub const OP_SETJMP: u8 = 0x97;
 pub const OP_LONGJMP: u8 = 0x98;
 pub const OP_CALL_VARIADIC: u8 = 0x99;
 pub const OP_VA_START: u8 = 0x9A;
+pub const OP_VA_COPY: u8 = 0x9B;
+pub const OP_CALL_INDIRECT_NATIVE: u8 = 0x9C;
 
 fn readU16At(bytes: []const u8, off: usize) u16 {
     return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
@@ -770,7 +772,8 @@ pub const VM = struct {
 
             switch (op) {
                 OP_RET, OP_RET_VOID => {
-                    const v: Value = if (op == OP_RET) try self.pop() else .{ .i = 0 };
+                    const is_void = op == OP_RET_VOID;
+                    const v: Value = if (is_void) .{ .i = 0 } else try self.pop();
                     if (self.frame_count == stop_frames) {
                         self.result = v.i;
                         return v.i;
@@ -779,7 +782,7 @@ pub const VM = struct {
                     self.frame_count -= 1;
                     self.mem_top = fr.mem_mark;
                     self.sp = base;
-                    try self.push(v);
+                    if (!is_void) try self.push(v);
                     base = fr.base;
                     current = fr.func;
                     va_base = fr.va_base;
@@ -1270,6 +1273,20 @@ pub const VM = struct {
                     }
                     _ = p;
                 },
+                OP_VA_COPY => {
+                    const src = try self.pop();
+                    const dst = try self.pop();
+                    const n: usize = switch (platform.abi_id) {
+                        1 => 24,
+                        2 => 8,
+                        3 => 4,
+                        4 => 32,
+                        else => return error.UnsupportedVaList,
+                    };
+                    const d: *align(1) [32]u8 = @ptrFromInt(addressFromBits(dst.i));
+                    const s_: *align(1) const [32]u8 = @ptrFromInt(addressFromBits(src.i));
+                    @memcpy(d[0..n], s_[0..n]);
+                },
                 OP_SETJMP => {
                     const slot = try readU16(code, &ip);
                     const buf = try self.pop();
@@ -1450,9 +1467,18 @@ pub const VM = struct {
                     // compiler temporaries cannot overwrite them.
                     const extra = arg_count - params;
                     const extra_base = callee_base + locals;
-                    var ei: usize = 0;
-                    while (ei < extra) : (ei += 1) {
-                        self.values[extra_base + ei] = self.values[callee_base + params + ei];
+                    const src_base = callee_base + params;
+                    if (extra_base > src_base and extra_base < src_base + extra) {
+                        var ei: usize = extra;
+                        while (ei > 0) {
+                            ei -= 1;
+                            self.values[extra_base + ei] = self.values[src_base + ei];
+                        }
+                    } else {
+                        var ei: usize = 0;
+                        while (ei < extra) : (ei += 1) {
+                            self.values[extra_base + ei] = self.values[src_base + ei];
+                        }
                     }
                     va_base = extra_base;
                     va_named = 0;
@@ -1499,6 +1525,48 @@ pub const VM = struct {
                     const fidx: usize = fn_idx;
                     if (fidx >= self.func_count) return error.BadFunction;
                     try self.push(.{ .i = @intCast(fidx + 1) });
+                },
+                OP_CALL_INDIRECT_NATIVE => {
+                    const plan_idx = try readU16(code, &ip);
+                    const tag = try self.pop();
+                    if (tag.i > 0 and tag.i <= self.func_count) {
+                        const fidx: usize = @intCast(tag.i - 1);
+                        const callee = self.functions[fidx];
+                        const params: usize = callee.param_count;
+                        const locals: usize = callee.local_count;
+                        if (self.sp < params) return error.StackUnderflow;
+                        if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
+                        const callee_base = self.sp - params;
+                        self.frames[self.frame_count] = .{
+                            .return_ip = ip,
+                            .base = base,
+                            .func = current,
+                            .mem_mark = self.mem_top,
+                            .va_base = va_base,
+                            .va_named = va_named,
+                            .va_count = va_count,
+                        };
+                        self.frame_count += 1;
+                        base = callee_base;
+                        current = fidx;
+                        va_base = 0;
+                        va_named = 0;
+                        va_count = 0;
+                        self.sp = callee_base + locals;
+                        if (self.sp > MAX_STACK) return error.StackOverflow;
+                        var li: usize = params;
+                        while (li < locals) : (li += 1) {
+                            self.values[callee_base + li] = .{ .i = 0 };
+                        }
+                        ip = 0;
+                    } else {
+                        if (self.safe) return error.SafeMode;
+                        const store = self.plan_store orelse return error.NoPlans;
+                        const p = store.planAt(plan_idx) orelse return error.BadPlan;
+                        const plan = store.callPlan(p);
+                        const target: *const anyopaque = @ptrFromInt(addressFromBits(tag.i));
+                        try self.invokeFfi(plan, target);
+                    }
                 },
                 OP_CALL_INDIRECT => {
                     const tag = try self.pop();

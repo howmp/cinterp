@@ -4,7 +4,7 @@ const abi = @import("abi.zig");
 pub const MAX_PLANS: usize = 1024;
 pub const MAX_ARGS: usize = 64;
 pub const MAX_LOCS: usize = 8;
-pub const MAX_NAME: usize = 32;
+pub const MAX_NAME: usize = 128;
 
 pub const StoredArg = struct {
     locs: [MAX_LOCS]abi.Loc = undefined,

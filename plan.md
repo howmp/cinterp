@@ -10,8 +10,8 @@ overview: 在已完成的支持集基线上，补 VLA/柔性数组、_Complex、
 
 ## 0. 当前基线
 
-- `make test-suites-full`：4172/4454 通过，282 skip（93.7%）；另有 1098 个显式排除的非目标用例。
-- `make test-suites`：376/492；`make test` 通过。
+- `make test-suites-full`：4214/4454 通过，240 skip（94.6%）；另有 1098 个显式排除的非目标用例。
+- `make test-suites`：389/492；`make test` 通过。
 - csuite 14/14；Win64/Win32/ARM64 的 c-testsuite/TCC/GCC/CompCert smoke 各 12/12。
 - 已支持：SysV/Win64/Win32/AArch64、结构体/varargs FFI、callback、long double、fastcall、internal va_list、argv/envp、setjmp/longjmp、external data 基础。
 - 明确不做：多线程、原子操作、汇编、向量、Win64 vectorcall/COM、Win32 thiscall。

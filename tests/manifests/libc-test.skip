@@ -1,28 +1,20 @@
-# regenerated after P0/P1 semantic changes
-argv	mismatch: stdout mismatch
+# refreshed after P1/P2 bug fixes
 clocale_mbfuncs	mismatch: stdout mismatch
 crypt	mismatch: stdout mismatch
-dlopen	run: exit -11 != 0
+dlopen	mismatch: stdout mismatch
 dlopen_dso	mismatch: stdout mismatch
 fnmatch	mismatch: stdout mismatch
 fscanf	mismatch: stdout mismatch
 fwscanf	mismatch: stdout mismatch
 mbc	mismatch: stdout mismatch
-popen	mismatch: stdout mismatch
 pthread_cancel	mismatch: stdout mismatch
 pthread_cancel-points	run: exit -11 != 0
 pthread_cond	run: exit -11 != 0
 pthread_mutex	run: exit -11 != 0
-pthread_mutex_pi	mismatch: stdout mismatch
-pthread_robust	mismatch: stdout mismatch
-snprintf	mismatch: stdout mismatch
-spawn	mismatch: stdout mismatch
+pthread_mutex_pi	run: exit -11 != 0
+sem_init	run: exit -11 != 0
 sscanf	mismatch: stdout mismatch
-sscanf_long	run: exit -11 != 0
 strftime	mismatch: stdout mismatch
-string	mismatch: stdout mismatch
-string_memcpy	mismatch: stdout mismatch
-string_memset	run: exit -6 != 0
 strtol	mismatch: stdout mismatch
 tls_align	mismatch: stdout mismatch
 tls_align_dlopen	mismatch: stdout mismatch
@@ -33,4 +25,5 @@ tls_init_dso	mismatch: stdout mismatch
 tls_local_exec	mismatch: stdout mismatch
 vfork	mismatch: stdout mismatch
 wcstol	mismatch: stdout mismatch
-sem_init	runtime: known intermittent segfault; quarantine
+pthread_robust	run: pthread quarantine (out of scope)
+sscanf_long	run: glibc scanf stack behavior under RLIMIT_STACK; quarantine

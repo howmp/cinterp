@@ -861,7 +861,7 @@ make fuzz                 # 1000 load-only mutations
 make fuzz-exec            # 500 safe execution mutations
 make differential
 make bench
-make size                 # native runtime 87,000B；qsort.cib 646B
+make size                 # native runtime 95,264B；qsort.cib 646B
 make size-cross           # static sysv 77,544 / win64 85,504 / win32 101,888 / arm64 88,824
 make release-artifacts
 HOST=admin@192.168.153.132 ./scripts/test_cross.sh
@@ -917,7 +917,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
-- **测试集**：csuite 14、c-testsuite 217+3 skip、TCC 91+51 skip、chibicc 14+27 skip、libc-test 40+35 skip、GCC execute 1179+67 skip、GCC compile 1407+0 skip、CompCert regression 41+34 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 59+20 skip。总计 4172 通过 / 282 显式 skip；另有 1098 个明确排除的非目标用例。
+- **测试集**：csuite 14、c-testsuite 218+2 skip、TCC 95+47 skip、chibicc 15+26 skip、libc-test 47+28 skip、GCC execute 1194+52 skip、GCC compile 1407+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 59+20 skip。总计 4214 通过 / 240 显式 skip；另有 1098 个明确排除的非目标用例。
 - **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 跑 csuite 14/14，以及 c-testsuite、TCC、GCC、CompCert 各 12 个 upstream smoke，全部通过；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
@@ -927,13 +927,13 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - `make debug-runtime` / `zig build -Doptimize=Debug`：保留 unwind tables、frame pointer、error tracing 和 panic 栈回溯；约 8.8 MiB（含调试符号）。
 - `make runtime`：ReleaseSmall 关闭 unwind tables、frame pointer、error tracing，strip 符号，并对 ELF 额外移除 `.eh_frame`/`.eh_frame_hdr`；保留必要的 CLI/VM 错误码和简短错误信息，移除崩溃栈回溯和详细运行时诊断。
-- 当前 ReleaseSmall：native dynamic Linux x64 87,000B（裁 `.eh_frame` 后）；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
+- 当前 ReleaseSmall：native dynamic Linux x64 95,264B（裁 `.eh_frame` 后）；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
 - 发布产物使用 ReleaseSmall；调试/定位崩溃使用 Debug 或 ReleaseSafe。`--dump-target`/`--dump-imports` 等包检查命令仍保留，便于诊断 CIB 内容。
 
 ### 20.2 测试重构完成状态与边界（2026-10-31）
 
-- **支持集基线**：`make test-suites-full` 为 **4172/4454 通过，282 skip（93.7%）**；另有 **1098** 个 `.excluded` 非目标用例（GCC execute 454、GCC compile 609、CompCert 34、TCC 1）。
-- **标准集**：`make test-suites` 为 **376/492 通过，116 skip**；`make test` 通过。
+- **支持集基线**：`make test-suites-full` 为 **4214/4454 通过，240 skip（94.6%）**；另有 **1098** 个 `.excluded` 非目标用例（GCC execute 454、GCC compile 609、CompCert 34、TCC 1）。
+- **标准集**：`make test-suites` 为 **389/492 通过，103 skip**；`make test` 通过。
 - **跨 ABI**：csuite 14/14；c-testsuite、TCC、GCC、CompCert upstream smoke 在 Win64/Win32/ARM64 各 12/12。Windows 使用 Zig MinGW 头文件，ARM64 使用 qemu。
 - **生成式**：YARPGen 100 seeds 为 77 通过 / 23 明确 skip；Csmith 3/3 已知失败并保存 artifact；20-seed smoke 16 通过 / 4 skip。
 - **fuzz**：load 1000 次、exec 500 次，0 crash / 0 timeout。
@@ -949,3 +949,15 @@ zig build -Dtarget=aarch64-linux-gnu
 - **测试 harness 修复**：TCC `__FILE__` 路径、行尾空白、TCC 编译器 warning 归一化；恢复 4 个误判用例；explicit-case skip 应用；case args 传参。
 - **报告与命令**：`build/test-suites-full.json`、`build/test-suites.json`、`build/generate-diff*.json`、`build/generate-failures/`；入口 `make test-suites-smoke|test-suites|test-suites-full|test-suites-nightly|test-suites-cross`、`make generate-diff*`。
 - **边界**：GCC/CompCert/TCC 的 `.excluded` 清单是可审计的非目标集合，不等于通过；已知 varargs/builtin/asm/vector/atomics 等不在当前支持集内。
+
+### 20.3 P1/P2 已有特性 bug 修复（2026-10-31）
+
+- **字符串/格式串**：`strip_meta` 不再把引号内的 `#04` 当 LLVM 属性；修复 `snprintf`、`string` 等。
+- **void 返回**：`OP_RET_VOID` 不再向调用者压入假返回值；修复长循环/多层调用的栈泄漏。
+- **GEP/指针**：识别带 `ptr noundef` 前缀的 GEP、`ptrtoint(GEP)` 和顶层 `add/sub/mul` 常量表达式；修复 `aligned()`、数组/结构体地址和 `string_memset`。
+- **全局初始化**：支持 packed literal struct `<{ ... }>`，修复 `Array3` 等探测数组；尊重全局显式 `align N`。
+- **函数指针/数据**：全局 external function pointer 生成 `ADDR_EXTERN`；间接调用新增 FFI plan，区分 VM 内部标签与原生地址；修复 `fprintfptr`、`pmemcpy` 等。
+- **varargs**：额外参数重叠时反向拷贝；实现 `va_copy`；修复 CompCert `varargs1/2`。
+- **ABI**：`<2 x float>`/HFA coerce 参数按位传输；`udiv/urem` 按声明宽度掩码。
+- **符号**：CIVM/plan 名称上限从 32 提升到 128，修复长 inline/符号名。
+- **结果**：full 4214/4454（240 skip）；standard 389/492；TCC95/47、GCC1194/52、CompCert55/20、libc-test47/28、libc-regression48/21。线程/`RLIMIT_STACK` 敏感用例仍显式隔离。

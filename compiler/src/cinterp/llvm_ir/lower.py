@@ -106,6 +106,8 @@ OP_SETJMP = 0x97
 OP_LONGJMP = 0x98
 OP_CALL_VARIADIC = 0x99
 OP_VA_START = 0x9A
+OP_VA_COPY = 0x9B
+OP_CALL_INDIRECT_NATIVE = 0x9C
 
 LLVM_LIBC_INTRINSICS = {
     "llvm.fabs.f32": "fabsf",
@@ -177,14 +179,32 @@ def split_top(s: str, sep: str = ",") -> list[str]:
     return parts
 
 
+def extract_gep(text: str) -> str | None:
+    pos = text.find("getelementptr")
+    if pos < 0:
+        return None
+    expr = text[pos:]
+    expr = re.sub(r",\s*align\s+\d+\s*$", "", expr).strip()
+    return expr
+
+
 def strip_meta(line: str) -> str:
-    line = line.split(";", 1)[0].strip()
-    line = re.sub(r",\s*!dbg\s*!\d+", "", line)
-    line = re.sub(r"\s*!dbg\s*!\d+", "", line)
-    line = re.sub(r",\s*!llvm\.loop\s*!\d+", "", line)
-    line = re.sub(r"\s*!llvm\.loop\s*!\d+", "", line)
-    line = re.sub(r"\s*#\d+", "", line)
-    return line.strip()
+    # Metadata stripping must not touch C string literals: formats such as
+    # "%#04o" contain text that looks like an LLVM attribute reference.
+    parts = re.split(r'("(?:\\.|[^"\\])*")', line)
+    out: list[str] = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            out.append(part)
+            continue
+        part = part.split(";", 1)[0]
+        part = re.sub(r",\s*!dbg\s*!\d+", "", part)
+        part = re.sub(r"\s*!dbg\s*!\d+", "", part)
+        part = re.sub(r",\s*!llvm\.loop\s*!\d+", "", part)
+        part = re.sub(r"\s*!llvm\.loop\s*!\d+", "", part)
+        part = re.sub(r"\s*#\d+", "", part)
+        out.append(part)
+    return "".join(out).strip()
 
 
 def align_up(n: int, a: int) -> int:
@@ -230,6 +250,20 @@ def type_size_align(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -
             raise ValueError(f"unknown struct type {ty}")
         _, size, alignment = struct_layout(fields, structs, ptr_size)
         return size, alignment
+    if ty.startswith("<{"):
+        inner = ty[2:-2].strip()
+        fields = (["__packed__"] + split_top(inner)) if inner else ["__packed__"]
+        _, size, alignment = struct_layout(fields, structs, ptr_size)
+        return size, alignment
+    if ty.startswith("<"):
+        m = re.match(r"<\s*(\d+)\s+x\s+(.+)>$", ty)
+        if not m:
+            raise ValueError(f"bad vector type {ty}")
+        count = int(m.group(1))
+        elem_size, elem_align = type_size_align(m.group(2), structs, ptr_size)
+        size = count * elem_size
+        vector_align = 8 if size <= 8 else 16
+        return size, vector_align
     if ty.startswith("["):
         m = re.match(r"\[(\d+)\s+x\s+(.+)\]$", ty)
         if not m:
@@ -274,6 +308,9 @@ def struct_fields(ty: str, structs: dict[str, list[str]]) -> list[str] | None:
         if fields is not None and fields and fields[0] == "__packed__":
             return fields[1:]
         return fields
+    if ty.startswith("<{"):
+        inner = ty[2:-2].strip()
+        return (["__packed__"] + split_top(inner)) if inner else ["__packed__"]
     if ty.startswith("{"):
         inner = ty[1:-1].strip()
         return split_top(inner) if inner else []
@@ -365,11 +402,12 @@ def parse_constant_bytes(ty: str, init: str, structs: dict[str, list[str]], ptr_
     size, _ = type_size_align(ty, structs, ptr_size)
     out = bytearray(size)
     init = init.strip()
-    if init.startswith("{") and init.endswith("}"):
+    if ((init.startswith("{") and init.endswith("}")) or (init.startswith("<{") and init.endswith("}>"))):
         fields = struct_fields(ty, structs)
         if fields is not None:
             offsets, _, _ = struct_layout(fields, structs, ptr_size)
-            parts = split_top(init[1:-1]) if init[1:-1].strip() else []
+            inner_init = init[2:-2] if init.startswith("<{") else init[1:-1]
+            parts = split_top(inner_init) if inner_init.strip() else []
             for i, part in enumerate(parts):
                 if i >= len(fields):
                     break
@@ -453,7 +491,7 @@ def collect_global_relocs(
         if m:
             out.append((base, "@" + m.group(1)))
         return out
-    if init.startswith("{") and init.endswith("}"):
+    if ((init.startswith("{") and init.endswith("}")) or (init.startswith("<{") and init.endswith("}>"))):
         fields = struct_fields(ty, structs)
         if fields is None:
             return out
@@ -488,13 +526,13 @@ def split_type_init(text: str) -> tuple[str, str] | None:
     text = text.strip()
     if not text:
         return None
-    if text[0] in "[{":
+    if text[0] in "[{<":
         stack = []
-        pairs = {"[": "]", "{": "}"}
+        pairs = {"[": "]", "{": "}", "<": ">"}
         for i, ch in enumerate(text):
-            if ch in "[{":
+            if ch in "[{<":
                 stack.append(pairs[ch])
-            elif ch in "]}":
+            elif ch in "]}>":
                 if not stack or stack[-1] != ch:
                     return None
                 stack.pop()
@@ -510,7 +548,7 @@ def split_type_init(text: str) -> tuple[str, str] | None:
 def parse_globals_ex(
     text: str, structs: dict[str, list[str]], ptr_size: int = 8
 ) -> tuple[dict[str, int], bytes, list[tuple[int, str]]]:
-    specs: list[tuple[str, str, str]] = []
+    specs: list[tuple[str, str, str, int]] = []
     for line in text.splitlines():
         line = strip_meta(line.strip())
         m = re.match(r"^(@[A-Za-z0-9_.$]+)\s*=\s*(.+)$", line)
@@ -520,22 +558,25 @@ def parse_globals_ex(
         km = re.search(r"\b(global|constant)\b", rest)
         if not km:
             continue
-        tail = re.sub(r",\s*align\s+\d+\s*$", "", rest[km.end():].strip()).strip()
+        tail_raw = rest[km.end():].strip()
+        am = re.search(r",\s*align\s+(\d+)\s*$", tail_raw)
+        explicit_align = int(am.group(1)) if am else 0
+        tail = re.sub(r",\s*align\s+\d+\s*$", "", tail_raw).strip()
         tm = split_type_init(tail)
         if not tm:
             continue
-        specs.append((name, tm[0].strip(), tm[1].strip()))
+        specs.append((name, tm[0].strip(), tm[1].strip(), explicit_align))
 
     globals_map: dict[str, int] = {}
     offsets: list[int] = []
     data = bytearray()
-    for name, ty, _init in specs:
+    for name, ty, _init, explicit_align in specs:
         try:
             size, align = type_size_align(ty, structs, ptr_size)
         except ValueError:
             offsets.append(-1)
             continue
-        off = align_up(len(data), max(align, 1))
+        off = align_up(len(data), max(align, explicit_align, 1))
         if off > len(data):
             data.extend(b"\x00" * (off - len(data)))
         data.extend(b"\x00" * size)
@@ -543,7 +584,7 @@ def parse_globals_ex(
         offsets.append(off)
 
     relocs: list[tuple[int, int]] = []
-    for (name, ty, init), off in zip(specs, offsets):
+    for (name, ty, init, _explicit_align), off in zip(specs, offsets):
         if off < 0:
             continue
         try:
@@ -573,7 +614,7 @@ def hex_fp_bits(hex_text: str, ty: str) -> int:
 
 def type_token(text: str) -> str:
     m = re.search(
-        r"(\[[^\]]*\]|\{[^}]*\}|%[\w.$-]+|x86_fp80\b|fp128\b|double\b|float\b|void\b|ptr\b|i\d+\b)",
+        r"(\[[^\]]*\]|\{[^}]*\}|<[^>]*>|%[\w.$-]+|x86_fp80\b|fp128\b|double\b|float\b|void\b|ptr\b|i\d+\b)",
         text,
     )
     return m.group(1) if m else text.strip()
@@ -757,8 +798,23 @@ class Lowerer:
 
     def emit_operand(self, text: str) -> None:
         stripped_text = text.strip()
-        if stripped_text.startswith("getelementptr "):
-            self.emit_gep_address(stripped_text)
+        cm = re.match(r"(add|sub|mul)\s*\((.*)\)$", stripped_text)
+        if cm:
+            parts = split_top(cm.group(2))
+            for part in parts:
+                part = re.sub(r"^(?:i\d+|ptr|void|double|float)\s+", "", part.strip())
+                self.emit_operand(part)
+            self.emit_u8({"add": OP_ADD, "sub": OP_SUB, "mul": OP_MUL}[cm.group(1)])
+            return
+        pm = re.match(r"ptrtoint\s*\((.*)\)$", stripped_text)
+        if pm:
+            inner = re.sub(r"^ptr\s+", "", pm.group(1).strip()).strip()
+            inner = re.sub(r"\s+to\s+i\d+\s*$", "", inner).strip()
+            self.emit_operand(inner)
+            return
+        gep = extract_gep(stripped_text)
+        if gep is not None:
+            self.emit_gep_address(gep)
             return
         globals_found = re.findall(r"@[\w.$-]+", text)
         if globals_found:
@@ -870,8 +926,9 @@ class Lowerer:
         text = text.strip()
         if text.startswith("ptr "):
             text = text[4:].strip()
-        if text.startswith("getelementptr "):
-            self.emit_gep_address(text)
+        gep = extract_gep(text)
+        if gep is not None:
+            self.emit_gep_address(gep)
             return
         if text.startswith("@"):
             self.emit_operand(text)
@@ -970,10 +1027,14 @@ class Lowerer:
                     self.emit_u32(self.globals[target_name])
                 else:
                     key = target_name[1:]
-                    if key not in self.func_indices:
+                    if key in self.func_indices:
+                        self.emit_u8(OP_FUNC_ADDR)
+                        self.emit_u16(self.func_indices[key])
+                    elif key in self.external_data:
+                        self.emit_u8(OP_ADDR_EXTERN)
+                        self.emit_u16(self.external_data[key])
+                    else:
                         continue
-                    self.emit_u8(OP_FUNC_ADDR)
-                    self.emit_u16(self.func_indices[key])
                 self.emit_u8(OP_ADDR_CONST)
                 self.emit_u32(field_off)
                 self.emit_u8(OP_STORE_MEM)
@@ -1107,7 +1168,7 @@ class Lowerer:
                 self.emit_const(size)
                 self.emit_u8(OP_MEMCPY)
                 return
-            if size > 8 and ty.startswith(("%", "[", "{")):
+            if size > 8 and ty.startswith(("%", "[", "{", "<")):
                 self.emit_pointer(ptr)
                 self.emit_pointer(value)
                 self.emit_const(size)
@@ -1271,7 +1332,17 @@ class Lowerer:
             a, b = split_top(m.group(3), ",")
             bits = int(ty[1:]) if ty.startswith("i") else 64
             mask = (1 << bits) - 1 if bits < 64 else None
-            if op == "lshr" and mask is not None:
+            if op in ("udiv", "urem") and mask is not None:
+                self.emit_operand(a)
+                self.emit_const(mask)
+                self.emit_u8(OP_AND)
+                self.emit_operand(b)
+                self.emit_const(mask)
+                self.emit_u8(OP_AND)
+                self.emit_u8(OP_DIV_U if op == "udiv" else OP_REM_U)
+                self.emit_const(mask)
+                self.emit_u8(OP_AND)
+            elif op == "lshr" and mask is not None:
                 # LLVM integer operations are width-typed. Loads of i8/i16
                 # values may be sign-extended into the VM's 64-bit slot.
                 self.emit_operand(a)
@@ -1577,10 +1648,43 @@ class Lowerer:
             ret_type = type_token(ret_expr)
             args_text = im.group(3)
             args = split_top(args_text) if args_text.strip() else []
+            arg_types: list[str] = []
+            arg_values: list[str] = []
             for arg in args:
-                self.emit_operand(arg.strip())
+                tm = re.search(
+                    r"(\[[^\]]*\]|\{[^}]*\}|<[^>]*>|%[\w.$-]+|x86_fp80\b|fp128\b|double\b|float\b|ptr\b|i\d+\b)",
+                    arg,
+                )
+                if not tm:
+                    raise ValueError(f"bad indirect call argument: {arg!r}")
+                arg_types.append(tm.group(1))
+                arg_values.append(arg.strip())
+            is_varargs = "..." in ret_expr
+            named_count = None
+            if is_varargs:
+                fm = re.search(r"\((.*)\)", ret_expr)
+                if fm:
+                    parts = [p.strip() for p in split_top(fm.group(1)) if p.strip() and p.strip() != "..."]
+                    named_count = len(parts)
+            for value in arg_values:
+                self.emit_arg(value)
             self.emit_operand("%" + im.group(2))
-            self.emit_u8(OP_CALL_INDIRECT)
+            plan = build_plan(
+                self.abi,
+                "indirect",
+                ret_type,
+                arg_types,
+                is_varargs,
+                None,
+                0,
+                [0] * len(arg_values),
+                self.structs,
+                self.ptr_size,
+                named_count,
+            )
+            plan_index = self.plans.add(plan)
+            self.emit_u8(OP_CALL_INDIRECT_NATIVE)
+            self.emit_u16(plan_index)
             if ret_type != "void":
                 if result is None:
                     raise ValueError(f"call without result: {line}")
@@ -1619,6 +1723,13 @@ class Lowerer:
                     raise ValueError(f"bad va_start: {line}")
                 self.emit_operand(args[0].strip())
                 self.emit_u8(OP_VA_START)
+                return
+            if fname in ("llvm.va_copy.p0", "llvm.va_copy", "__va_copy"):
+                if len(args) < 2:
+                    raise ValueError(f"bad va_copy: {line}")
+                self.emit_operand(args[0].strip())
+                self.emit_operand(args[1].strip())
+                self.emit_u8(OP_VA_COPY)
                 return
             if fname in ("llvm.va_end.p0", "llvm.va_end"):
                 return
@@ -1734,7 +1845,7 @@ def parse_functions(text: str) -> list[Function]:
             if p.strip() == "...":
                 is_varargs = True
                 continue
-            pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80|fp128)\s+.*%([\w.$-]+)", p)
+            pm = re.match(r"(i\d+|ptr|void|double|float|x86_fp80|fp128|<[^>]+>)\s+.*%([\w.$-]+)", p)
             if not pm:
                 raise ValueError(f"bad parameter: {p!r}")
             params.append((pm.group(1), pm.group(2)))
@@ -1788,8 +1899,18 @@ def compile_text(
     functions = parse_functions(text)
     indices = {fn.name: idx for idx, fn in enumerate(functions)}
     body_text = "\n".join(line for fn in functions for line in fn.body)
-    external_names = external.collect_names(body_text, globals_map, indices, decls)
-    external_table = external.build(target, external_names, imports, decls)
+    external_names = set(external.collect_names(body_text, globals_map, indices, decls))
+    reloc_names: set[str] = set()
+    for _off, target_name in global_relocs:
+        key = target_name[1:]
+        if key not in globals_map and key not in indices and len(key) <= 64:
+            reloc_names.add(key)
+    # CIB import indices are u16.  Huge compile-only stress files can exceed
+    # that budget; their unresolved global initializers are allowed to stay
+    # zero rather than making the whole package unserializable.
+    if len(external_names) + len(reloc_names) <= 60000:
+        external_names |= reloc_names
+    external_table = external.build(target, sorted(external_names), imports, decls)
     plans = PlanTable(abi)
     callbacks = CallbackTable(abi, structs, ptr_size)
     functions_by_name = {fn.name: fn for fn in functions}

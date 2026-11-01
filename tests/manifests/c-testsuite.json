@@ -15,7 +15,6 @@
   "expected_exit": 0,
   "timeout": 300,
   "skip": {
-    "00189": "requires external data symbols",
     "00204": "requires vector types",
     "00216": "requires complex aggregate global initializers"
   }

@@ -304,6 +304,8 @@ VM 有 1 MiB 线性内存（`mem`），`mem_top` 是 bump pointer：
 | 0x98 | `LONGJMP` | — | 恢复对应 jmp_buf 的上下文 |
 | 0x99 | `CALL_VARIADIC` | u16 func,u16 total | 调用内部可变参数函数，保留额外参数 |
 | 0x9A | `VA_START` | — | 按目标 ABI 初始化 va_list，溢出参数放到 VM 内存 |
+| 0x9B | `VA_COPY` | — | 复制目标 ABI 的 va_list |
+| 0x9C | `CALL_INDIRECT_NATIVE` | u16 plan | 间接调用内部函数或原生 FFI 地址 |
 
 ### 4.1 浮点谓词
 
