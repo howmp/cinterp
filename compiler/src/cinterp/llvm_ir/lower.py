@@ -113,10 +113,16 @@ OP_STACKRESTORE = 0x9E
 OP_ALLOCA_ALIGNED = 0x9F
 OP_ALLOCA_DYN_ALIGN = 0xA0
 OP_CALL_VARIADIC_TYPED = 0xA1
+OP_FPCLASS = 0xA2
 
 LLVM_LIBC_INTRINSICS = {
     "llvm.fabs.f32": "fabsf",
     "llvm.fabs.f64": "fabs",
+    "llvm.fabs.f80": "fabsl",
+    "llvm.copysign.f80": "copysignl",
+    "llvm.copysign.f128": "copysignl",
+    "llvm.sqrt.f80": "sqrtl",
+    "llvm.sqrt.f128": "sqrtl",
     "llvm.sqrt.f32": "sqrtf",
     "llvm.sqrt.f64": "sqrt",
     "llvm.round.f32": "roundf",
@@ -1728,6 +1734,18 @@ class Lowerer:
                 arg_types.append(type_match.group(1))
                 arg_values.append(arg.strip())
 
+            if fname.startswith("llvm.is.fpclass."):
+                if len(args) < 2 or result is None:
+                    raise ValueError(f"bad is.fpclass: {line}")
+                kind = {"f32": 0, "f64": 1, "f80": 2, "f128": 3}.get(fname.rsplit(".", 1)[-1])
+                if kind is None:
+                    raise ValueError(f"unsupported is.fpclass type: {fname}")
+                self.emit_operand(args[0].strip())
+                self.emit_operand(args[1].strip())
+                self.emit_u8(OP_FPCLASS)
+                self.emit_u8(kind)
+                self.store_slot(self.slot_for(result))
+                return
             if fname.startswith("llvm.ptrmask"):
                 if len(args) < 2 or result is None:
                     raise ValueError(f"bad ptrmask: {line}")

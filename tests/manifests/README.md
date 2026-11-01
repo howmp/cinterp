@@ -80,14 +80,14 @@ TCC reference outputs are normalized for absolute `__FILE__` paths, trailing whi
 | gcc-torture-compile | 1407 | 0 |
 | compcert | 55 | 20 |
 | llvm-singlesource | 85 | 8 |
-| gcc-ieee | 59 | 20 |
+| gcc-ieee | 64 | 15 |
 | compcert-c | 12 | 12 |
 | compcert-compile | 30 | 4 |
 | llvm-regression-c | 935 | 0 |
 | libc-test-regression | 48 | 21 |
 | c-testsuite-smoke | 12 | 0 |
 | tcc-smoke / gcc-smoke / compcert-smoke | 12 each | 0 |
-| **total** | **4275** | **238** |
+| **total** | **4280** | **233** |
 
 `make test-suites-full` is the command that produced this table; generated
 YARPGen/Csmith known-failure seeds are recorded separately in

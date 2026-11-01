@@ -115,6 +115,60 @@ pub const OP_STACKRESTORE: u8 = 0x9E;
 pub const OP_ALLOCA_ALIGNED: u8 = 0x9F;
 pub const OP_ALLOCA_DYN_ALIGN: u8 = 0xA0;
 pub const OP_CALL_VARIADIC_TYPED: u8 = 0xA1;
+pub const OP_FPCLASS: u8 = 0xA2;
+
+fn fpClass(bits: u128, width: u8) u16 {
+    var sign: u1 = 0;
+    var exp: u128 = 0;
+    var frac: u128 = 0;
+    if (width == 32) {
+        const b: u32 = @truncate(bits);
+        sign = @truncate(b >> 31);
+        exp = @as(u128, b >> 23) & 0xff;
+        frac = @as(u128, b & 0x7fffff);
+    } else if (width == 64) {
+        const b: u64 = @truncate(bits);
+        sign = @truncate(b >> 63);
+        exp = @as(u128, b >> 52) & 0x7ff;
+        frac = @as(u128, b & 0xfffffffffffff);
+    } else if (width == 80) {
+        const b: u80 = @truncate(bits);
+        sign = @truncate(b >> 79);
+        exp = @as(u128, b >> 64) & 0x7fff;
+        frac = @as(u128, b & 0xffffffffffffffff);
+    } else {
+        const b: u128 = bits;
+        sign = @truncate(b >> 127);
+        exp = (b >> 112) & 0x7fff;
+        frac = b & ((@as(u128, 1) << 112) - 1);
+    }
+    if (exp == 0 and frac == 0) return @as(u16, 1) << (if (sign == 1) 9 else 8);
+    if (exp == 0) return @as(u16, 1) << (if (sign == 1) 7 else 6);
+    if (exp == ((@as(u128, 1) << (if (width == 32) @as(u7, 8) else if (width == 64) @as(u7, 11) else if (width == 80) @as(u7, 15) else @as(u7, 15))) - 1)) {
+        if (frac != 0) {
+            const quiet_bit: u128 = @as(u128, 1) << (if (width == 32) @as(u7, 22) else if (width == 64) @as(u7, 51) else if (width == 80) @as(u7, 63) else @as(u7, 111));
+            return @as(u16, 1) << (if ((frac & quiet_bit) != 0) @as(u4, 0) else @as(u4, 1));
+        }
+        return @as(u16, 1) << (if (sign == 1) 3 else 2);
+    }
+    return @as(u16, 1) << (if (sign == 1) 5 else 4);
+}
+
+fn fpClassValue(v: Value, kind: u8) u16 {
+    return switch (kind) {
+        0 => fpClass(@as(u128, @as(u32, @truncate(v.u))), 32),
+        1 => fpClass(@as(u128, v.u), 64),
+        2 => blk: {
+            const p: *align(1) const u80 = @ptrFromInt(addressFromBits(v.i));
+            break :blk fpClass(@as(u128, p.*), 80);
+        },
+        3 => blk: {
+            const p: *align(1) const u128 = @ptrFromInt(addressFromBits(v.i));
+            break :blk fpClass(p.*, 128);
+        },
+        else => 0,
+    };
+}
 
 fn readU16At(bytes: []const u8, off: usize) u16 {
     return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
@@ -1214,6 +1268,13 @@ pub const VM = struct {
                     const n: usize = p.name_len;
                     const target = try self.resolveNative(idx, p.name[0..n]);
                     try self.invokeFfi(plan, target);
+                },
+                OP_FPCLASS => {
+                    const kind = try readU8(code, &ip);
+                    const mask = try self.pop();
+                    const value = try self.pop();
+                    const cls = fpClassValue(value, kind);
+                    try self.push(.{ .i = if ((cls & @as(u16, @truncate(mask.u))) != 0) 1 else 0 });
                 },
                 OP_STACKSAVE => {
                     try self.push(.{ .i = @intCast(self.mem_top) });

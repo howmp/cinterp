@@ -5,7 +5,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 
 # 剩余工作：excluded 重分诊与跨 ABI
 
-> 子 agent 只读审查结论（2026-10-31）。当前 full 4275/4513，238 skip；标准集 394/495。
+> 子 agent 只读审查结论（2026-10-31）。当前 full 4280/4513，233 skip；标准集 394/495。
 > 不要直接批量重跑/改 expected：先补 runner 能力，再逐项回收。
 
 ## 0. 结论先行
@@ -49,7 +49,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 - 每个剩余 excluded/skip 行有分类（non-goal/dialect/diagnostics/resource/host/bug）和观察记录。
 - 不再有以 clang warning 或 Python traceback 作为原因的行。
 - `gcc-torture-compile.skip` 不再复制 excluded 列表。
-- full 相对 4275/4513 无回归；已回收 56 个（GCC execute 1194→1250），expected/compare 标志不变。
+- full 相对 4280/4513 无回归；已回收 56 个（GCC execute 1194→1250），expected/compare 标志不变。
 - P2a 剩余：FP/NaN bucket、5 个 compiler traceback 清理，以及其他 excluded 分类。
 
 ## 2. P2b：跨 ABI 子集
@@ -80,9 +80,9 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 
 ## 3. P2c：FP/NaN 真实缺陷
 
-- 单独跟踪 `gcc-ieee` 的 `cdivchkd`、`copysign1/2`、`inf-4`、`pr108540-1`、`pr109386`。
-- 这些不是 builtin/asm 非目标；修复后加固定回归并删除对应 skip。
-- 5 个 compiler traceback 先改成 clean resource/compiler error，再决定是否修复。
+- 已完成：`copysign1/2`、`inf-4`、`pr108540-1`、`pr109386` 通过，`llvm.is.fpclass.*` 和 f80 intrinsic 已补齐；gcc-ieee 59→64 通过。
+- `cdivchkd/cdivchkf/cdivchkld` 是 `_Complex`，按明确决策保持 non-goal。
+- 剩余 5 个 compiler traceback 先改成 clean resource/compiler error，再决定是否修复。
 
 ## 4. 已确认决策
 

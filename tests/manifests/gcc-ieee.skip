@@ -1,11 +1,9 @@
 # regenerated after P0/P1 semantic changes
 bfloat16-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/bfloat16-builtin-issignaling-1.c:21:
 builtin-issignaling-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !65
-cdivchkd	run: exit 1 != 0
-cdivchkf	compile: cinterp: bad parameter: '<2 x float> noundef %c.coerce'
-cdivchkld	compile: cinterp: FFI plan for aggregate type 'x86_fp80' is not implemented in the v1 compiler
-copysign1	run: exit 1 != 0
-copysign2	run: exit 1 != 0
+cdivchkd	non-goal: _Complex (explicitly unsupported); observed 2026-10-31
+cdivchkf	non-goal: _Complex (explicitly unsupported); observed 2026-10-31
+cdivchkld	non-goal: _Complex (explicitly unsupported); observed 2026-10-31
 float128-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float128-builtin-issignaling-1.c:13:
 float128x-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float128x-builtin-issignaling-1.c:13:
 float16-builtin-issignaling-1	compile: cinterp: bad parameter: 'half noundef %x'
@@ -14,8 +12,5 @@ float32x-builtin-issignaling-1	compile: In file included from /home/admin/cl/bui
 float64-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float64-builtin-issignaling-1.c:13:
 float64x-builtin-issignaling-1	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float64x-builtin-issignaling-1.c:13:
 fp-cmp-cond-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/fp-cmp-cond-1.c:8:16: warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]
-inf-4	run: exit 1 != 0
-pr108540-1	run: exit 1 != 0
-pr109386	run: exit 1 != 0
 pr50310	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !385
 pr72824-2	compile: cinterp: bad parameter: '<4 x float> noundef %value'

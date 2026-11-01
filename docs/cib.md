@@ -312,6 +312,7 @@ VM 有 1 MiB 线性内存（`mem`），`mem_top` 是 bump pointer：
 | 0x9F | `ALLOCA_ALIGNED` | u16 size,u8 align | 对齐的静态 alloca |
 | 0xA0 | `ALLOCA_DYN_ALIGN` | u8 align | 对齐的动态 alloca（size 在栈顶） |
 | 0xA1 | `CALL_VARIADIC_TYPED` | u16 func,u16 total,per-extra code/size | 内部 varargs 调用，携带 overflow 布局描述 |
+| 0xA2 | `FPCLASS` | — (u8 width) | LLVM is.fpclass 分类并压入 i1 |
 
 ### 4.1 浮点谓词
 
