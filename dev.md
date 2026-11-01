@@ -1123,7 +1123,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - 修复全局常量地址：literal packed struct（`<{...}>`）的指针字段 reloc、嵌套数组/结构体 initializer、以及 `getelementptr` 常量地址的 addend（例如 `&((items+1)->field)`）。
 - 回收 26 个 GCC execute skip：20040409-{1,1w,2,2w,3,3w}、20050218-1、991201-1、arith-rand、arith-rand-ll、vrp-5、const-addr-expr-1、20081117-1、20100209-1、pr28651、pr33779-{1,2}、pr52129、pr53084、pr7284-1、pr15296、pr60017、conversion、20020108-1、920612-1、930126-1。
 - 验证：full 4319/4519（200 skip），standard 395/495，4 ABI cross suites 通过；C API static/shared smoke 通过。
-- 仍保留的 bitfield 结果宽度项（bitfld-3、pr32244-1、pr34971、20040709-3）属于 GCC 期望与 Clang IR 语义差异，暂不改变 expected。
+- 仍保留的 bitfield 结果宽度项（bitfld-3、pr32244-1、pr34971）属于 GCC 期望与 Clang IR 语义差异；`20040709-3` 是独立的嵌套 aggregate-return 问题，见 §20.22。
 
 ### 20.22 20040709-3 嵌套 aggregate return 调查（2026-11-01）
 
@@ -1143,3 +1143,12 @@ zig build -Dtarget=aarch64-linux-gnu
 - TCC `35_sizeof` 回收；`119_random_stuff` 的 262144B 大结构不再编译失败，但仍有 stdout mismatch（`tst_pack` 字符串显示为 `@st_pack`），暂不回收。
 - `95_bitfields_ms` 不再因 alloca 失败，但 314 个 imports 超过运行时 256 上限，仍 skip。
 - 当前 full 4319/4519（200 skip），standard 395/495（100 skip）。
+
+### 20.24 当前计划收敛状态（2026-11-01）
+
+- **已完成**：P0 1–3（可链接 `libcinterp`/header/C API ABI 2、事务性 load、回调多 VM 隔离）、Safe 模式移除、整数宽度/GEP/嵌套 aggregate initializer/f80 返回修复、alloca 零大小与大对象支持。
+- **当前基线**：full 4319/4519（200 skip），standard 395/495（100 skip）；GCC execute 累计回收 26 个；TCC `35_sizeof` 回收；4 ABI cross suites 通过。
+- **P0 5 剩余**：`20040709-3`（§20.22）；bitfield 表达式宽度差异 `bitfld-3`/`pr32244-1`/`pr34971`；外部 inline/weak 等明确 non-goal。
+- **发布阻断**：LICENSE/第三方声明、版本单一来源与 CIB/API 兼容策略、正式 release workflow/SBOM/校验和/split debug。
+- **P1 剩余**：plan store/VM 内存按包配置；musl 明确支持或显式拒绝；sanitizer/结构化 fuzz/跨 ABI fuzz；cross ABI 进 CI；容量文档与错误码表；macOS/未知 OS 目标校验。
+- **明确边界**：单线程、单 VM、可信 CIB；Linux x86_64/aarch64(glibc) 或 Windows x64/x86；无进程内沙箱，不可信输入由宿主隔离。
