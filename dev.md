@@ -1087,9 +1087,10 @@ zig build -Dtarget=aarch64-linux-gnu
 - **profile**：`20000112-1.c` 单次 clang IR ~27ms、完整 Python compile ~70-80ms；`compile_text` 的小文件 regex/lowering 约 40ms。瓶颈是进程启动、link DB 加载、IR 文本处理，不是单一算法。
 - **lazy DB**：无外部 plan 时 `cstdapi.apply`/`winmd.apply` 直接返回，避免每次 compile 加载 cstdapi JSON。
 - **strip_meta 快路径**：无 C 字符串的 IR 行不再 `re.split`；热正则预编译。`compile_text` 5 次 benchmark 53ms→40ms。
-- **runner `--inprocess`**：在 test runner 进程内编译，复用 Python 解释器和已加载数据库；csuite 441ms→254ms（约1.7x），standard 约16.4s→16.2s（大套件受 runtime/子进程主导）。
-- **`--cib-cache`**：内容寻址缓存，key 含编译器源码 mtime/size 指纹、target、source、CPATH；Makefile suite 默认使用 `build/cib-cache`。编译-only 套件第二次约26.6s→25.1s，收益有限；主要价值是避免重复 compiler 起进程/LLVM 编译。
-- 结论：当前最值得默认启用的是 inprocess + lazy DB；若继续追求大幅加速，应做 batch clang/compiler daemon，Rust 重写放在 profile 证明 lowering 仍是主因之后。
+- **runner `--inprocess`**：在 test runner 进程内编译，复用 Python 解释器和已加载数据库；csuite 441ms→254ms（约1.7x）。
+- **`--cib-cache`**：内容寻址缓存，key 含编译器源码 mtime/size 指纹、target、source、CPATH；Makefile suite 默认使用 `build/cib-cache`。修复 cache-hit 误走 `else` 子进程编译的 bug 后，standard 约16.2s→13.5s；full CIB 全部命中时约109s。
+- **batch**：`--batch` 已实现（批量 clang + 分 chunk 进程内 lowering），warm cache 时跳过预编译；冷启动/小套件仍不如 `--inprocess`，因此不作为 Makefile 默认。
+- 结论：inprocess + cache 默认启用；batch 保留作为冷启动实验。若继续追求大幅加速，需做编译器 daemon 或 Rust lowering。
 
 ### 20.20 Plan 1–4 完成：excluded/skip 审计（2026-10-31）
 

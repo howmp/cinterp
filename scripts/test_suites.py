@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 
@@ -374,6 +374,107 @@ def compile_inprocess(source: Path, cib: Path, target_name: str, env: dict, time
     return 0, ""
 
 
+def _batch_worker(payload) -> None:
+    if str(COMPILER_ROOT) not in sys.path:
+        sys.path.insert(0, str(COMPILER_ROOT))
+    from cinterp.cli import _zig_windows_include
+    from cinterp.ffi.plan import UnsupportedFfi
+    from cinterp.link.imports import ImportTable
+    from cinterp.link.target import TARGETS
+    from cinterp.llvm_ir.lower import compile_text
+
+    items, target, env = payload
+    target_obj = TARGETS[target]
+    include_args: list[str] = []
+    if target != "x86_64-linux":
+        include_args.append("--target=" + target_obj.triple)
+        if target_obj.os == "windows":
+            inc = _zig_windows_include()
+            if inc is None:
+                return
+            include_args += ["-isystem", str(inc)]
+    clang = os.environ.get("CINTERP_CLANG", "clang")
+    by_stem: dict[str, list] = {}
+    for item in items:
+        by_stem.setdefault(Path(item[1]).stem, []).append(item)
+    groups: list[list] = []
+    unique = []
+    for group in by_stem.values():
+        if len(group) == 1:
+            unique.append(group[0])
+        else:
+            groups.extend([[x] for x in group])
+    if unique:
+        groups.insert(0, unique)
+    for group in groups:
+        _batch_group(group, include_args, clang, env, target_obj, ImportTable, compile_text, UnsupportedFfi)
+
+
+def batch_precompile(cases: list[dict], manifest: dict, root: Path, target: str,
+                     outdir: Path, env: dict, runner: dict, jobs: int = 1) -> None:
+    """Batch clang generation and parallel in-process lowering by chunk."""
+    prepared: list[tuple[str, str, str]] = []
+    for case in cases:
+        if case_skip(case, target) or (target != "x86_64-linux" and manifest.get("support_lib")):
+            continue
+        work = outdir / manifest["suite"] / target / case["id"]
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            source = prepare_wrapper(case, manifest, root, work)
+        except Exception:
+            continue
+        if runner.get("cib_cache"):
+            cache_dir = runner["cib_cache"]
+            cache_path = cache_dir / (cib_cache_key(source, case, target, env, manifest) + ".cib")
+            if cache_path.is_file():
+                continue
+        prepared.append((case["id"], str(source), str(work)))
+    if not prepared:
+        return
+    # Keep duplicate basenames in separate chunks; chunks otherwise contain
+    # many unique sources so each clang process is amortized.
+    chunks = [[] for _ in range(max(1, jobs))]
+    seen: list[set[str]] = [set() for _ in chunks]
+    for item in prepared:
+        stem = Path(item[1]).stem
+        idx = next((i for i in range(len(chunks)) if stem not in seen[i]), 0)
+        if stem in seen[idx]:
+            chunks.append([item]); seen.append({stem})
+        else:
+            chunks[idx].append(item); seen[idx].add(stem)
+    payloads = [(chunk, target, env) for chunk in chunks if chunk]
+    if len(payloads) == 1:
+        _batch_worker(payloads[0])
+        return
+    with ProcessPoolExecutor(max_workers=len(payloads)) as ex:
+        list(ex.map(_batch_worker, payloads))
+
+
+def _batch_group(items, include_args, clang, env, target_obj, ImportTable, compile_text, UnsupportedFfi) -> None:
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="cinterp-batch-") as td:
+        cmd = [clang, *include_args, "-S", "-emit-llvm", "-O0", "-g", "-fno-discard-value-names", *(str(x[1]) for x in items)]
+        comp = subprocess.run(cmd, cwd=td, env=env, capture_output=True, timeout=300)
+        if comp.returncode != 0:
+            return
+        for case_id, source, work in items:
+            ll = Path(td) / (Path(source).stem + ".ll")
+            if not ll.is_file():
+                continue
+            try:
+                imports = ImportTable()
+                package, _module, _plan_bytes, _functions, _plans = compile_text(
+                    ll.read_text(), str(source), abi=target_obj.abi,
+                    ptr_size=target_obj.ptr_bits // 8, target=target_obj,
+                    imports=imports, cib_version=2, auto_link=True,
+                )
+                (Path(work) / (case_id + ".cib")).write_bytes(package)
+            except (UnsupportedFfi, ValueError):
+                continue
+            except Exception:
+                continue
+
+
 def summarize_failure(stderr: str, rc: int) -> str:
     lines = [line.strip() for line in stderr.splitlines() if line.strip()]
     if not lines:
@@ -428,6 +529,9 @@ def run_case(
         cmd += ["--target", target]
     cached = False
     cache_path: Path | None = None
+    if runner.get("batch") and cib.is_file():
+        cached = True
+        result["batch"] = True
     if runner.get("cib_cache"):
         cache_dir = runner["cib_cache"]
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -437,36 +541,37 @@ def run_case(
             cached = True
             result["cached"] = True
 
-    if not cached and runner.get("inprocess"):
-        try:
-            rc, stderr = compile_inprocess(source, cib, target, env, compile_timeout)
-        except subprocess.TimeoutExpired:
-            result.update(status="timeout", reason="compile timeout")
-            result["duration_ms"] = int((time.monotonic() - started) * 1000)
-            return result
-        if rc != 0:
-            stderr = norm_text(stderr.encode()).decode("utf-8", "replace").strip()
-            result.update(status="compile", reason=summarize_failure(stderr, rc))
-            if stderr:
-                result["detail"] = stderr[-2000:]
-            result["duration_ms"] = int((time.monotonic() - started) * 1000)
-            return result
-    else:
-        try:
-            comp = subprocess.run(
-                cmd, cwd=ROOT, env=env, capture_output=True, timeout=compile_timeout
-            )
-        except subprocess.TimeoutExpired:
-            result.update(status="timeout", reason="compile timeout")
-            result["duration_ms"] = int((time.monotonic() - started) * 1000)
-            return result
-        if comp.returncode != 0:
-            stderr = norm_text(comp.stderr).decode("utf-8", "replace").strip()
-            result.update(status="compile", reason=summarize_failure(stderr, comp.returncode))
-            if stderr:
-                result["detail"] = stderr[-2000:]
-            result["duration_ms"] = int((time.monotonic() - started) * 1000)
-            return result
+    if not cached:
+        if runner.get("inprocess"):
+            try:
+                rc, stderr = compile_inprocess(source, cib, target, env, compile_timeout)
+            except subprocess.TimeoutExpired:
+                result.update(status="timeout", reason="compile timeout")
+                result["duration_ms"] = int((time.monotonic() - started) * 1000)
+                return result
+            if rc != 0:
+                stderr = norm_text(stderr.encode()).decode("utf-8", "replace").strip()
+                result.update(status="compile", reason=summarize_failure(stderr, rc))
+                if stderr:
+                    result["detail"] = stderr[-2000:]
+                result["duration_ms"] = int((time.monotonic() - started) * 1000)
+                return result
+        else:
+            try:
+                comp = subprocess.run(
+                    cmd, cwd=ROOT, env=env, capture_output=True, timeout=compile_timeout
+                )
+            except subprocess.TimeoutExpired:
+                result.update(status="timeout", reason="compile timeout")
+                result["duration_ms"] = int((time.monotonic() - started) * 1000)
+                return result
+            if comp.returncode != 0:
+                stderr = norm_text(comp.stderr).decode("utf-8", "replace").strip()
+                result.update(status="compile", reason=summarize_failure(stderr, comp.returncode))
+                if stderr:
+                    result["detail"] = stderr[-2000:]
+                result["duration_ms"] = int((time.monotonic() - started) * 1000)
+                return result
     if not cached and cache_path is not None and cib.is_file():
         shutil.copyfile(cib, cache_path)
 
@@ -535,6 +640,7 @@ def main() -> int:
     ap.add_argument("--include-skipped", action="store_true", help="run skip-listed cases for re-triage")
     ap.add_argument("--inprocess", action="store_true", help="compile in this Python process (faster local runs)")
     ap.add_argument("--cib-cache", default="", help="directory for content-addressed CIB cache")
+    ap.add_argument("--batch", action="store_true", help="batch clang IR generation before in-process lowering")
     ap.add_argument("--include-excluded", action="store_true", help="include .excluded cases for re-triage")
     ap.add_argument("--only", action="append", default=[], help="only run IDs (comma-separated, repeatable)")
     ap.add_argument("--emit-reasons", default="", help="write auditable ID<TAB>status: reason for non-ok cases")
@@ -571,6 +677,7 @@ def main() -> int:
         "include_skipped": args.include_skipped,
         "inprocess": args.inprocess,
         "cib_cache": Path(args.cib_cache) if args.cib_cache else None,
+        "batch": args.batch,
     }
     if args.target in ("x86_64-windows", "i686-windows"):
         if not runner_cfg["windows_host"]:
@@ -610,6 +717,8 @@ def main() -> int:
             cases = cases[: args.limit]
         env = build_env(manifest, root)
         outdir = Path(temp_root)
+        if args.batch:
+            batch_precompile(cases, manifest, root, args.target, outdir, env, runner_cfg, args.jobs)
         with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
             futures = [
                 ex.submit(run_case, suite, case, manifest, root, args.target, outdir, env, runner_cfg)

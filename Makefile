@@ -40,16 +40,16 @@ fetch-suites:
 	python3 scripts/fetch_suites.py --all --support
 
 test-suites-smoke: runtime
-	python3 scripts/test_suites.py --tier smoke --cib-cache build/cib-cache --report build/test-suites-smoke.json
+	python3 scripts/test_suites.py --tier smoke --inprocess --cib-cache build/cib-cache --report build/test-suites-smoke.json
 
 test-suites: runtime
-	python3 scripts/test_suites.py --tier standard --cib-cache build/cib-cache --report build/test-suites.json
+	python3 scripts/test_suites.py --tier standard --inprocess --cib-cache build/cib-cache --report build/test-suites.json
 
 test-suites-full: runtime
-	python3 scripts/test_suites.py --tier full --cib-cache build/cib-cache --report build/test-suites-full.json
+	python3 scripts/test_suites.py --tier full --inprocess --cib-cache build/cib-cache --report build/test-suites-full.json
 
 test-suites-nightly: runtime
-	python3 scripts/test_suites.py --tier nightly --cib-cache build/cib-cache --report build/test-suites-nightly.json
+	python3 scripts/test_suites.py --tier nightly --inprocess --cib-cache build/cib-cache --report build/test-suites-nightly.json
 	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
 
 test-suites-report: test-suites-full
