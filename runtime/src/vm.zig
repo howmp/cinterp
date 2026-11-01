@@ -114,6 +114,7 @@ pub const OP_STACKSAVE: u8 = 0x9D;
 pub const OP_STACKRESTORE: u8 = 0x9E;
 pub const OP_ALLOCA_ALIGNED: u8 = 0x9F;
 pub const OP_ALLOCA_DYN_ALIGN: u8 = 0xA0;
+pub const OP_CALL_VARIADIC_TYPED: u8 = 0xA1;
 
 fn readU16At(bytes: []const u8, off: usize) u16 {
     return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
@@ -146,6 +147,9 @@ pub const Frame = struct {
     va_base: usize,
     va_named: usize,
     va_count: usize,
+    va_types: [64]u8 = [_]u8{0} ** 64,
+    va_sizes: [64]u16 = [_]u16{0} ** 64,
+    va_type_count: u8 = 0,
 };
 
 const JumpEntry = struct {
@@ -741,6 +745,9 @@ pub const VM = struct {
         var va_base: usize = 0;
         var va_named: usize = 0;
         var va_count: usize = 0;
+        var va_types: [64]u8 = [_]u8{0} ** 64;
+        var va_sizes: [64]u16 = [_]u16{0} ** 64;
+        var va_type_count: u8 = 0;
 
         while (true) {
             const f = self.functions[current];
@@ -767,6 +774,9 @@ pub const VM = struct {
                     va_base = fr.va_base;
                     va_named = fr.va_named;
                     va_count = fr.va_count;
+                    va_types = fr.va_types;
+                    va_sizes = fr.va_sizes;
+                    va_type_count = fr.va_type_count;
                     ip = fr.return_ip;
                 },
                 OP_LOAD_CONST_I64 => {
@@ -1221,15 +1231,36 @@ pub const VM = struct {
                     const slot_size: usize = if (platform.abi_id == 3) 4 else 8;
                     var overflow: u64 = 0;
                     if (extra > 0) {
-                        const start = (self.mem_top + 7) & ~@as(usize, 7);
-                        const bytes = extra * slot_size;
-                        if (start + bytes > self.mem.len) return error.OutOfMemory;
+                        const start = (self.mem_top + 15) & ~@as(usize, 15);
+                        var pos = start;
                         var i: usize = 0;
                         while (i < extra) : (i += 1) {
+                            const tc = if (i < va_type_count) va_types[i] else 0;
                             const v = self.values[va_base + va_named + i];
-                            @memcpy(self.mem[start + i * slot_size .. start + i * slot_size + slot_size], std.mem.asBytes(&v.i)[0..slot_size]);
+                            var n: usize = slot_size;
+                            var alignment: usize = slot_size;
+                            var ptr: ?usize = null;
+                            if (tc == 1 or tc == 2) {
+                                n = 16;
+                                alignment = 16;
+                                ptr = addressFromBits(v.i);
+                            } else if (tc == 3) {
+                                n = if (i < va_sizes.len) va_sizes[i] else 0;
+                                if (n == 0) n = 8;
+                                alignment = 8;
+                                ptr = addressFromBits(v.i);
+                            }
+                            pos = (pos + alignment - 1) & ~(alignment - 1);
+                            if (pos + n > self.mem.len) return error.OutOfMemory;
+                            if (ptr) |src| {
+                                if (src + n > @intFromPtr(&self.mem[0]) + self.mem.len) return error.BadAddress;
+                                @memcpy(self.mem[pos .. pos + n], self.mem[src - @intFromPtr(&self.mem[0]) ..][0..n]);
+                            } else {
+                                @memcpy(self.mem[pos .. pos + n], std.mem.asBytes(&v.i)[0..n]);
+                            }
+                            pos += n;
                         }
-                        self.mem_top = start + bytes;
+                        self.mem_top = pos;
                         overflow = @intFromPtr(&self.mem[start]);
                     }
                     const p = pv.u;
@@ -1452,6 +1483,67 @@ pub const VM = struct {
                     if (self.safe and !memRange(self, @intCast(addressFromBits(dst_v.i)), len)) return error.BadAddress;
                     @memset(dst[0..len], byte);
                 },
+                OP_CALL_VARIADIC_TYPED => {
+                    const fn_idx = try readU16(code, &ip);
+                    const total = try readU16(code, &ip);
+                    const fidx: usize = fn_idx;
+                    if (fidx >= self.func_count) return error.BadFunction;
+                    const callee = self.functions[fidx];
+                    const params: usize = callee.param_count;
+                    const locals: usize = callee.local_count;
+                    const arg_count: usize = total;
+                    if (arg_count < params or self.sp < arg_count) return error.StackUnderflow;
+                    if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
+                    const extra = arg_count - params;
+                    if (extra > 64) return error.TooManyArgs;
+                    var types: [64]u8 = [_]u8{0} ** 64;
+                    var sizes: [64]u16 = [_]u16{0} ** 64;
+                    var ti: usize = 0;
+                    while (ti < extra) : (ti += 1) {
+                        const type_code = try readU8(code, &ip);
+                        types[ti] = type_code;
+                        if (type_code == 3) sizes[ti] = try readU16(code, &ip);
+                    }
+                    const callee_base = self.sp - arg_count;
+                    self.frames[self.frame_count] = .{
+                        .return_ip = ip,
+                        .base = base,
+                        .func = current,
+                        .mem_mark = self.mem_top,
+                        .va_base = va_base,
+                        .va_named = va_named,
+                        .va_count = va_count,
+                        .va_types = va_types,
+                        .va_sizes = va_sizes,
+                        .va_type_count = va_type_count,
+                    };
+                    self.frame_count += 1;
+                    base = callee_base;
+                    current = fidx;
+                    const src_base = callee_base + params;
+                    const extra_base = callee_base + locals;
+                    if (extra_base > src_base and extra_base < src_base + extra) {
+                        var ei: usize = extra;
+                        while (ei > 0) {
+                            ei -= 1;
+                            self.values[extra_base + ei] = self.values[src_base + ei];
+                        }
+                    } else {
+                        var ei: usize = 0;
+                        while (ei < extra) : (ei += 1) {
+                            self.values[extra_base + ei] = self.values[src_base + ei];
+                        }
+                    }
+                    va_base = extra_base;
+                    va_named = 0;
+                    va_count = extra;
+                    va_types = types;
+                    va_sizes = sizes;
+                    va_type_count = @intCast(extra);
+                    self.sp = extra_base + extra;
+                    if (self.sp > MAX_STACK) return error.StackOverflow;
+                    ip = 0;
+                },
                 OP_CALL_VARIADIC => {
                     const fn_idx = try readU16(code, &ip);
                     const total = try readU16(code, &ip);
@@ -1472,6 +1564,9 @@ pub const VM = struct {
                         .va_base = va_base,
                         .va_named = va_named,
                         .va_count = va_count,
+                        .va_types = va_types,
+                        .va_sizes = va_sizes,
+                        .va_type_count = va_type_count,
                     };
                     self.frame_count += 1;
                     base = callee_base;
@@ -1519,6 +1614,9 @@ pub const VM = struct {
                         .va_base = va_base,
                         .va_named = va_named,
                         .va_count = va_count,
+                        .va_types = va_types,
+                        .va_sizes = va_sizes,
+                        .va_type_count = va_type_count,
                     };
                     self.frame_count += 1;
                     base = callee_base;
@@ -1526,6 +1624,7 @@ pub const VM = struct {
                     va_base = 0;
                     va_named = 0;
                     va_count = 0;
+                    va_type_count = 0;
                     self.sp = callee_base + locals;
                     if (self.sp > MAX_STACK) return error.StackOverflow;
                     var li: usize = params;
@@ -1601,6 +1700,9 @@ pub const VM = struct {
                         .va_base = va_base,
                         .va_named = va_named,
                         .va_count = va_count,
+                        .va_types = va_types,
+                        .va_sizes = va_sizes,
+                        .va_type_count = va_type_count,
                     };
                     self.frame_count += 1;
                     base = callee_base;
@@ -1608,6 +1710,7 @@ pub const VM = struct {
                     va_base = 0;
                     va_named = 0;
                     va_count = 0;
+                    va_type_count = 0;
                     self.sp = callee_base + locals;
                     if (self.sp > MAX_STACK) return error.StackOverflow;
                     var li: usize = params;

@@ -115,7 +115,7 @@ make test-suites-cross      # csuite + upstream smoke on Win64/Win32/ARM64
 make generate-diff          # YARPGen differential smoke
 ```
 
-Current native baseline: 4270 passed / 238 explicitly skipped across csuite,
+Current native baseline: 4275 passed / 238 explicitly skipped across csuite,
 c-testsuite, TCC tests2, chibicc, libc-test, GCC torture, CompCert and LLVM
 SingleSource. Skip files record unsupported features and known failures; they
 are never auto-updated by CI. See [`tests/manifests/README.md`](tests/manifests/README.md).

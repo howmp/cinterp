@@ -112,6 +112,7 @@ OP_STACKSAVE = 0x9D
 OP_STACKRESTORE = 0x9E
 OP_ALLOCA_ALIGNED = 0x9F
 OP_ALLOCA_DYN_ALIGN = 0xA0
+OP_CALL_VARIADIC_TYPED = 0xA1
 
 LLVM_LIBC_INTRINSICS = {
     "llvm.fabs.f32": "fabsf",
@@ -1848,9 +1849,29 @@ class Lowerer:
             for value in arg_values:
                 self.emit_operand(value)
             if callee is not None and callee.is_varargs:
-                self.emit_u8(OP_CALL_VARIADIC)
+                self.emit_u8(OP_CALL_VARIADIC_TYPED)
                 self.emit_u16(self.func_indices[fname])
                 self.emit_u16(len(arg_values))
+                for idx in range(len(callee.params), len(arg_values)):
+                    ty = arg_types[idx]
+                    raw = arg_values[idx]
+                    byval = re.search(r"\bbyval\(([^)]+)\)", raw)
+                    if byval:
+                        size = self.type_size(byval.group(1))
+                        code = 3
+                    else:
+                        size = self.type_size(ty)
+                        if ty == "x86_fp80":
+                            code = 1
+                        elif ty == "fp128":
+                            code = 2
+                        elif ty.startswith(("%", "{", "[", "<")) or size > 8:
+                            code = 3
+                        else:
+                            code = 0
+                    self.emit_u8(code)
+                    if code == 3:
+                        self.emit_u16(size)
             else:
                 self.emit_u8(OP_CALL)
                 self.emit_u16(self.func_indices[fname])
