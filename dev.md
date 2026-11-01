@@ -918,7 +918,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **统一 runner**：`scripts/test_suites.py` 读取 `tests/manifests/*.json`，支持 native/Windows SSH/qemu、超时、`ID<TAB>reason` skip、JSON 报告；Make 入口为 `test-suites-smoke`、`test-suites`、`test-suites-full`、`test-suites-nightly`、`test-suites-cross`、`test-suites-report`。
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
 - **测试集**：csuite 14、c-testsuite 217+3 skip、TCC 91+51 skip、chibicc 14+27 skip、libc-test 40+35 skip、GCC execute 1179+67 skip、GCC compile 1407+0 skip、CompCert regression 41+34 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 59+20 skip。总计 4172 通过 / 282 显式 skip；另有 1098 个明确排除的非目标用例。
-- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 各跑 csuite、c-testsuite、TCC、GCC、CompCert 各 12 个上游 smoke 用例，均 12/12；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
+- **跨 ABI**：`make test-suites-cross` 对 Win64、Win32、ARM64 跑 csuite 14/14，以及 c-testsuite、TCC、GCC、CompCert 各 12 个 upstream smoke，全部通过；Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
 - **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
 - **策略**：不自动更新 expected/skip；新增失败必须先分类（compile/runtime/mismatch/timeout/harness），再修复或写入显式 skip；`build/suites` 不进入版本库。TCC harness 对 `__FILE__` 绝对路径、行尾空白和 TCC 编译器警告做语义归一化；已恢复 4 个误判用例。
@@ -929,3 +929,23 @@ zig build -Dtarget=aarch64-linux-gnu
 - `make runtime`：ReleaseSmall 关闭 unwind tables、frame pointer、error tracing，strip 符号，并对 ELF 额外移除 `.eh_frame`/`.eh_frame_hdr`；保留必要的 CLI/VM 错误码和简短错误信息，移除崩溃栈回溯和详细运行时诊断。
 - 当前 ReleaseSmall：native dynamic Linux x64 87,000B（裁 `.eh_frame` 后）；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
 - 发布产物使用 ReleaseSmall；调试/定位崩溃使用 Debug 或 ReleaseSafe。`--dump-target`/`--dump-imports` 等包检查命令仍保留，便于诊断 CIB 内容。
+
+### 20.2 测试重构完成状态与边界（2026-10-31）
+
+- **支持集基线**：`make test-suites-full` 为 **4172/4454 通过，282 skip（93.7%）**；另有 **1098** 个 `.excluded` 非目标用例（GCC execute 454、GCC compile 609、CompCert 34、TCC 1）。
+- **标准集**：`make test-suites` 为 **376/492 通过，116 skip**；`make test` 通过。
+- **跨 ABI**：csuite 14/14；c-testsuite、TCC、GCC、CompCert upstream smoke 在 Win64/Win32/ARM64 各 12/12。Windows 使用 Zig MinGW 头文件，ARM64 使用 qemu。
+- **生成式**：YARPGen 100 seeds 为 77 通过 / 23 明确 skip；Csmith 3/3 已知失败并保存 artifact；20-seed smoke 16 通过 / 4 skip。
+- **fuzz**：load 1000 次、exec 500 次，0 crash / 0 timeout。
+- **最近补齐的语言/运行时能力**：
+  - `fcmp` 全 ordered/unordered、`fptoui/uitofp` 全路径。
+  - VM 上限：`MAX_FUNCS=512`、`MAX_FRAMES=512`、`MAX_STACK=8192`、`MAX_MODULE=2 MiB`、`MAX_PLANS=1024`、`MAX_ARGS=64`。
+  - external data/函数地址：`stdout`/`t_status`/`strcmp`/`memcpy` 等；数学 intrinsic 映射。
+  - 内部可变参数函数（`va_start`/`va_arg`/`va_end`）覆盖 SysV/Win64/Win32/AArch64。
+  - `main(argc, argv, envp)` 和 `cinterp-run package -- arg...`。
+  - VM 级 `setjmp/longjmp`，含 Windows `_setjmp3`/`__intrinsic_setjmpex`。
+  - 位宽正确的 `lshr/ashr/shl`（修复 bitfield struct return）。
+  - Win32 fastcall ECX/EDX ABI，真实 `ffi_fastcall` 回归。
+- **测试 harness 修复**：TCC `__FILE__` 路径、行尾空白、TCC 编译器 warning 归一化；恢复 4 个误判用例；explicit-case skip 应用；case args 传参。
+- **报告与命令**：`build/test-suites-full.json`、`build/test-suites.json`、`build/generate-diff*.json`、`build/generate-failures/`；入口 `make test-suites-smoke|test-suites|test-suites-full|test-suites-nightly|test-suites-cross`、`make generate-diff*`。
+- **边界**：GCC/CompCert/TCC 的 `.excluded` 清单是可审计的非目标集合，不等于通过；已知 varargs/builtin/asm/vector/atomics 等不在当前支持集内。
