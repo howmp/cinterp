@@ -75,7 +75,7 @@ def collect_names(text: str, globals_map: dict[str, int], func_indices: dict[str
                 continue
             if name.startswith("."):
                 continue
-            if name in globals_map or name in func_indices:
+            if ("@" + name) in globals_map or name in func_indices:
                 continue
             after = line[m.end() :].lstrip()
             # A call target is handled by a CIPL CallPlan; only other

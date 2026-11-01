@@ -1727,6 +1727,14 @@ class Lowerer:
                 arg_types.append(type_match.group(1))
                 arg_values.append(arg.strip())
 
+            if fname.startswith("llvm.ptrmask"):
+                if len(args) < 2 or result is None:
+                    raise ValueError(f"bad ptrmask: {line}")
+                self.emit_operand(args[0].strip())
+                self.emit_operand(args[1].strip())
+                self.emit_u8(OP_AND)
+                self.store_slot(self.slot_for(result))
+                return
             if fname in ("llvm.frameaddress.p0", "llvm.frameaddress"):
                 if result is not None:
                     self.emit_const(0)

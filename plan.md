@@ -5,7 +5,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 
 # 剩余工作：excluded 重分诊与跨 ABI
 
-> 子 agent 只读审查结论（2026-10-31）。当前 full 4269/4507，238 skip；标准集 394/495。
+> 子 agent 只读审查结论（2026-10-31）。当前 full 4270/4508，238 skip；标准集 394/495。
 > 不要直接批量重跑/改 expected：先补 runner 能力，再逐项回收。
 
 ## 0. 结论先行
@@ -24,7 +24,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 
 | 文件 | 数量 | 说明 |
 | --- | ---: | --- |
-| `gcc-torture.excluded` | 404 | 约 317 compile + 87 run（已回收 50 个 varargs/HFA） |
+| `gcc-torture.excluded` | 403 | 约 317 compile + 87 run（已回收 51 个 varargs/HFA/arg-limit） |
 | `gcc-torture-compile.excluded` | 609 | compile-only |
 | `compcert.excluded` | 34 | 多数缺少参考输出，应进入 compile 子集 |
 | `tcc-tests2.excluded` | 1 | `99_fastcall` inline asm 边界 |
@@ -39,7 +39,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 
 ### 1.3 优先回收候选
 
-- **varargs（已回收 50 个）**：`va-arg-*`、`stdarg-*`、`9xxxxx-*`、`pr44942`、`pr64979`、`*vprintf*`、`*printf*chk*` 等已通过并删除 excluded。剩余 9 个仍失败：`920501-8`、`980608-1`、`stdarg-1/2/3`、`va-arg-5/6/7/8`，已保留并记录实测 exit。
+- **varargs（已回收 51 个）**：`va-arg-*`、`stdarg-*`、`9xxxxx-*`、`pr44942`、`pr64979`、`*vprintf*`、`*printf*chk*` 等已通过并删除 excluded。剩余 8 个：`stdarg-1/2/3`、`va-arg-5/6` 是长 double/聚合 varargs 语义；`va-arg-7/8`、`980608-1` 是外部 inline，属明确非目标。
 - **HFA coerce 残留**：`20071102-1`、`981223-1`、`pr55921`、`pr38969`；先区分 HFA struct 与真正的 `_Complex`。
 - **近期能力覆盖的 skip**：`tcc-tests2:128_run_atexit`、CompCert `aligned/alignglob/alias/attribs1`、chibicc 的 `alignof/float/pointer/initializer/variable/commonsym`。
 - **`gcc-ieee` FP bucket**：`cdivchkd`、`copysign1`、`copysign2`、`inf-4`、`pr108540-1`、`pr109386`；这些是真实语义问题，转入 P2c。
@@ -49,8 +49,8 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 - 每个剩余 excluded/skip 行有分类（non-goal/dialect/diagnostics/resource/host/bug）和观察记录。
 - 不再有以 clang warning 或 Python traceback 作为原因的行。
 - `gcc-torture-compile.skip` 不再复制 excluded 列表。
-- full 相对 4269/4507 无回归；已回收 50 个（GCC execute 1194→1244），expected/compare 标志不变。
-- P2a 剩余：9 个 varargs 失败、FP/NaN bucket、5 个 compiler traceback 清理，以及其他 excluded 分类。
+- full 相对 4270/4508 无回归；已回收 51 个（GCC execute 1194→1245），expected/compare 标志不变。
+- P2a 剩余：5 个长 double/聚合 varargs 失败、FP/NaN bucket、5 个 compiler traceback 清理，以及其他 excluded 分类。
 
 ## 2. P2b：跨 ABI 子集
 
@@ -84,13 +84,15 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 - 这些不是 builtin/asm 非目标；修复后加固定回归并删除对应 skip。
 - 5 个 compiler traceback 先改成 clean resource/compiler error，再决定是否修复。
 
-## 4. 待确认决策
+## 4. 已确认决策
 
-1. **C 方言**：是否接受 `-std=gnu89`（implicit int/K&R）？接受可多回收约 150+ compile-only 用例，但改变产品接受的 C 方言；默认不纳入。
-2. **vector 含义**：计划中的 vector 指 HFA-coerced struct（已支持），还是 C vector/FMA/i128（明确非目标）？
-3. **诊断一致性**：TCC `60_errors_and_warnings` 等断言编译器错误文本的用例，是否明确 non-goal？
-4. **跨 ABI 优先级**：约 145/target 放 nightly，还是 PR 也跑？
-5. **runner 变更**：是否批准新增 `--include-excluded`、`--only`、`--emit-reasons`？
+1. **C 方言**：保持 C17，不启用 `-std=gnu89`；pre-C99/implicit-int/K&R 类继续 non-goal。
+2. **跨 ABI**：nightly 扩到约 145/target；PR 保持现有小 smoke。
+3. **诊断一致性**：TCC/CompCert 编译器错误文本匹配列为 non-goal。
+4. **下一优先级**：先处理 P2a 剩余 varargs；随后 P2c FP/NaN。
+5. **runner 变更**：`--include-excluded`、`--only`、`--emit-reasons` 已批准并实现。
+
+剩余待确认：P2b 的具体 case 名单/传输批量方式；计划中的 “vector” 仍明确指 HFA-coerced struct，而不是 C vector。
 
 ## 5. 明确非目标
 
@@ -101,6 +103,7 @@ overview: 保留 excluded/跨 ABI 重分诊的审查结论、P2a/P2b/P2c 拆分�
 - 多线程、原子操作、汇编/asm goto、向量类型、i128/vector ABI。
 - Win64 vectorcall/COM、Win32 thiscall。
 - 完整 GCC/LLVM 测试集和 SPEC 等商业 benchmark。
+- pre-C99 方言（`-std=gnu89`、implicit int/K&R）和编译器诊断文本一致性。
 
 ## 6. 建议执行顺序
 

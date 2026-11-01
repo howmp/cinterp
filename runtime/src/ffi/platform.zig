@@ -457,7 +457,7 @@ pub fn invoke(frame: *Frame, target: *const anyopaque) void {
 }
 
 fn validateCommon(plan: abi.CallPlan, gpr_max: u16, xmm_max: u16, stack_only: bool) !void {
-    if (plan.args.len > 16) return error.BadPlan;
+    if (plan.args.len > 64) return error.BadPlan;
     if (plan.ret_locs.len > 8) return error.BadPlan;
     if (plan.stack_size > 4096) return error.BadPlan;
     if (plan.ret_size > 4096) return error.BadPlan;
