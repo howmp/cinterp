@@ -17,6 +17,7 @@ from .target import Target
 _ARCH_MASK = {"x86_64": 1, "x86": 2, "aarch64": 4}
 _DATA: dict | None = None
 _PATH: Path | None = None
+_WRAPPERS: dict | None = None
 
 
 def _database_path() -> Path:
@@ -42,6 +43,36 @@ def _load() -> dict:
     return _DATA
 
 
+def _wrappers_path() -> Path:
+    return Path(__file__).with_name("link_wrappers.json")
+
+
+def _load_wrappers() -> dict:
+    global _WRAPPERS
+    if _WRAPPERS is None:
+        _WRAPPERS = json.loads(_wrappers_path().read_text())
+    return _WRAPPERS
+
+
+def _abi_os(abi: str) -> str:
+    return "windows" if abi in ("win64", "win32") else "linux"
+
+
+def wrapper(abi: str, name: str) -> tuple[str, list[str], list[str]] | None:
+    """Return a target link-ABI wrapper for an external symbol.
+
+    Some C-library entry points are supplied by a static nonshared archive
+    (for example glibc's atexit -> __cxa_atexit wrapper), so neither LLVM IR
+    nor the public header contains the real call shape.  Keeping this in link
+    metadata lets lowering emit the real symbol and arguments once.
+    """
+    entry = _load_wrappers().get("targets", {}).get(_abi_os(abi), {}).get(name)
+    if not entry:
+        return None
+    extra = entry.get("extra_args", [])
+    return str(entry["symbol"]), [str(a["type"]) for a in extra], [str(a["const"]) for a in extra]
+
+
 def database_id() -> str:
     data = _load()
     return f"cstdapi@{data.get('upstream_commit', 'unknown')}"
@@ -65,6 +96,12 @@ _WINDOWS_UCRT_HELPERS = {
 
 
 def lookup(target: Target, name: str) -> list[Provider] | None:
+    for entry in _load_wrappers().get("targets", {}).get(target.os, {}).values():
+        if entry.get("symbol") == name:
+            return [
+                Provider(kind=int(p.get("kind", 1)), name=str(p["lib"]), symbol=str(p["symbol"]))
+                for p in entry.get("providers", [])
+            ] or None
     if target.os == "windows" and name in _WINDOWS_UCRT_HELPERS:
         return [Provider(kind=1, name="ucrtbase.dll", symbol=name)]
     data = _load()

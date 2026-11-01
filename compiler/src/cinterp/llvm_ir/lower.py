@@ -1776,9 +1776,17 @@ class Lowerer:
             if fname not in self.func_indices:
                 decl = self.decls.get(fname)
                 is_varargs = decl[2] if decl else ("..." in rhs)
+                wrapped_extra_count = 0
+                wrapped = cstdapi.wrapper(self.abi, fname)
+                if wrapped is not None:
+                    fname, extra_types, extra_values = wrapped
+                    arg_types.extend(extra_types)
+                    arg_values.extend(extra_values)
+                    wrapped_extra_count = len(extra_types)
+                    is_varargs = False
                 sret_idx: int | None = None
                 sret_size = 0
-                byval_sizes = [0] * len(args)
+                byval_sizes = [0] * (len(args) + wrapped_extra_count)
                 for idx, arg in enumerate(args):
                     sm = re.search(r"\bsret\(([^)]+)\)", arg)
                     if sm:

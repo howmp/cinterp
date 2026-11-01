@@ -985,7 +985,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **`_Complex`**：明确不支持，已移出 `plan.md`，列入非目标；不为 complex ABI 增加实现。
 - **可增长线性内存与配额**：明确放弃。运行时继续使用固定 `MAX_MEM`/`MAX_STACK`/`MAX_FRAMES`/`MAX_MODULE` 上限，超出时返回现有 OOM/资源错误码；不实现可增长内存或 per-package 配额。
-- **`atexit`**：作为普通 libc 符号处理，不实现 VM 级退出栈。glibc 不动态导出 `atexit`，运行时用 `__cxa_atexit` shim 映射；CLI 在 VM 仍存活时调用 libc `exit`，保证回调可执行。`examples/ffi_atexit.c` 输出 `result: 42` 后执行 `bye`。
+- **`atexit`**：作为普通 libc 符号处理，不实现 VM 级退出栈。glibc 的 `atexit` 来自 `libc_nonshared.a` 包装对象，最终调用 `__cxa_atexit(func, arg, dso)`；`libc.so.6` 只动态导出 `__cxa_atexit`。编译器通过 `compiler/src/cinterp/link/link_wrappers.json` 的 target link-wrapper 元数据在 lowering 阶段直接生成 `__cxa_atexit(cb, 0, 0)`，不再需要运行时 `atexit` 特化。CLI 在 VM 仍存活时调用 libc `exit`，保证回调可执行。`examples/ffi_atexit.c` 输出 `result: 42` 后执行 `bye`。类似“头文件声明名 ≠ 动态导出名/参数形态”的符号应继续放入 link wrapper 元数据，而不是散落 runtime shim。
 - **`signal`**：作为普通 callback 使用，复用现有 trampoline，不新增 VM signal 机制。`examples/ffi_signal.c` 注册内部 handler、`raise(SIGUSR1)` 后返回 42。
 - **GCC builtins**：明确放弃，移出计划；不新增 builtin lowering。
 - 回归已加入 `scripts/test.sh`。
