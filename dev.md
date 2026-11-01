@@ -885,7 +885,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 19.7 计划完成状态
 
-- **计划状态**：HFA/long double/聚合回调边角已完成；`_Complex`/GCC builtins 明确不做，atexit/signal 已按普通 libc 符号/callback 处理；剩余 weak inline 和 excluded/generator 工作见 `plan.md`。
+- **计划状态**：HFA/long double/聚合回调边角已完成；`_Complex`/GCC builtins、外部 inline/weak 地址语义明确不做，atexit/signal 已按普通 libc 符号/callback 处理；剩余 excluded/generator 工作见 `plan.md`。
 - **2026-10-31 新增完成**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。
 - **明确范围外**：向量类型/vector ABI、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV `i128`/向量参数；Win32 fastcall 已单独支持。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
@@ -999,3 +999,9 @@ zig build -Dtarget=aarch64-linux-gnu
 - **编译期使用**：`cstdapi.alias()` 在 lowering 前改名；`cstdapi.wrapper()` 追加参数并改用真实 plan 名；`cstdapi.lookup()` 为真实符号提供 CIPI provider。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
 - **runtime 简化**：删除 `runtime/src/ffi/native.zig` 的 `alias()`、`vm.resolveNative()` 的 alias fallback、`strtol/wcstol` shim，以及 `_`/`@` 名称猜测。运行时现在只按 CIB provider、显式 `--lib` 和系统 fallback 查找，不再包含具体函数名分支。
 - **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4219/4457、standard 394/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。
+
+### 20.8 外部 inline / weak 的明确边界（2026-10-31）
+
+- 产品诉求是**调用真实导出的外部符号**；这条路径不受外部 inline 链接语义影响。`static inline` 和 IR 中已有的函数体继续解释执行，外部导出函数继续走 CIPI provider/`--lib`/系统 fallback。
+- 明确不作为目标：C99 inline 的外部定义选择、weak 未定义解析为 0、COMDAT/one-definition、跨 TU inline 链接、函数地址身份。TCC 104/104+ 属于这些链接/地址语义测试，继续排除。
+- 如果某个头文件 inline 函数没有真实外部导出符号，它本来就不是“外部导出符号”，需要在 IR 中内联执行或由调用方提供定义。
