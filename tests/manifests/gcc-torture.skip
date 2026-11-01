@@ -1,16 +1,12 @@
 # refreshed after P1/P2 bug fixes
 20001121-1	bug: unresolved external symbol: exit 1 != 0
-20020108-1	bug: abort/divergence: exit -6 != 0
 20021127-1	bug: unresolved external symbol: exit 1 != 0
 20040709-3	bug: abort/divergence: exit -6 != 0
 20041126-1	bug: unresolved external symbol: exit 1 != 0
 20101011-1	bug: division-by-zero: exit 1 != 0
-920612-1	bug: abort/divergence: exit -6 != 0
-930126-1	bug: abort/divergence: exit -6 != 0
 930526-1	bug: unresolved external symbol: exit 1 != 0
 961223-1	bug: unresolved external symbol: exit 1 != 0
 bitfld-3	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
-conversion	bug: abort/divergence: exit -6 != 0
 eeprof-1	bug: abort/divergence: exit -6 != 0
 loop-2c	bug: unresolved external symbol: exit 1 != 0
 nestfunc-4	non-goal: nested function/frame limit: exit 1 != 0

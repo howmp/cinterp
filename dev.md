@@ -1119,7 +1119,8 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - 移除 `--safe`/`ci_vm_set_safe`；运行时不承诺进程内沙箱，CIB 只运行可信构建产物。
 - 修复整数宽度归一化：`add/sub/mul/icmp/ret`、截断/符号扩展/无符号转换按 LLVM iN 归一化；i64 保持完整宽度。
+- 修复内部 `x86_fp80`/`fp128` 返回值：调用前预留 caller-owned 16B 槽，返回后复制到稳定槽，避免被调用帧 `mem_top` 回退覆盖。
 - 修复全局常量地址：literal packed struct（`<{...}>`）的指针字段 reloc、嵌套数组/结构体 initializer、以及 `getelementptr` 常量地址的 addend（例如 `&((items+1)->field)`）。
-- 回收 22 个 GCC execute skip：20040409-{1,1w,2,2w,3,3w}、20050218-1、991201-1、arith-rand、arith-rand-ll、vrp-5、const-addr-expr-1、20081117-1、20100209-1、pr28651、pr33779-{1,2}、pr52129、pr53084、pr7284-1、pr15296、pr60017。
-- 验证：full 4314/4519（205 skip），standard 394/495，4 ABI cross suites 通过；C API static/shared smoke 通过。
+- 回收 26 个 GCC execute skip：20040409-{1,1w,2,2w,3,3w}、20050218-1、991201-1、arith-rand、arith-rand-ll、vrp-5、const-addr-expr-1、20081117-1、20100209-1、pr28651、pr33779-{1,2}、pr52129、pr53084、pr7284-1、pr15296、pr60017、conversion、20020108-1、920612-1、930126-1。
+- 验证：full 4318/4519（201 skip），standard 394/495，4 ABI cross suites 通过；C API static/shared smoke 通过。
 - 仍保留的 bitfield 结果宽度项（bitfld-3、pr32244-1、pr34971、20040709-3）属于 GCC 期望与 Clang IR 语义差异，暂不改变 expected。

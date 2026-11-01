@@ -1969,6 +1969,19 @@ class Lowerer:
                 return
 
             callee = self.functions_by_name.get(fname)
+            ret_slot: int | None = None
+            ret_temp: int | None = None
+            if ret_type != "void":
+                ret_slot = self.slot_for(result) if result is not None else None
+                if ret_type in ("x86_fp80", "fp128"):
+                    # f80/fp128 are represented by pointers into VM memory.
+                    # Reserve caller-owned storage before the call; the callee
+                    # epilogue restores mem_top, so a returned pointer cannot
+                    # remain stable across the next operand allocation.
+                    ret_temp = self.alloc_slot()
+                    self.emit_u8(OP_ALLOCA)
+                    self.emit_u16(16)
+                    self.store_slot(ret_temp)
             for value in arg_values:
                 self.emit_operand(value)
             if callee is not None and callee.is_varargs:
@@ -2001,7 +2014,15 @@ class Lowerer:
             if ret_type != "void":
                 if result is None:
                     raise ValueError(f"call without result: {line}")
-                self.store_slot(self.slot_for(result))
+                slot = self.slot_for(result)
+                self.store_slot(slot)
+                if ret_temp is not None and ret_slot is not None:
+                    self.load_slot(ret_temp)
+                    self.load_slot(ret_slot)
+                    self.emit_const(16)
+                    self.emit_u8(OP_MEMCPY)
+                    self.load_slot(ret_temp)
+                    self.store_slot(ret_slot)
             return
 
         if rhs == "unreachable":
