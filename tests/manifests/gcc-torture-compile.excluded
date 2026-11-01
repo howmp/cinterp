@@ -67,7 +67,6 @@
 20050801-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20050801-2.c:4:9: error: fields must have a constant size: 'variable length array in structure' extensio
 20060217-1	compile: cinterp: unsupported instruction: %4 = call i32 asm "", "=r,0,~{cc},~{dirflag},~{fpsr},~{flags}"(i32 %3), !srcloc !56
 20061005-1	compile: cinterp: unsupported instruction: %0 = atomicrmw add ptr @c, i8 -1 seq_cst, align 1
-20071102-1	compile: cinterp: bad parameter: '<2 x float> %refPoint.coerce'
 20071117-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20071117-1.c:7:13: error: use of unknown builtin '__builtin_stack_save' [-Wimplicit-function-declaration
 20080114-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !31
 20080704-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/20080704-1.c:14:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support im
@@ -110,7 +109,6 @@
 920520-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/920520-1.c:5:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
 920521-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/920521-1.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
 920608-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/920608-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
-920615-1	compile: cinterp: unsupported type <{ [11 x i32], [9 x i32] }>
 920617-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/920617-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
 920617-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/920617-2.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
 920625-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/920625-1.c:37:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
@@ -190,7 +188,7 @@
 980825-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/980825-1.c:22:3: error: call to undeclared function 'clearTagList'; ISO C99 and later do not support imp
 981001-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/981001-1.c:17:3: error: use of unknown builtin '__builtin_exit' [-Wimplicit-function-declaration]
 981006-1	compile: cinterp: unsupported instruction: indirectbr ptr undef, [label %z]
-981223-1	compile: cinterp: bad parameter: '<2 x float> noundef %x.coerce'
+981223-1	non-goal: _Complex/asm or vector coerce (explicitly out of scope); observed 2026-10-31
 990829-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/990829-1.c:10:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
 991213-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/991213-2.c:6:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
 991213-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/991213-3.c:3:15: error: indirect goto in function with no address-of-label expressions
@@ -263,10 +261,10 @@ cmb	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture
 cmpsi386	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/cmpsi386.c:4:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
 cmul	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/cmul.c:3:6: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not support i
 comb	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/comb.c:3:9: error: parameter 'b' was not declared, defaults to 'int'; ISO C99 and later do not support i
-complex-1	compile: cinterp: bad parameter: '<2 x float> noundef %x.coerce'
-complex-2	compile: cinterp: unsupported type <2
-complex-3	compile: cinterp: bad parameter: '<2 x float> noundef %x.coerce'
-compound-literal-3	compile: cinterp: bad parameter: '<2 x float> noundef %x.coerce'
+complex-1	non-goal: _Complex/asm or vector coerce (explicitly out of scope); observed 2026-10-31
+complex-2	non-goal: _Complex/asm or vector coerce (explicitly out of scope); observed 2026-10-31
+complex-3	non-goal: _Complex/asm or vector coerce (explicitly out of scope); observed 2026-10-31
+compound-literal-3	non-goal: _Complex/asm or vector coerce (explicitly out of scope); observed 2026-10-31
 consec	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/consec.c:7:18: error: parameter 'd' was not declared, defaults to 'int'; ISO C99 and later do not suppor
 const	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/const.c:3:7: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not support 
 conv_tst	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/conv_tst.c:11:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impl
@@ -382,7 +380,6 @@ pr111442-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-
 pr111699-1	compile: cinterp: unsupported type <8 x i8>
 pr111911-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr111911-1.c:4:28: warning: overflow in expression; result is -2'147'483'648 with type 'int' [-Winteger-
 pr111911-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr111911-2.c:3:10: error: unknown type name 'bool'
-pr113603	compile: cinterp: unsupported type <{ [100 x i32], <{ i32, [99 x i32] }>, [98 x [100 x i32]] }>
 pr115143-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr115143-2.c:8:33: error: expected ')'
 pr115143-3	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr115143-3.c:8:33: error: expected ')'
 pr116600	compile: cinterp: unsupported instruction: callbr void asm sideeffect "", "!i,~{dirflag},~{fpsr},~{flags}"()
@@ -443,7 +440,6 @@ pr41182-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-t
 pr42398	compile: cinterp: unsupported instruction: %0 = call i32 asm sideeffect "", "=r,~{dirflag},~{fpsr},~{flags}"(), !srcloc !24
 pr42559	compile: cinterp: unsupported instruction: indirectbr ptr undef, [label %jumplabel]
 pr42956	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr42956.c:14:14: error: fields must have a constant size: 'variable length array in structure' extension
-pr43191	compile: cinterp: unsupported type <{ <{ [1 x [1 x { i8, i8, i8, i8 }]], [1 x [1 x %struct.S1]], [1 x [1 x %struct.S1]], [1 x [1 x %struct.S1]], [1 x [1 x %struct.S1]], [1 x [1 x %struct.S1
 pr43635	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr43635.c:9:12: error: incompatible function pointer types initializing 'void (*(*)(void))(float)' with 
 pr44043	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr44043.c:21:1: warning: non-void function does not return a value [-Wreturn-type]
 pr44063	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr44063.c:22:23: error: call to undeclared function 'bswap_32'; ISO C99 and later do not support implici
@@ -477,7 +473,7 @@ pr54713-1	compile: cinterp: unsupported type <8 x i32>
 pr54713-2	compile: cinterp: unsupported type <16 x i32>
 pr54713-3	compile: cinterp: unsupported type <32 x i32>
 pr55273	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr55273.c:12:13: error: use of unknown builtin '__builtin_puts' [-Wimplicit-function-declaration]
-pr55921	compile: cinterp: bad parameter: '<2 x float> noundef %r.coerce'
+pr55921	non-goal: _Complex/asm or vector coerce (explicitly out of scope); observed 2026-10-31
 pr56405	compile: cinterp: unsupported instruction: call void asm sideeffect "", "=*m,*m,~{dirflag},~{fpsr},~{flags}"(ptr elementtype(i16) inttoptr (i64 4097 to ptr), ptr elementtype(i16) inttoptr (
 pr58164	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/compile/pr58164.c:8:3: error: indirect goto in function with no address-of-label expressions
 pr60502	compile: cinterp: unsupported type <16 x i8>
