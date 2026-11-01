@@ -8,7 +8,7 @@
 20010605-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20010605-1.c:6:5: error: function definition is not allowed here
 20010605-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20010605-2.c:11:7: warning: passing arguments to 'foo' without a prototype is deprecated in all versions
 20020314-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020314-1.c:14:7: error: call to undeclared library function 'alloca' with type 'void *(unsigned long)'
-20020411-1	compile: cinterp: unsupported type <2 x float>
+20020411-1	non-goal: vector/_Complex type (explicitly unsupported); observed 2026-10-31
 20020412-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020412-1.c:24:10: error: fields must have a constant size: 'variable length array in structure' extens
 20020819-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20020819-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support imp
 20030222-1	compile: cinterp: unsupported instruction: %1 = call i64 asm "", "=r,0,~{dirflag},~{fpsr},~{flags}"(i64 %0), !srcloc !31
@@ -18,7 +18,6 @@
 20040223-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040223-1.c:9:5: error: call to undeclared library function 'abort' with type 'void (void) __attribute_
 20040302-1	compile: cinterp: unsupported instruction: indirectbr ptr %indirect.goto.dest, [label %lab0, label %end]
 20040308-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040308-1.c:6:9: error: fields must have a constant size: 'variable length array in structure' extensio
-20040313-1	compile: cinterp: unsupported type <{ i32, [1024 x i32] }>
 20040423-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040423-1.c:8:9: error: fields must have a constant size: 'variable length array in structure' extensio
 20040520-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20040520-1.c:7:9: error: function definition is not allowed here
 20040805-1	compile: cinterp: bad alloca size 65536 for [65536 x i8]
@@ -31,7 +30,7 @@
 20050316-2	compile: cinterp: unsupported type <2 x float>
 20050316-3	compile: cinterp: unsupported type <2 x i32>
 20050604-1	compile: cinterp: unsupported type <4 x i16>
-20050607-1	compile: cinterp: unsupported type <2 x i32>
+20050607-1	non-goal: vector/_Complex type (explicitly unsupported); observed 2026-10-31
 20060420-1	compile: cinterp: unsupported type <4 x float>
 20061031-1	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{dirflag},~{fpsr},~{flags}"(), !srcloc !27
 20061220-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/20061220-1.c:11:3: error: function definition is not allowed here
@@ -144,10 +143,10 @@ cmpsi-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-tor
 cmpsi-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/cmpsi-2.c:7:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implic
 comp-goto-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/comp-goto-1.c:128:7: warning: a function declaration without a prototype is deprecated in all versions o
 comp-goto-2	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/comp-goto-2.c:14:3: error: parameter 'a' was not declared, defaults to 'int'; ISO C99 and later do not s
-complex-3	compile: cinterp: unsupported type <2 x float>
+complex-3	non-goal: vector/_Complex type (explicitly unsupported); observed 2026-10-31
 complex-5	compile: cinterp: bad parameter: '<2 x float> noundef %a.coerce'
 complex-6	compile: cinterp: bad parameter: '<2 x float> noundef %x.coerce'
-complex-7	compile: cinterp: bad parameter: '<2 x float> noundef %a1.coerce'
+complex-7	non-goal: vector/_Complex type (explicitly unsupported); observed 2026-10-31
 dbra-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/dbra-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implici
 divmod-1	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/divmod-1.c:3:1: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support impli
 inst-check	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/inst-check.c:5:3: error: parameter 'm' was not declared, defaults to 'int'; ISO C99 and later do not sup
@@ -209,7 +208,6 @@ pr22061-4	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-t
 pr23135	compile: cinterp: bad alloca size 131072 for %struct.big_t
 pr23324	compile: cinterp: bad alloca size 0 for %union.at6
 pr24135	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr24135.c:11:5: error: function definition is not allowed here
-pr27285	compile: cinterp: unknown global @__const.main.x
 pr28865	compile: /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr28865.c:3:20: error: initialization of flexible array member is not allowed
 pr28982b	compile: cinterp: bad alloca size 262144 for %struct.big
 pr30314	compile: In file included from /home/admin/cl/build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/pr30314.c:3:
