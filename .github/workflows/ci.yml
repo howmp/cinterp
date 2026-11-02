@@ -10,6 +10,7 @@ jobs:
           version: 0.13.0
       - run: sudo apt-get update && sudo apt-get install -y clang python3 make
       - run: make test
+      - run: make lint
       - run: make c-testsuite
       - run: make size
       - run: make fuzz
@@ -45,11 +46,13 @@ jobs:
       - shell: pwsh
         run: |
           $env:PATH = "C:\Program Files\LLVM\bin;$env:PATH"
+          cd compiler-zig
+          zig build
+          cd ..
           cd runtime
           zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSmall
           cd ..
-          $env:PYTHONPATH = "compiler/src"
-          python -m cinterp compile examples/hello.c --target x86_64-windows -o build/hello-win64.cib
+          ./compiler-zig/zig-out/bin/cinterp-cc.exe compile examples/hello.c --target x86_64-windows -o build/hello-win64.cib
           $out = & runtime/zig-out/bin/cinterp-run.exe build/hello-win64.cib 2>&1
           $out
           if (-not ($out -match 'result: 42')) { exit 1 }
@@ -63,8 +66,11 @@ jobs:
           version: 0.13.0
       - run: sudo apt-get update && sudo apt-get install -y clang python3 make qemu-user gcc-aarch64-linux-gnu
       - run: |
+          cd compiler-zig
+          zig build
+          cd ..
           cd runtime
           zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSmall
           cd ..
-          PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c --target aarch64-linux -o build/hello-arm64.cib
+          ./compiler-zig/zig-out/bin/cinterp-cc compile --target aarch64-linux examples/hello.c -o build/hello-arm64.cib
           qemu-aarch64 -L /usr/aarch64-linux-gnu runtime/zig-out/bin/cinterp-run build/hello-arm64.cib | grep 'result: 42'

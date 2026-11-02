@@ -5,9 +5,11 @@ compile-time FFI plans, then executes it in a small Zig VM. Native calls go
 through a fixed assembly ABI engine; there is no libffi, no `@call` stub matrix,
 and no runtime code generation / executable memory.
 
-- **Compiler** (Python, build-time): `clang -S -emit-llvm -O0`, LLVM IR → CIVM
-  bytecode, FFI `CallPlan` table, and a `CIPKG` v2 package with target metadata
-  (`CIPM`) and external-symbol link metadata (`CIPI`).
+- **Compiler** (Zig, build-time): invokes `zig cc -S -emit-llvm -O0`, parses
+  LLVM IR, emits CIVM bytecode, FFI `CallPlan` table, and a `CIPKG` v2 package
+  with target metadata (`CIPM`) and external-symbol link metadata (`CIPI`). The
+  original Python compiler remains available for differential testing and
+  rollback.
 - **Runtime** (Zig 0.13): stack VM with linear memory, C ABI (`ci_vm_*`),
   compile-time ABI selection, fixed assembly engines for SysV x86-64,
   Win64, Win32 cdecl/stdcall and AArch64 AAPCS64, native symbol resolution
@@ -18,24 +20,25 @@ and no runtime code generation / executable memory.
 
 ## Quick start
 
-Requirements: Zig 0.13, clang, Python 3.10+.
+Requirements: Zig 0.13 (runtime and `zig cc` frontend), Python 3.10+ (tests and
+the legacy reference compiler only).
 
 ```bash
-# build release runtime (unwind/backtrace/diagnostic tracing trimmed)
-make runtime
-
-# build debug runtime (full unwind tables, frame pointers, panic tracing)
-make debug-runtime
+# build the Zig compiler and release runtime
+make compiler-zig runtime
 
 # compile and run a C file
-PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c -o build/hello.cib
+./build/cinterp-cc compile examples/hello.c -o build/hello.cib
 ./runtime/zig-out/bin/cinterp-run build/hello.cib
 # result: 42
 
-PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o build/printf.cib
+./build/cinterp-cc compile examples/ffi_printf.c -o build/printf.cib
 ./runtime/zig-out/bin/cinterp-run build/printf.cib
 # 7 2.5
 # result: 0
+
+# Python reference compiler (rollback / differential)
+PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c -o build/hello-py.cib
 
 # struct byval + sret FFI through a user shared library
 cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so

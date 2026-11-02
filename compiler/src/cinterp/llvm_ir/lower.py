@@ -321,8 +321,18 @@ def type_size_align(ty: str, structs: dict[str, list[str]], ptr_size: int = 8) -
     m = re.match(r"i(\d+)$", ty)
     if m:
         bits = int(m.group(1))
-        size = max(1, (bits + 7) // 8)
-        return size, size
+        store_size = max(1, (bits + 7) // 8)
+        if bits <= 8:
+            alignment = 1
+        elif bits <= 16:
+            alignment = 2
+        elif bits <= 32:
+            alignment = 4
+        elif bits <= 64:
+            alignment = 8
+        else:
+            alignment = 16
+        return align_up(store_size, alignment), alignment
     raise ValueError(f"unsupported type {ty}")
 
 
@@ -895,8 +905,53 @@ class Lowerer:
         self.emit_u8(OP_STORE_LOCAL)
         self.emit_u16(slot)
 
+    def emit_icmp_expr(self, pred: str, cmp_ty: str, args_text: str) -> None:
+        bits = int(cmp_ty[1:]) if cmp_ty.startswith("i") else self.ptr_size * 8
+        signed_cmp = pred in ("slt", "sle", "sgt", "sge")
+        a, b = split_top(args_text, ",")
+        def emit_cmp_arg(text: str) -> None:
+            self.emit_operand(text)
+            self.normalize_int(bits, signed_cmp)
+        invert = False
+        if pred in ("eq",):
+            self.emit_int_operand(a, bits, False)
+            self.emit_int_operand(b, bits, False)
+            self.emit_u8(OP_CMP_EQ)
+        elif pred in ("ne",):
+            self.emit_int_operand(a, bits, False)
+            self.emit_int_operand(b, bits, False)
+            self.emit_u8(OP_CMP_EQ)
+            invert = True
+        elif pred in ("slt", "ult"):
+            emit_cmp_arg(a)
+            emit_cmp_arg(b)
+            self.emit_u8(OP_CMP_LT if pred == "slt" else OP_CMP_LT_U)
+        elif pred in ("sgt", "ugt"):
+            emit_cmp_arg(b)
+            emit_cmp_arg(a)
+            self.emit_u8(OP_CMP_LT if pred == "sgt" else OP_CMP_LT_U)
+        elif pred in ("sle", "ule"):
+            emit_cmp_arg(b)
+            emit_cmp_arg(a)
+            self.emit_u8(OP_CMP_LT if pred == "sle" else OP_CMP_LT_U)
+            invert = True
+        elif pred in ("sge", "uge"):
+            emit_cmp_arg(a)
+            emit_cmp_arg(b)
+            self.emit_u8(OP_CMP_LT if pred == "sge" else OP_CMP_LT_U)
+            invert = True
+        else:
+            raise ValueError(f"unsupported icmp predicate: {pred}")
+        if invert:
+            self.emit_const(1)
+            self.emit_u8(OP_XOR)
+
     def emit_operand(self, text: str) -> None:
         stripped_text = text.strip()
+        im = re.match(r"icmp\s+(\w+)\s+(\S+)\s+(.+)$", stripped_text)
+        if im:
+            self.emit_icmp_expr(im.group(1), im.group(2), im.group(3))
+            return
         cm = re.match(r"(add|sub|mul)\s*\((.*)\)$", stripped_text)
         if cm:
             parts = split_top(cm.group(2))
@@ -1004,6 +1059,13 @@ class Lowerer:
 
     def type_size(self, ty: str) -> int:
         return type_size_align(ty, self.structs, self.ptr_size)[0]
+
+    def type_store_size(self, ty: str) -> int:
+        ty = ty.strip()
+        m = re.match(r"i(\d+)$", ty)
+        if m:
+            return max(1, (int(m.group(1)) + 7) // 8)
+        return self.type_size(ty)
 
     def emit_float_operand(self, text: str, ty: str) -> None:
         stripped = text.strip()
@@ -1306,7 +1368,7 @@ class Lowerer:
                         break
             if not value or not ptr:
                 raise ValueError(f"bad store: {line}")
-            size = self.type_size(ty)
+            size = self.type_store_size(ty)
             if size <= 0:
                 raise ValueError(f"aggregate store unsupported: {ty}")
             if ty in ("x86_fp80", "fp128"):
@@ -1340,7 +1402,7 @@ class Lowerer:
             if not m:
                 raise ValueError(f"bad load: {line}")
             ty, ptr = m.group(1).strip(), m.group(2).strip()
-            size = self.type_size(ty)
+            size = self.type_store_size(ty)
             if ty in ("x86_fp80", "fp128"):
                 self.emit_pointer(ptr)
                 self.store_slot(self.slot_for(result))
@@ -1533,47 +1595,7 @@ class Lowerer:
         if m:
             if result is None:
                 raise ValueError(f"icmp without result: {line}")
-            pred = m.group(1)
-            cmp_ty = m.group(2)
-            bits = int(cmp_ty[1:]) if cmp_ty.startswith("i") else self.ptr_size * 8
-            signed_cmp = pred in ("slt", "sle", "sgt", "sge")
-            a, b = split_top(m.group(3), ",")
-            def emit_cmp_arg(text: str) -> None:
-                self.emit_operand(text)
-                self.normalize_int(bits, signed_cmp)
-            invert = False
-            if pred in ("eq",):
-                self.emit_int_operand(a, bits, False)
-                self.emit_int_operand(b, bits, False)
-                self.emit_u8(OP_CMP_EQ)
-            elif pred in ("ne",):
-                self.emit_int_operand(a, bits, False)
-                self.emit_int_operand(b, bits, False)
-                self.emit_u8(OP_CMP_EQ)
-                invert = True
-            elif pred in ("slt", "ult"):
-                emit_cmp_arg(a)
-                emit_cmp_arg(b)
-                self.emit_u8(OP_CMP_LT if pred == "slt" else OP_CMP_LT_U)
-            elif pred in ("sgt", "ugt"):
-                emit_cmp_arg(b)
-                emit_cmp_arg(a)
-                self.emit_u8(OP_CMP_LT if pred == "sgt" else OP_CMP_LT_U)
-            elif pred in ("sle", "ule"):
-                emit_cmp_arg(b)
-                emit_cmp_arg(a)
-                self.emit_u8(OP_CMP_LT if pred == "sle" else OP_CMP_LT_U)
-                invert = True
-            elif pred in ("sge", "uge"):
-                emit_cmp_arg(a)
-                emit_cmp_arg(b)
-                self.emit_u8(OP_CMP_LT if pred == "sge" else OP_CMP_LT_U)
-                invert = True
-            else:
-                raise ValueError(f"unsupported icmp predicate: {pred}")
-            if invert:
-                self.emit_const(1)
-                self.emit_u8(OP_XOR)
+            self.emit_icmp_expr(m.group(1), m.group(2), m.group(3))
             self.store_slot(self.slot_for(result))
             return
 
@@ -1706,7 +1728,7 @@ class Lowerer:
                 self.emit_const(offsets[index])
                 self.emit_u8(OP_ADD)
             self.emit_u8(OP_LOAD_MEM)
-            self.emit_u8(self.type_size(field_ty))
+            self.emit_u8(self.type_store_size(field_ty))
             self.store_slot(self.slot_for(result))
             return
 

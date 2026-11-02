@@ -331,7 +331,6 @@ def compile_inprocess(source: Path, cib: Path, target_name: str, env: dict, time
     """Compile without paying Python startup/DB reload per test case."""
     if str(COMPILER_ROOT) not in sys.path:
         sys.path.insert(0, str(COMPILER_ROOT))
-    from cinterp.cli import _zig_windows_include
     from cinterp.ffi.plan import UnsupportedFfi
     from cinterp.link import cstdapi, winmd
     from cinterp.link.imports import ImportTable
@@ -341,15 +340,18 @@ def compile_inprocess(source: Path, cib: Path, target_name: str, env: dict, time
     target = TARGETS[target_name]
     with tempfile.TemporaryDirectory(prefix="cinterp-inproc-") as td:
         ll = Path(td) / (source.stem + ".ll")
-        cmd = [os.environ.get("CINTERP_CLANG", "clang")]
-        if target_name != "x86_64-linux":
-            cmd.append("--target=" + target.triple)
-            if target.os == "windows":
-                include = _zig_windows_include()
-                if include is None:
-                    return 2, "cinterp: Zig Windows headers not found; set ZIG_LIB_DIR"
-                cmd += ["-isystem", str(include)]
-        cmd += ["-S", "-emit-llvm", "-O0", "-g", "-fno-discard-value-names", str(source), "-o", str(ll)]
+        from cinterp.cli import _build_ir_command
+        cc_kind = os.environ.get("CINTERP_CC", "clang")
+        if cc_kind not in ("clang", "zig"):
+            return 2, f"cinterp: unknown CINTERP_CC={cc_kind}"
+        cc_path = os.environ.get("CINTERP_CC_PATH") or os.environ.get("CINTERP_CLANG")
+        ns = argparse.Namespace(cc=cc_kind, cc_path=cc_path, clang=None)
+        try:
+            cmd = _build_ir_command(ns, target, source, ll)
+        except RuntimeError as exc:
+            return 2, f"cinterp: {exc}"
+        if os.environ.get("CINTERP_DEBUG_CC"):
+            print(f"CCCMD {cmd!r} CPATH={env.get('CPATH')!r}", file=sys.stderr)
         comp = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, timeout=timeout)
         if comp.returncode != 0:
             return comp.returncode, norm_text(comp.stderr).decode("utf-8", "replace")
@@ -524,7 +526,10 @@ def run_case(
     cib = work / (cid + ".cib")
     timeout = float(case.get("timeout", manifest.get("timeout", 30)))
     compile_timeout = float(manifest.get("compile_timeout", 300))
-    cmd = [sys.executable, "-m", "cinterp", "compile", str(source), "-o", str(cib)]
+    if runner.get("compiler") == "zig":
+        cmd = [runner["compiler_path"], "compile", str(source), "-o", str(cib)]
+    else:
+        cmd = [sys.executable, "-m", "cinterp", "compile", str(source), "-o", str(cib)]
     if target != "x86_64-linux" or manifest.get("force_target"):
         cmd += ["--target", target]
     cached = False
@@ -542,7 +547,23 @@ def run_case(
             result["cached"] = True
 
     if not cached:
-        if runner.get("inprocess"):
+        if runner.get("compiler") == "zig":
+            try:
+                comp = subprocess.run(
+                    cmd, cwd=ROOT, env=env, capture_output=True, timeout=compile_timeout
+                )
+            except subprocess.TimeoutExpired:
+                result.update(status="timeout", reason="compile timeout")
+                result["duration_ms"] = int((time.monotonic() - started) * 1000)
+                return result
+            if comp.returncode != 0:
+                stderr = norm_text(comp.stderr).decode("utf-8", "replace").strip()
+                result.update(status="compile", reason=summarize_failure(stderr, comp.returncode))
+                if stderr:
+                    result["detail"] = stderr[-2000:]
+                result["duration_ms"] = int((time.monotonic() - started) * 1000)
+                return result
+        elif runner.get("inprocess"):
             try:
                 rc, stderr = compile_inprocess(source, cib, target, env, compile_timeout)
             except subprocess.TimeoutExpired:
@@ -641,10 +662,24 @@ def main() -> int:
     ap.add_argument("--inprocess", action="store_true", help="compile in this Python process (faster local runs)")
     ap.add_argument("--cib-cache", default="", help="directory for content-addressed CIB cache")
     ap.add_argument("--batch", action="store_true", help="batch clang IR generation before in-process lowering")
+    ap.add_argument("--compiler", choices=("python", "zig"), default="python",
+                    help="compiler implementation (zig uses build/cinterp-cc)")
+    ap.add_argument("--compiler-path", default=str(ROOT / "build/cinterp-cc"),
+                    help="path to cinterp-cc when --compiler zig")
     ap.add_argument("--include-excluded", action="store_true", help="include .excluded cases for re-triage")
     ap.add_argument("--only", action="append", default=[], help="only run IDs (comma-separated, repeatable)")
     ap.add_argument("--emit-reasons", default="", help="write auditable ID<TAB>status: reason for non-ok cases")
     args = ap.parse_args()
+
+    cc_kind = os.environ.get("CINTERP_CC", "clang")
+    if cc_kind not in ("clang", "zig"):
+        print(f"unknown CINTERP_CC={cc_kind}", file=sys.stderr)
+        return 2
+    if args.batch and (cc_kind != "clang" or args.compiler != "python"):
+        print("--batch supports the Python compiler with external clang only", file=sys.stderr)
+        return 2
+    cc_path = os.environ.get("CINTERP_CC_PATH") or os.environ.get("CINTERP_CLANG")
+    print(f"compiler: {cc_kind}{' (' + cc_path + ')' if cc_path else ''}", file=sys.stderr)
 
     manifests = load_manifests()
     selected: dict[str, dict] = {}
@@ -678,6 +713,8 @@ def main() -> int:
         "inprocess": args.inprocess,
         "cib_cache": Path(args.cib_cache) if args.cib_cache else None,
         "batch": args.batch,
+        "compiler": args.compiler,
+        "compiler_path": args.compiler_path,
     }
     if args.target in ("x86_64-windows", "i686-windows"):
         if not runner_cfg["windows_host"]:

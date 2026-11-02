@@ -31,6 +31,7 @@ class Target:
     link_db: str = ""
     producer: str = f"cinterp {__version__}"
     flags: int = 0
+    zig_triple: str = ""
 
     def with_arch_features(self) -> "Target":
         if self.arch in ("x86_64", "x86"):
@@ -62,10 +63,22 @@ class Target:
 
 
 TARGETS = {
-    "x86_64-linux": Target("x86_64-linux", "x86_64-pc-linux-gnu", "x86_64", "linux", "sysv", 64).with_arch_features(),
-    "x86_64-windows": Target("x86_64-windows", "x86_64-pc-windows-gnu", "x86_64", "windows", "win64", 64).with_arch_features(),
-    "i686-windows": Target("i686-windows", "i686-pc-windows-gnu", "x86", "windows", "win32", 32).with_arch_features(),
-    "aarch64-linux": Target("aarch64-linux", "aarch64-linux-gnu", "aarch64", "linux", "aapcs64", 64).with_arch_features(),
+    "x86_64-linux": Target(
+        "x86_64-linux", "x86_64-pc-linux-gnu", "x86_64", "linux", "sysv", 64,
+        zig_triple="x86_64-linux-gnu",
+    ).with_arch_features(),
+    "x86_64-windows": Target(
+        "x86_64-windows", "x86_64-pc-windows-gnu", "x86_64", "windows", "win64", 64,
+        zig_triple="x86_64-windows-gnu",
+    ).with_arch_features(),
+    "i686-windows": Target(
+        "i686-windows", "i686-pc-windows-gnu", "x86", "windows", "win32", 32,
+        zig_triple="x86-windows-gnu",
+    ).with_arch_features(),
+    "aarch64-linux": Target(
+        "aarch64-linux", "aarch64-linux-gnu", "aarch64", "linux", "aapcs64", 64,
+        zig_triple="aarch64-linux-gnu",
+    ).with_arch_features(),
 }
 DEFAULT_TARGET = TARGETS["x86_64-linux"]
 

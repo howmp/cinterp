@@ -24,7 +24,12 @@ def _build_parser() -> argparse.ArgumentParser:
     comp = sub.add_parser("compile", help="compile a C file to a CIPKG package")
     comp.add_argument("source")
     comp.add_argument("-o", "--output")
-    comp.add_argument("--clang", default="clang")
+    comp.add_argument("--cc", choices=("clang", "zig"),
+                      default=os.environ.get("CINTERP_CC", "clang"),
+                      help="C front end: external clang or Zig's bundled clang")
+    comp.add_argument("--cc-path", default=os.environ.get("CINTERP_CC_PATH"),
+                      help="explicit path to clang/zig")
+    comp.add_argument("--clang", default=None, help="deprecated alias for --cc-path")
     comp.add_argument("--target", choices=sorted(TARGETS), default=None)
     comp.add_argument("--keep-ir", action="store_true")
     comp.add_argument("--dump", action="store_true")
@@ -53,6 +58,53 @@ def _zig_windows_include() -> Path | None:
     return None
 
 
+def _compiler_executable(args: argparse.Namespace) -> str:
+    explicit = args.cc_path or args.clang
+    if explicit:
+        return explicit
+    return "zig" if args.cc == "zig" else "clang"
+
+
+def _build_ir_command(args: argparse.Namespace, target, src: Path, ll: Path) -> list[str]:
+    exe = _compiler_executable(args)
+    if args.cc == "zig":
+        cmd = [exe, "cc"]
+        if not (target.name == "x86_64-linux" and sys.platform.startswith("linux")):
+            cmd.append("--target=" + target.zig_triple)
+        cmd += [
+            "-S",
+            "-emit-llvm",
+            "-O0",
+            "-g",
+            "-fno-discard-value-names",
+            "-fno-sanitize=all",
+            "-fno-stack-protector",
+            "-ffine-grained-bitfield-accesses",
+        ]
+        if target.os == "windows":
+            cmd += ["-fms-extensions", "-fdeclspec"]
+        cmd += [str(src), "-o", str(ll)]
+        return cmd
+
+    cmd = [exe, "--target=" + target.triple]
+    if target.os == "windows":
+        windows_include = _zig_windows_include()
+        if windows_include is None:
+            raise RuntimeError("Zig Windows headers not found; set ZIG_LIB_DIR")
+        cmd += ["-isystem", str(windows_include)]
+    cmd += [
+        "-S",
+        "-emit-llvm",
+        "-O0",
+        "-g",
+        "-fno-discard-value-names",
+        str(src),
+        "-o",
+        str(ll),
+    ]
+    return cmd
+
+
 def _compile(args: argparse.Namespace) -> int:
     if args.link_db:
         cstdapi.set_database(args.link_db)
@@ -71,27 +123,15 @@ def _compile(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        cmd = [args.clang, "--target=" + target.triple]
-        if target.os == "windows":
-            windows_include = _zig_windows_include()
-            if windows_include is None:
-                print("cinterp: Zig Windows headers not found; set ZIG_LIB_DIR", file=sys.stderr)
-                return 2
-            cmd += ["-isystem", str(windows_include)]
-        cmd += [
-            "-S",
-            "-emit-llvm",
-            "-O0",
-            "-g",
-            "-fno-discard-value-names",
-            str(src),
-            "-o",
-            str(ll),
-        ]
+        try:
+            cmd = _build_ir_command(args, target, src, ll)
+        except RuntimeError as exc:
+            print(f"cinterp: {exc}", file=sys.stderr)
+            return 2
         try:
             subprocess.run(cmd, check=True)
         except FileNotFoundError:
-            print(f"cinterp: clang not found: {args.clang}", file=sys.stderr)
+            print(f"cinterp: C compiler not found: {_compiler_executable(args)}", file=sys.stderr)
             return 2
         except subprocess.CalledProcessError as exc:
             return exc.returncode or 1
@@ -124,7 +164,7 @@ def _compile(args: argparse.Namespace) -> int:
     print(
         f"{out}: {len(module)}B module, {len(plan_bytes)}B plans, "
         f"{len(functions)} functions, {len(plans.plans)} external plans, "
-        f"target={target.name}, cib=v{args.cib_version}, imports={len(imports.entries)}"
+        f"target={target.name}, cib=v{args.cib_version}, imports={len(imports.entries)}, cc={args.cc}"
     )
     if args.dump:
         for fn in functions:

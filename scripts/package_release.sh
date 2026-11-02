@@ -75,6 +75,11 @@ build_one() {
     cp "runtime/zig-out/bin/$exe" "$dest/"
     cp runtime/zig-out/include/cinterp.h "$dest/include/"
     cp -a runtime/zig-out/lib/. "$dest/lib/"
+    if [ "$target" = "x86_64-linux-gnu" ]; then
+        (cd compiler-zig && zig build -Doptimize=ReleaseSmall >/dev/null)
+        mkdir -p "$dest/bin"
+        cp compiler-zig/zig-out/bin/cinterp-cc "$dest/bin/cinterp-cc"
+    fi
     for dll in runtime/zig-out/bin/*.dll; do
         if [ -e "$dll" ]; then cp "$dll" "$dest/"; fi
     done

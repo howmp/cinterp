@@ -1,6 +1,11 @@
-.PHONY: all test runtime debug-runtime compiler-test integration size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross fetch-suites generate-diff
+.PHONY: all test test-py compiler-zig runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross test-suites-smoke-py test-suites-py test-suites-full-py fetch-suites generate-diff
 
 all: test
+
+compiler-zig:
+	cd compiler-zig && zig build
+	mkdir -p build
+	cp compiler-zig/zig-out/bin/cinterp-cc build/cinterp-cc
 
 runtime:
 	cd runtime && zig build -Doptimize=ReleaseSmall
@@ -15,15 +20,24 @@ compiler-test:
 integration:
 	./scripts/test.sh
 
-test:
-	./scripts/test.sh
+lint: compiler-zig runtime
+	build/cinterp-cc compile examples/hello.c -o build/lint-hello.cib
+	build/cinterp-cc compile examples/ffi_qsort.c -o build/lint-qsort.cib
+	build/cinterp-cc compile examples/ffi_callback.c -o build/lint-callback.cib
+	python3 scripts/civm_lint.py build/lint-hello.cib build/lint-qsort.cib build/lint-callback.cib
 
-size: runtime
+test: compiler-zig
+	CINTERP_COMPILER="$(CURDIR)/build/cinterp-cc" ./scripts/test.sh
+
+test-py:
+	CINTERP_COMPILER=python ./scripts/test.sh
+
+size: runtime compiler-zig
 	mkdir -p build
 	@printf 'runtime ReleaseSmall: '; du -h runtime/zig-out/bin/cinterp-run | cut -f1
-	@PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c -o build/hello.cib >/dev/null
+	@build/cinterp-cc compile examples/hello.c -o build/hello.cib >/dev/null
 	@printf 'hello.cib: '; wc -c < build/hello.cib
-	@PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_qsort.c -o build/ffi_qsort.cib >/dev/null
+	@build/cinterp-cc compile examples/ffi_qsort.c -o build/ffi_qsort.cib >/dev/null
 	@printf 'ffi_qsort.cib: '; wc -c < build/ffi_qsort.cib
 	@test "$$(stat -c%s runtime/zig-out/bin/cinterp-run)" -lt 131072
 	@test "$$(stat -c%s build/ffi_qsort.cib)" -lt 4096
@@ -39,44 +53,53 @@ c-testsuite: runtime
 fetch-suites:
 	python3 scripts/fetch_suites.py --all --support
 
-test-suites-smoke: runtime
+test-suites-smoke: compiler-zig runtime
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier smoke --cib-cache build/cib-cache-zig --report build/test-suites-smoke.json
+
+test-suites: compiler-zig runtime
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier standard --cib-cache build/cib-cache-zig --report build/test-suites.json
+
+test-suites-full: compiler-zig runtime
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier full --cib-cache build/cib-cache-zig --report build/test-suites-full.json
+
+test-suites-nightly: compiler-zig runtime
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier nightly --cib-cache build/cib-cache-zig --report build/test-suites-nightly.json
+	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
+
+test-suites-smoke-py: runtime
 	python3 scripts/test_suites.py --tier smoke --inprocess --cib-cache build/cib-cache --report build/test-suites-smoke.json
 
-test-suites: runtime
+test-suites-py: runtime
 	python3 scripts/test_suites.py --tier standard --inprocess --cib-cache build/cib-cache --report build/test-suites.json
 
-test-suites-full: runtime
+test-suites-full-py: runtime
 	python3 scripts/test_suites.py --tier full --inprocess --cib-cache build/cib-cache --report build/test-suites-full.json
-
-test-suites-nightly: runtime
-	python3 scripts/test_suites.py --tier nightly --inprocess --cib-cache build/cib-cache --report build/test-suites-nightly.json
-	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
 
 test-suites-report: test-suites-full
 	@test -s build/test-suites-full.json
 
-test-suites-cross: runtime
+test-suites-cross: compiler-zig runtime
 	cd runtime && zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run.exe build/cross/cinterp-run64.exe
-	python3 scripts/test_suites.py --suite csuite --target x86_64-windows --jobs 4 --report build/test-suites-win64.json
-	python3 scripts/test_suites.py --suite c-testsuite-smoke --target x86_64-windows --jobs 4 --report build/test-suites-cross-win64.json
-	python3 scripts/test_suites.py --suite tcc-smoke --target x86_64-windows --jobs 4 --report build/test-suites-tcc-win64.json
-	python3 scripts/test_suites.py --suite gcc-smoke --target x86_64-windows --jobs 4 --report build/test-suites-gcc-win64.json
-	python3 scripts/test_suites.py --suite compcert-smoke --target x86_64-windows --jobs 4 --report build/test-suites-compcert-win64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite csuite --target x86_64-windows --jobs 4 --report build/test-suites-win64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite c-testsuite-smoke --target x86_64-windows --jobs 4 --report build/test-suites-cross-win64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite tcc-smoke --target x86_64-windows --jobs 4 --report build/test-suites-tcc-win64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite gcc-smoke --target x86_64-windows --jobs 4 --report build/test-suites-gcc-win64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite compcert-smoke --target x86_64-windows --jobs 4 --report build/test-suites-compcert-win64.json
 	cd runtime && zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run.exe build/cross/cinterp-run32.exe
-	python3 scripts/test_suites.py --suite csuite --target i686-windows --jobs 4 --report build/test-suites-win32.json
-	python3 scripts/test_suites.py --suite c-testsuite-smoke --target i686-windows --jobs 4 --report build/test-suites-cross-win32.json
-	python3 scripts/test_suites.py --suite tcc-smoke --target i686-windows --jobs 4 --report build/test-suites-tcc-win32.json
-	python3 scripts/test_suites.py --suite gcc-smoke --target i686-windows --jobs 4 --report build/test-suites-gcc-win32.json
-	python3 scripts/test_suites.py --suite compcert-smoke --target i686-windows --jobs 4 --report build/test-suites-compcert-win32.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite csuite --target i686-windows --jobs 4 --report build/test-suites-win32.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite c-testsuite-smoke --target i686-windows --jobs 4 --report build/test-suites-cross-win32.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite tcc-smoke --target i686-windows --jobs 4 --report build/test-suites-tcc-win32.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite gcc-smoke --target i686-windows --jobs 4 --report build/test-suites-gcc-win32.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite compcert-smoke --target i686-windows --jobs 4 --report build/test-suites-compcert-win32.json
 	cd runtime && zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run build/cross/cinterp-run-arm64
-	python3 scripts/test_suites.py --suite csuite --target aarch64-linux --jobs 4 --report build/test-suites-arm64.json
-	python3 scripts/test_suites.py --suite c-testsuite-smoke --target aarch64-linux --jobs 4 --report build/test-suites-cross-arm64.json
-	python3 scripts/test_suites.py --suite tcc-smoke --target aarch64-linux --jobs 4 --report build/test-suites-tcc-arm64.json
-	python3 scripts/test_suites.py --suite gcc-smoke --target aarch64-linux --jobs 4 --report build/test-suites-gcc-arm64.json
-	python3 scripts/test_suites.py --suite compcert-smoke --target aarch64-linux --jobs 4 --report build/test-suites-compcert-arm64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite csuite --target aarch64-linux --jobs 4 --report build/test-suites-arm64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite c-testsuite-smoke --target aarch64-linux --jobs 4 --report build/test-suites-cross-arm64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite tcc-smoke --target aarch64-linux --jobs 4 --report build/test-suites-tcc-arm64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite gcc-smoke --target aarch64-linux --jobs 4 --report build/test-suites-gcc-arm64.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --suite compcert-smoke --target aarch64-linux --jobs 4 --report build/test-suites-compcert-arm64.json
 	cd runtime && zig build -Doptimize=ReleaseSmall
 
 generate-diff: runtime
@@ -117,7 +140,7 @@ fuzz-sanitizer:
 	python3 scripts/fuzz_exec.py --iterations 200 --tolerate-faults --runtime build/fuzz-sanitizer/cinterp-run
 	python3 scripts/fuzz_bytecode.py --iterations 300 --runtime build/fuzz-sanitizer/cinterp-run
 
-differential: runtime
+differential: compiler-zig runtime
 	./scripts/differential.sh
 
 bench: runtime

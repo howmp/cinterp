@@ -10,3 +10,5 @@ __pycache__/
 
 # test-suite artifacts
 /fred.txt
+compiler-zig/.zig-cache/
+compiler-zig/zig-out/

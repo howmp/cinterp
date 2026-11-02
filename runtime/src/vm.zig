@@ -120,6 +120,20 @@ pub const OP_ALLOCA_DYN_ALIGN: u8 = 0xA0;
 pub const OP_CALL_VARIADIC_TYPED: u8 = 0xA1;
 pub const OP_FPCLASS: u8 = 0xA2;
 
+fn floatToI64Safe(x: anytype) !i64 {
+    const xf: f64 = @floatCast(x);
+    if (!std.math.isFinite(xf) or xf < -9223372036854775808.0 or xf >= 9223372036854775808.0)
+        return error.InvalidArgument;
+    return @intFromFloat(x);
+}
+
+fn floatToU64Safe(x: anytype) !u64 {
+    const xf: f64 = @floatCast(x);
+    if (!std.math.isFinite(xf) or xf <= -1.0 or xf >= 18446744073709551616.0)
+        return error.InvalidArgument;
+    return @intFromFloat(x);
+}
+
 fn fpClass(bits: u128, width: u8) u16 {
     var sign: u1 = 0;
     var exp: u128 = 0;
@@ -1089,7 +1103,7 @@ pub const VM = struct {
                 OP_FPTOSI => {
                     const v = try self.pop();
                     const fval: f64 = @bitCast(v.i);
-                    try self.push(.{ .i = @intFromFloat(fval) });
+                    try self.push(.{ .i = try floatToI64Safe(fval) });
                 },
                 OP_SITOFP => {
                     const v = try self.pop();
@@ -1099,7 +1113,7 @@ pub const VM = struct {
                 OP_FPTOUI => {
                     const v = try self.pop();
                     const fval: f64 = @bitCast(v.i);
-                    try self.push(.{ .i = @bitCast(@as(u64, @intFromFloat(fval))) });
+                    try self.push(.{ .i = @bitCast(try floatToU64Safe(fval)) });
                 },
                 OP_UITOFP => {
                     const v = try self.pop();
@@ -1156,11 +1170,11 @@ pub const VM = struct {
                 },
                 OP_F80_TO_I64 => {
                     const v = try self.popF80();
-                    try self.push(.{ .i = @intFromFloat(v) });
+                    try self.push(.{ .i = try floatToI64Safe(v) });
                 },
                 OP_F80_TO_U64 => {
                     const v = try self.popF80();
-                    try self.push(.{ .i = @bitCast(@as(u64, @intFromFloat(v))) });
+                    try self.push(.{ .i = @bitCast(try floatToU64Safe(v)) });
                 },
                 OP_F80_FROM_U64 => {
                     const v = try self.pop();
@@ -1234,11 +1248,11 @@ pub const VM = struct {
                 },
                 OP_F128_TO_I64 => {
                     const v = try self.popF128();
-                    try self.push(.{ .i = @intFromFloat(v) });
+                    try self.push(.{ .i = try floatToI64Safe(v) });
                 },
                 OP_F128_TO_U64 => {
                     const v = try self.popF128();
-                    try self.push(.{ .i = @bitCast(@as(u64, @intFromFloat(v))) });
+                    try self.push(.{ .i = @bitCast(try floatToU64Safe(v)) });
                 },
                 OP_F128_FROM_U64 => {
                     const v = try self.pop();
@@ -1331,7 +1345,7 @@ pub const VM = struct {
                 OP_FPTOSI32 => {
                     const v = try self.pop();
                     const fval = f32FromValue(v);
-                    try self.push(.{ .i = @intFromFloat(fval) });
+                    try self.push(.{ .i = try floatToI64Safe(fval) });
                 },
                 OP_SITOFP32 => {
                     const v = try self.pop();
@@ -1341,7 +1355,7 @@ pub const VM = struct {
                 OP_FPTOUI32 => {
                     const v = try self.pop();
                     const fval = f32FromValue(v);
-                    try self.push(.{ .i = @bitCast(@as(u64, @intFromFloat(fval))) });
+                    try self.push(.{ .i = @bitCast(try floatToU64Safe(fval)) });
                 },
                 OP_UITOFP32 => {
                     const v = try self.pop();
@@ -1479,15 +1493,18 @@ pub const VM = struct {
                             const tc = if (i < va_type_count) va_types[i] else 0;
                             const v = self.values[va_base + va_named + i];
                             var n: usize = slot_size;
+                            var step: usize = slot_size;
                             var alignment: usize = slot_size;
                             var ptr: ?usize = null;
                             if (tc == 1 or tc == 2) {
                                 n = 16;
+                                step = 16;
                                 alignment = 16;
                                 ptr = addressFromBits(v.i);
                             } else if (tc == 3) {
                                 n = if (i < va_sizes.len) va_sizes[i] else 0;
                                 if (n == 0) n = 8;
+                                step = (n + 7) & ~@as(usize, 7);
                                 alignment = 8;
                                 ptr = addressFromBits(v.i);
                             }
@@ -1499,7 +1516,7 @@ pub const VM = struct {
                             } else {
                                 @memcpy(self.mem[pos .. pos + n], std.mem.asBytes(&v.i)[0..n]);
                             }
-                            pos += n;
+                            pos += step;
                         }
                         self.mem_top = pos;
                         overflow = @intFromPtr(&self.mem[start]);

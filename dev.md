@@ -895,12 +895,12 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 19.7 计划完成状态
 
-- **计划状态**：HFA/long double/聚合回调边角已完成；`_Complex`/GCC builtins、外部 inline/weak 地址语义明确不做，atexit/signal 已按普通 libc 符号/callback 处理；剩余 excluded/generator 工作见 `plan.md`。
+- **计划状态**：HFA/long double/聚合回调边角已完成；`_Complex`/GCC builtins、外部 inline/weak 地址语义明确不做，atexit/signal 已按普通 libc 符号/callback 处理；后续 Zig 前端工作见 §21。
 - **2026-10-31 新增完成**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。
 - **明确范围外**：向量类型/vector ABI、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV `i128`/向量参数；Win32 fastcall 已单独支持。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
 - **信任模型**：运行时只执行可信 CIB；不提供 Safe 模式或进程内沙箱，不可信输入由宿主自行隔离。
-- 交付物与验证数字见 19.5；旧 CIB 目标/自动链接设计已合并到 §19.8，`plan.md` 现在只保留剩余特性和容量工作。
+- 交付物与验证数字见 19.5；旧 CIB 目标/自动链接设计已合并到 §19.8。
 
 ### 19.8 目标声明与外部符号自动链接（2026-10-31）
 
@@ -993,7 +993,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 20.6 明确决策：_Complex / atexit / signal / GCC builtins（2026-10-31）
 
-- **`_Complex`**：明确不支持，已移出 `plan.md`，列入非目标；不为 complex ABI 增加实现。
+- **`_Complex`**：明确不支持，已列入非目标；不为 complex ABI 增加实现。
 - **可增长线性内存与配额**：明确放弃。运行时继续使用固定 `MAX_MEM`/`MAX_STACK`/`MAX_FRAMES`/`MAX_MODULE` 上限，超出时返回现有 OOM/资源错误码；不实现可增长内存或 per-package 配额。
 - **`atexit`**：作为普通 libc 符号处理，不实现 VM 级退出栈。glibc 的 `atexit` 来自 `libc_nonshared.a` 包装对象，最终调用 `__cxa_atexit(func, arg, dso)`；`libc.so.6` 只动态导出 `__cxa_atexit`。编译器通过 `compiler/src/cinterp/link/link_wrappers.json` 的 target link-wrapper 元数据在 lowering 阶段直接生成 `__cxa_atexit(cb, 0, 0)`，不再需要运行时 `atexit` 特化。CLI 在 VM 仍存活时调用 libc `exit`，保证回调可执行。`examples/ffi_atexit.c` 输出 `result: 42` 后执行 `bye`。类似“头文件声明名 ≠ 动态导出名/参数形态”的符号应继续放入 link wrapper 元数据，而不是散落 runtime shim。
 - **`signal`**：作为普通 callback 使用，复用现有 trampoline，不新增 VM signal 机制。`examples/ffi_signal.c` 注册内部 handler、`raise(SIGUSR1)` 后返回 42。
@@ -1176,3 +1176,87 @@ zig build -Dtarget=aarch64-linux-gnu
 - **TCC 分诊**：`119_random_stuff` 回收；`95_bitfields_ms` 的 imports 上限问题解决（256→512），剩余输出差异经 native Clang 对照确认为 `ms_struct` 方言差异，保留 skip 并更新原因。
 - **性能回归修复**：Win32 stdcall 装饰名回退最初写成 `plan_store` 查询 + `std.fmt.bufPrint` 大段逻辑，被 LLVM 内联进 `executeLoop`，ReleaseSmall 下 mandelbrot 从 85s 退化到 154s。Clang 已在 IR 中给出 `@12` 装饰，实际只需去掉前导下划线的短回退；移除大段逻辑后恢复 ~86s（基准 85s）。`validMemoryRange` 和 native-target 注册保留并强制内联/放在非热路径。
 - **验证**：`make test`、`make c-testsuite`、`make differential`、standard 396/495（99 skip）、full 4323/4521（198 skip）、全部 fuzz 目标、三目标 cross suite（61 项）、release tarball smoke、pkg-config/CMake/Rust smoke 均通过。
+
+## 21. 2026-11-02 Zig 编译器成为默认路径
+
+### 21.1 决策与边界
+
+- **A 路线**：Zig 程序负责 C→CIVM 编译，C 前端使用 `zig cc`，中间表示固定为
+  **LLVM IR 文本**（`-O0 -S -emit-llvm`），后端复用现有 IR→CIVM 语义、CIVM
+  指令集、CIPKG v2/CIPL/CIPM/CIPI 格式与 `cinterp-run` 运行时。
+- **不采用** Zig 内部内存 IR API（Zig 0.13 无公开 libzig/libLLVM API）、
+  链接 libclang/LLVM 做 in-process CodeGen（C++ shim、版本锁定、体积失控）、
+  自写 C 前端（TCC 路线的类型/ABI/表达式语义代价已证明不可控）。
+- 准确表述是：**不再依赖外部 clang/Python，只依赖 Zig 工具链**；`zig cc`
+  内部仍是 Zig 捆绑的 clang 18，不是“完全不使用 clang/LLVM”。
+- 契约边界保持 LLVM IR 文本：clang 已完成类型宽度、结构布局、ABI 分类和
+  常量规范化，Zig lowerer 只负责 IR→CIVM，避免重做 C 前端。
+
+### 21.2 实现与构建
+
+- `compiler-zig/src/main.zig`：CLI、`zig cc` 驱动、target 映射、CIPM/CIPI/
+  CIB v2 写入；`lower.zig`：IR 解析、CIVM lowering、SysV/Win64/Win32/AAPCS64
+  plan、byval/sret、varargs、callback、setjmp、f80/fp128、全局重定位。
+- 前端参数固定为：
+  `zig cc -S -emit-llvm -O0 -fno-discard-value-names -fno-sanitize=all
+  -fno-stack-protector -ffine-grained-bitfield-accesses`；
+  Windows 需要时加 `-fms-extensions -fdeclspec`。Zig 版本固定 0.13（clang 18）；
+  升级 Zig 必须重跑 IR 兼容与 full suite。
+- target 映射：`x86_64-pc-linux-gnu → x86_64-linux-gnu`、
+  `x86_64-pc-windows-gnu → x86_64-windows-gnu`、
+  `i686-pc-windows-gnu → x86-windows-gnu`、`aarch64-linux-gnu` 不变。
+- `make compiler-zig` 构建并复制到 `build/cinterp-cc`；默认 `make test`/
+  `test-suites*`/`size` 使用它。发射 IR 的临时文件名带随机后缀，避免 suite
+  并发时同名 `.ll` 竞态。
+
+### 21.3 阶段结果
+
+- **P0/P1**：Python 编译器 `--cc zig` 验证、`compiler-zig/` 骨架与完整 lowerer；
+  examples/FFI/HFA/callback/long double/sret 全部通过。
+- **P2**：standard **396/495（99 skip）**、full **4323/4521（198 skip）**，
+  与 Python+clang 基线一致。
+- **P3**：四目标 csuite 均 **17/17**（x86_64-linux、aarch64-linux、
+  x86_64-windows、i686-windows）；Win64/Win32 使用
+  `WINEPREFIX=build/wine64` / `build/wine32`，AArch64 使用 qemu。
+- **P4**：三方差分 native/Python/Zig **7/7**；yarpgen 100 轮
+  **93 ok / 7 engine-limit skip / 0 failure**；`make lint` 3/3；
+  fuzz 1000 load / 500 exec / 500 bytecode / 300 FFI / 200 C API 与
+  ReleaseSafe sanitizer 均 **0 crash**；修复恶意字节码触发
+  `@intFromFloat` 越界的 panic。
+- **P5**：默认路径切换、Linux tarball 内含 `bin/cinterp-cc`、`bin/cinterp`
+  优先 Zig 并回退 Python；CI 的 Linux/Windows/ARM smoke 已改为 Zig。
+
+### 21.4 质量门禁与验证
+
+```bash
+make compiler-zig runtime
+make test
+make test-py
+make lint
+make test-suites-smoke
+make test-suites
+make test-suites-full
+make differential
+make generate-diff-nightly
+make fuzz && make fuzz-exec && make fuzz-bytecode && make fuzz-ffi-exec
+make fuzz-sanitizer && make fuzz-capi-asan
+make size
+make release-artifacts
+```
+
+- `scripts/civm_lint.py` 校验 CIPKG 长度、CIVM 函数表/代码边界、local≥param、
+  CIPL plan/arg/loc 计数、CIPM ABI 一致性，并对本机目标执行 runtime
+  `--load-only`；`make lint` 为 0 findings。
+- `scripts/check_plan_evidence.py` 解析 `build/evidence-*.txt` 和
+  `build/plan-verification.json`，当前 **35/35 PASS**。
+- full 的 benchmark 在 8 并发下会因 120s wall-clock 超时；默认
+  `make test-suites-full` 单并发为 **4323/4521（198 skip）**，与 Python 基线一致。
+
+### 21.5 已知限制
+
+- 运行时 plan 参数上限 64；compile-only 压力用例
+  `__snprintf_chk` 1005 args 会生成不可加载包，但 full 编译测试通过，属于
+  已知引擎上限，不是可执行包回归。
+- GitHub Actions 需要在 push 后实际运行；本地等价命令已全部通过。
+- Python 路径至少保留一个大版本；出现 P0 回归时使用 `make test-py` /
+  `make test-suites-py`，或 `CINTERP_COMPILER=python scripts/test.sh`。

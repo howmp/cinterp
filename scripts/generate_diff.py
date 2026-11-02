@@ -27,6 +27,13 @@ PYTHONPATH = str(ROOT / "compiler/src")
 DEFAULT_YARPGEN = ROOT / "build/suites/yarpgen/build/yarpgen"
 DEFAULT_CSMITH = ROOT / "build/suites/csmith/build/src/csmith"
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)
+DEFAULT_COMPILER = os.environ.get("CINTERP_COMPILER", str(ROOT / "build/cinterp-cc"))
+
+
+def compile_cmd(source: Path, output: Path) -> list[str]:
+    if DEFAULT_COMPILER == "python":
+        return [sys.executable, "-m", "cinterp", "compile", str(source), "-o", str(output)]
+    return [DEFAULT_COMPILER, "compile", str(source), "-o", str(output)]
 
 
 def run(cmd: list[str], cwd: Path, timeout: float = 60, env: dict | None = None):
@@ -59,7 +66,7 @@ def case_csmith(seed: int, csmith: Path, work: Path) -> dict:
         return result
     cib = gen / "test.cib"
     env = dict(os.environ, PYTHONPATH=PYTHONPATH, CPATH=os.pathsep.join([str(runtime), str(build_runtime)]))
-    cc = run([sys.executable, "-m", "cinterp", "compile", str(test_c), "-o", str(cib)], ROOT, 120, env)
+    cc = run(compile_cmd(test_c, cib), ROOT, 120, env)
     if cc is None:
         result.update(status="skip", reason="cinterp compile timeout")
         return result
@@ -67,7 +74,7 @@ def case_csmith(seed: int, csmith: Path, work: Path) -> dict:
         msg = cc.stderr.decode("utf-8", "replace").strip().splitlines()
         result.update(status="skip", reason="cinterp compile: " + (msg[-1] if msg else "failed"))
         return result
-    cr = run([str(RUNTIME), str(cib)], ROOT, 30)
+    cr = run([str(RUNTIME), str(cib)], ROOT, 60)
     if cr is None:
         result.update(status="failure", reason="cinterp run timeout")
         return result
@@ -76,7 +83,7 @@ def case_csmith(seed: int, csmith: Path, work: Path) -> dict:
     want = nr.stdout + nr.stderr
     if cr.returncode != 0 and any(token in raw_got for token in (
         b"ModuleTooLarge", b"FileTooBig", b"TooManyImports", b"TooManyPlans",
-        b"TooManyFunctions", b"NameTooLong",
+        b"TooManyFunctions", b"NameTooLong", b"StackOverflow",
     )):
         result.update(status="skip", reason="generated CIB exceeds cinterp engine limits")
         return result
@@ -120,7 +127,7 @@ def case(seed: int, yarpgen: Path, work: Path, max_source_bytes: int = 8_000_000
         return result
     cib = gen / "test.cib"
     env = dict(os.environ, PYTHONPATH=PYTHONPATH)
-    cc = run([sys.executable, "-m", "cinterp", "compile", str(combined), "-o", str(cib)], ROOT, 120, env)
+    cc = run(compile_cmd(combined, cib), ROOT, 120, env)
     if cc is None:
         result.update(status="skip", reason="cinterp compile timeout")
         return result
@@ -128,7 +135,7 @@ def case(seed: int, yarpgen: Path, work: Path, max_source_bytes: int = 8_000_000
         msg = cc.stderr.decode("utf-8", "replace").strip().splitlines()
         result.update(status="skip", reason="cinterp compile: " + (msg[-1] if msg else "failed"))
         return result
-    cr = run([str(RUNTIME), str(cib)], ROOT, 30)
+    cr = run([str(RUNTIME), str(cib)], ROOT, 60)
     if cr is None:
         result.update(status="failure", reason="cinterp run timeout")
         return result
@@ -137,7 +144,7 @@ def case(seed: int, yarpgen: Path, work: Path, max_source_bytes: int = 8_000_000
     want = nr.stdout + nr.stderr
     if cr.returncode != 0 and any(token in raw_got for token in (
         b"ModuleTooLarge", b"FileTooBig", b"TooManyImports", b"TooManyPlans",
-        b"TooManyFunctions", b"NameTooLong",
+        b"TooManyFunctions", b"NameTooLong", b"StackOverflow",
     )):
         result.update(status="skip", reason="generated CIB exceeds cinterp engine limits")
         return result

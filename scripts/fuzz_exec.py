@@ -12,7 +12,12 @@ FFI_SEEDS = ["ffi_printf", "ffi_malloc", "ffi_snprintf", "ffi_qsort", "ffi_struc
 def compile_seed(name: str, out: Path) -> Path:
     env = dict(os.environ, PYTHONPATH=PYTHONPATH)
     package = out / f"{name}.cib"
-    subprocess.run([sys.executable, "-m", "cinterp", "compile", str(ROOT / "examples" / f"{name}.c"), "-o", str(package)],
+    src = str(ROOT / "examples" / f"{name}.c")
+    if os.environ.get("CINTERP_COMPILER") == "python":
+        cmd = [sys.executable, "-m", "cinterp", "compile", src, "-o", str(package)]
+    else:
+        cmd = [str(ROOT / "build/cinterp-cc"), "compile", src, "-o", str(package)]
+    subprocess.run(cmd,
                    env=env, cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return package
 

@@ -18,8 +18,13 @@ SEEDS = ["hello", "arrays", "structs", "ffi_qsort", "ffi_structs"]
 def compile_seed(name: str, out: Path) -> Path:
     env = dict(os.environ, PYTHONPATH=PYTHONPATH)
     package = out / f"{name}.cib"
+    src = str(ROOT / "examples" / f"{name}.c")
+    if os.environ.get("CINTERP_COMPILER") == "python":
+        cmd = [sys.executable, "-m", "cinterp", "compile", src, "-o", str(package)]
+    else:
+        cmd = [str(ROOT / "build/cinterp-cc"), "compile", src, "-o", str(package)]
     subprocess.run(
-        [sys.executable, "-m", "cinterp", "compile", str(ROOT / "examples" / f"{name}.c"), "-o", str(package)],
+        cmd,
         check=True,
         env=env,
         stdout=subprocess.DEVNULL,
