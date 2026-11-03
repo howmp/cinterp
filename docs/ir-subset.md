@@ -3,7 +3,8 @@
 `cinterp-cc` consumes LLVM IR **text** emitted by `zig cc -S -emit-llvm -O0`
 (Zig 0.13 → clang 18.1.x). The typed parser/verifier accepts only the subset the
 CIVM lowerer implements; anything else is a compile-time diagnostic, not a
-silent fallback.
+silent fallback. The typed AST is the only IR frontend; the former string
+parser has been removed.
 
 ## Module
 

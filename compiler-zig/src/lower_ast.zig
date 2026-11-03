@@ -1,36 +1,31 @@
 //! AST-based lowering: consumes the typed IR AST produced by `ir/parser.zig`
-//! (`ir/ast.zig`) and emits the same `lower.CompileResult` (CIVM bytecode + CIPL
-//! plans + external symbol table) as the legacy text path in `lower.zig`.
-//!
-//! Contract: for any module the legacy path lowers, this path must produce
-//! byte-identical `Function.code`, identical `Plan` records (same `Loc` kinds,
-//! plan order and sizes) and an identical `external_data` list. The legacy text
-//! entry point stays `lower.compile`; `main.zig` picks a path with
-//! `--ir-parser=legacy|ast`.
+//! (`ir/ast.zig`) and emits an `abi.CompileResult` (CIVM bytecode + CIPL plans
+//! + external symbol table). This is the only IR frontend; `main.zig` parses
+//! once and calls `compile` here.
 //!
 //! Design notes:
 //!
 //! * Type layout (`Layout`) is a pure `ast.Type` -> size/align/offsets function
-//!   mirroring the string version in `lower.zig` (`typeSizeAlign`,
-//!   `structLayout`, `storeSize`), including its quirks: packed structs ignore
-//!   alignment, arrays are sized with the *aligned* element size, integers are
-//!   rounded up to their alignment, `x86_fp80` is 16 bytes on 64-bit targets.
-//! * ABI plans are not duplicated: types are rendered back to their canonical
-//!   IR spelling and `lower.buildPlanForAbi` is called, so Loc kinds and plan
-//!   ordering cannot drift between the two paths.
-//! * Everything else is emitted instruction by instruction in the same order as
-//!   the legacy lowerer, including its incidental decisions (slot allocation
-//!   order, `__select_else_N` labels, `__f80save_<code len>` slots, varargs tag
-//!   encoding, callback plan interleaving).
-//! * Compatibility quirks are preserved on purpose (see `compat:` comments) so
-//!   that `--ir-parser=ast` is byte-identical with `--ir-parser=legacy`:
-//!   single-index global GEP addends in the default `GepConstMode.legacy`,
-//!   integer initialisers capped at 8 bytes, `fp128`/vector initialisers left
-//!   zeroed, unresolved `@symbol` operands lowering to 0.
+//!   implementing the string lowerer's rules: packed structs ignore alignment,
+//!   arrays are sized with the *aligned* element size, integers are rounded up
+//!   to their alignment, `x86_fp80` is 16 bytes on 64-bit targets.
+//! * ABI plans live in `abi.zig`: types are rendered back to their canonical
+//!   IR spelling and `abi.buildPlanForAbi` is called, so Loc kinds and plan
+//!   ordering have a single implementation.
+//! * Everything else is emitted instruction by instruction in the order the
+//!   retired text lowerer used, including its incidental decisions (slot
+//!   allocation order, `__select_else_N` labels, `__f80save_<code len>` slots,
+//!   varargs tag encoding, callback plan interleaving) so existing CIBs stay
+//!   byte-identical.
+//! * Compatibility quirks are preserved on purpose (see `compat:` comments) to
+//!   keep emitted CIBs stable: single-index global GEP addends in the default
+//!   `GepConstMode.legacy`, integer initialisers capped at 8 bytes,
+//!   `fp128`/vector initialisers left zeroed, unresolved `@symbol` operands
+//!   lowering to 0.
 
 const std = @import("std");
 const op = @import("opcodes.zig");
-const lower = @import("lower.zig");
+const abi = @import("abi.zig");
 const ast = @import("ir/ast.zig");
 
 const Allocator = std.mem.Allocator;
@@ -38,9 +33,9 @@ const Allocator = std.mem.Allocator;
 /// How the relocation addend of a global `getelementptr` constant expression is
 /// computed.
 pub const GepConstMode = enum {
-    /// Legacy behaviour: only the first index is folded (`addend = idx0 *
-    /// sizeof(src)`), the remaining indices are ignored. Byte-identical with
-    /// `lower.zig`.
+    /// Compatibility behaviour: only the first index is folded (`addend = idx0 *
+    /// sizeof(src)`), the remaining indices are ignored. This is what the
+    /// retired text lowerer did; it is the default so emitted CIBs stay stable.
     legacy,
     /// Walk every index (arrays/vectors by element stride, structs by field
     /// offset), i.e. the LLVM-correct addend.
@@ -132,8 +127,8 @@ const SizeAlign = struct { size: u32, alignment: u32 };
 
 const StructLayout = struct { offsets: []const u32, size: u32, alignment: u32 };
 
-/// `ast.Type` -> size/alignment/field offsets. Mirrors `typeSizeAlign`,
-/// `structLayout` and `storeSize` in `lower.zig`.
+/// `ast.Type` -> size/alignment/field offsets. Encodes the layout rules the
+/// compiler has always used (see the module doc comment).
 const Layout = struct {
     allocator: Allocator,
     ptr_size: u32,
@@ -265,7 +260,7 @@ const Globals = struct {
 };
 
 /// Decode an LLVM C string body (`hi\00`) into `out`, stopping at the first
-/// unescaped quote. Mirrors `parseCString` in `lower.zig`.
+/// unescaped quote.
 fn decodeCString(raw: []const u8, out: []u8) void {
     var i: usize = 0;
     var o: usize = 0;
@@ -658,14 +653,14 @@ const Context = struct {
     func_indices: std.StringHashMap(u16),
     /// Named parameters only (legacy drops unnamed parameters), per function.
     func_params: []const []const ParamInfo,
-    functions: []const lower.Function,
-    plans: std.ArrayList(lower.Plan),
+    functions: []const abi.Function,
+    plans: std.ArrayList(abi.Plan),
     callbacks: CallbackTable,
     abi: u8,
     ptr_size: u32,
     opts: Options,
 
-    fn init(allocator: Allocator, module: *const ast.Module, abi: u8, ptr_size: u32, opts: Options) !Context {
+    fn init(allocator: Allocator, module: *const ast.Module, abi_id: u8, ptr_size: u32, opts: Options) !Context {
         const layout = try Layout.init(allocator, module, ptr_size);
         var globals = try buildGlobals(allocator, module, &layout, ptr_size, opts.gep_const);
 
@@ -724,9 +719,9 @@ const Context = struct {
             .func_indices = func_indices,
             .func_params = func_params,
             .functions = &.{},
-            .plans = std.ArrayList(lower.Plan).init(allocator),
+            .plans = std.ArrayList(abi.Plan).init(allocator),
             .callbacks = .{ .by_func = std.StringHashMap(CallbackEntry).init(allocator) },
-            .abi = abi,
+            .abi = abi_id,
             .ptr_size = ptr_size,
             .opts = opts,
         };
@@ -735,15 +730,15 @@ const Context = struct {
 
 // --------------------------------------------------------------------- compile
 
-/// Lower a parsed module. Drop-in replacement for
-/// `lower.compile(allocator, text, abi, ptr_size)` on the same IR.
-pub fn compile(allocator: Allocator, module: *const ast.Module, abi: u8, ptr_size: u32) anyerror!lower.CompileResult {
-    return compileWithOptions(allocator, module, abi, ptr_size, .{});
+/// Lower a parsed module into CIVM functions, CIPL plans and the external
+/// symbol list.
+pub fn compile(allocator: Allocator, module: *const ast.Module, abi_id: u8, ptr_size: u32) anyerror!abi.CompileResult {
+    return compileWithOptions(allocator, module, abi_id, ptr_size, .{});
 }
 
-pub fn compileWithOptions(allocator: Allocator, module: *const ast.Module, abi: u8, ptr_size: u32, opts: Options) anyerror!lower.CompileResult {
-    var ctx = try Context.init(allocator, module, abi, ptr_size, opts);
-    var functions = try allocator.alloc(lower.Function, module.functions.len);
+pub fn compileWithOptions(allocator: Allocator, module: *const ast.Module, abi_id: u8, ptr_size: u32, opts: Options) anyerror!abi.CompileResult {
+    var ctx = try Context.init(allocator, module, abi_id, ptr_size, opts);
+    var functions = try allocator.alloc(abi.Function, module.functions.len);
     for (module.functions, 0..) |_, idx| {
         functions[idx] = try lowerFunction(&ctx, idx);
     }
@@ -755,7 +750,7 @@ pub fn compileWithOptions(allocator: Allocator, module: *const ast.Module, abi: 
     };
 }
 
-fn lowerFunction(ctx: *Context, func_index: usize) !lower.Function {
+fn lowerFunction(ctx: *Context, func_index: usize) !abi.Function {
     const f = &ctx.module.functions[func_index];
     const params = ctx.func_params[func_index];
 
@@ -768,7 +763,7 @@ fn lowerFunction(ctx: *Context, func_index: usize) !lower.Function {
         param_attrs[i] = param_types[i];
     }
 
-    var out = lower.Function{
+    var out = abi.Function{
         .name = f.name,
         .ret = try renderType(ctx.allocator, f.sig.ret),
         .param_count = @intCast(params.len),
@@ -801,7 +796,7 @@ fn lowerFunction(ctx: *Context, func_index: usize) !lower.Function {
 const Lowerer = struct {
     ctx: *Context,
     allocator: Allocator,
-    func: *lower.Function,
+    func: *abi.Function,
     params: []const ParamInfo,
     slots: std.StringHashMap(u16),
     next_slot: u16,
@@ -2013,7 +2008,7 @@ const Lowerer = struct {
         try self.emitValue(call.callee.indirect);
 
         const plan_ret = if (sret_idx != null) "void" else try renderType(self.allocator, call.ret);
-        const plan = try lower.buildPlanForAbi(
+        const plan = try abi.buildPlanForAbi(
             self.allocator,
             self.ctx.abi,
             "indirect",
@@ -2071,7 +2066,7 @@ const Lowerer = struct {
             try plan_types.append("ptr");
             try plan_types.append("ptr");
         }
-        const plan = try lower.buildPlanForAbi(
+        const plan = try abi.buildPlanForAbi(
             self.allocator,
             self.ctx.abi,
             call_name,
@@ -2159,7 +2154,7 @@ const Lowerer = struct {
         const callee = &self.ctx.module.functions[func_index];
         const plan_ret = if (sret_idx != null) "void" else try renderType(self.allocator, callee.sig.ret);
         const plan_name = try std.fmt.allocPrint(self.allocator, "callback:{s}", .{key});
-        const plan = try lower.buildPlanForAbi(
+        const plan = try abi.buildPlanForAbi(
             self.allocator,
             self.ctx.abi,
             plan_name,
@@ -2298,118 +2293,6 @@ const fixture_ffi_callback = @embedFile("testdata/lower_ast/ffi_callback.ll");
 /// integer/float cast matrix and every `fcmp`/`icmp` predicate shape used by C.
 const fixture_misc = @embedFile("testdata/lower_ast/misc.ll");
 
-fn parseFixture(allocator: Allocator, text: []const u8) !ast.Module {
-    var p = parser.Parser.init(allocator, text);
-    return p.parse();
-}
-
-fn expectSameLoc(expected: lower.Loc, actual: lower.Loc) !void {
-    try testing.expectEqual(expected.kind, actual.kind);
-    try testing.expectEqual(expected.index, actual.index);
-    try testing.expectEqual(expected.size, actual.size);
-    try testing.expectEqual(expected.offset, actual.offset);
-}
-
-/// Assert that the AST path reproduces the legacy `CompileResult` exactly: the
-/// same functions with byte-identical bytecode, the same ABI plans (all fields,
-/// including Loc kind/index/size/offset and plan order) and the same external
-/// symbol list. Everything main.zig serialises into CIPKG/CIVM/CIPL/CIPI is
-/// covered here, so an equal result means an equal CIB.
-fn expectSameResult(expected: lower.CompileResult, actual: lower.CompileResult) !void {
-    try testing.expectEqual(expected.functions.len, actual.functions.len);
-    for (expected.functions, actual.functions) |e, a| {
-        try testing.expectEqualStrings(e.name, a.name);
-        try testing.expectEqual(e.param_count, a.param_count);
-        try testing.expectEqual(e.local_count, a.local_count);
-        try testing.expectEqual(e.is_varargs, a.is_varargs);
-        try testing.expectEqualStrings(e.ret, a.ret);
-        try testing.expectEqualSlices(u8, e.code.items, a.code.items);
-    }
-
-    try testing.expectEqual(expected.plans.len, actual.plans.len);
-    for (expected.plans, actual.plans) |e, a| {
-        try testing.expectEqualStrings(e.name, a.name);
-        try testing.expectEqual(e.stack_size, a.stack_size);
-        try testing.expectEqual(e.sret, a.sret);
-        try testing.expectEqual(e.sse_count, a.sse_count);
-        try testing.expectEqual(e.ret_size, a.ret_size);
-        try testing.expectEqual(e.conv, a.conv);
-        try testing.expectEqual(e.args.len, a.args.len);
-        for (e.args, a.args) |ea, aa| {
-            try testing.expectEqual(ea.size, aa.size);
-            try testing.expectEqual(ea.alignment, aa.alignment);
-            try testing.expectEqual(ea.is_struct, aa.is_struct);
-            try testing.expectEqual(ea.locs.len, aa.locs.len);
-            for (ea.locs, aa.locs) |el, al| try expectSameLoc(el, al);
-        }
-        try testing.expectEqual(e.ret_locs.len, a.ret_locs.len);
-        for (e.ret_locs, a.ret_locs) |el, al| try expectSameLoc(el, al);
-    }
-
-    try testing.expectEqual(expected.external_data.len, actual.external_data.len);
-    for (expected.external_data, actual.external_data) |e, a| {
-        try testing.expectEqualStrings(e, a);
-    }
-}
-
-fn expectAstMatchesLegacy(text: []const u8, abi: u8, ptr_size: u32) !void {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const legacy_result = try lower.compile(allocator, text, abi, ptr_size);
-    var module = try parseFixture(allocator, text);
-    const ast_result = try compile(allocator, &module, abi, ptr_size);
-    try expectSameResult(legacy_result, ast_result);
-
-    // The legacy GEP-constant mode must stay byte-identical too: only the
-    // relocation addend can differ, and only in `correct` mode.
-    const legacy_gep_result = try compileWithOptions(allocator, &module, abi, ptr_size, .{ .gep_const = .legacy });
-    try expectSameResult(legacy_result, legacy_gep_result);
-}
-
-test "ast lowering matches legacy on the clang18 parser fixture (all ABIs)" {
-    // x86_64 SysV, x86_64 Win64, i686 Win32, aarch64 AAPCS64.
-    try expectAstMatchesLegacy(fixture_clang18, 1, 8);
-    try expectAstMatchesLegacy(fixture_clang18, 2, 8);
-    try expectAstMatchesLegacy(fixture_clang18, 4, 8);
-}
-
-test "ast lowering matches legacy on hello" {
-    try expectAstMatchesLegacy(fixture_hello, 1, 8);
-    try expectAstMatchesLegacy(fixture_hello, 2, 8);
-    try expectAstMatchesLegacy(fixture_hello, 3, 4);
-    try expectAstMatchesLegacy(fixture_hello, 4, 8);
-}
-
-test "ast lowering matches legacy on structs" {
-    try expectAstMatchesLegacy(fixture_structs, 1, 8);
-    try expectAstMatchesLegacy(fixture_structs, 2, 8);
-    try expectAstMatchesLegacy(fixture_structs, 3, 4);
-    try expectAstMatchesLegacy(fixture_structs, 4, 8);
-}
-
-test "ast lowering matches legacy on ffi_qsort (libc callback)" {
-    try expectAstMatchesLegacy(fixture_ffi_qsort, 1, 8);
-    try expectAstMatchesLegacy(fixture_ffi_qsort, 2, 8);
-    try expectAstMatchesLegacy(fixture_ffi_qsort, 3, 4);
-    try expectAstMatchesLegacy(fixture_ffi_qsort, 4, 8);
-}
-
-test "ast lowering matches legacy on ffi_callback (byval/sret callback plans)" {
-    try expectAstMatchesLegacy(fixture_ffi_callback, 1, 8);
-    try expectAstMatchesLegacy(fixture_ffi_callback, 2, 8);
-    try expectAstMatchesLegacy(fixture_ffi_callback, 3, 4);
-    try expectAstMatchesLegacy(fixture_ffi_callback, 4, 8);
-}
-
-test "ast lowering matches legacy on VLA/casts/arith/indirect calls" {
-    try expectAstMatchesLegacy(fixture_misc, 1, 8);
-    try expectAstMatchesLegacy(fixture_misc, 2, 8);
-    try expectAstMatchesLegacy(fixture_misc, 3, 4);
-    try expectAstMatchesLegacy(fixture_misc, 4, 8);
-}
-
 const control_flow_ir =
     \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
     \\target triple = "x86_64-unknown-linux-gnu"
@@ -2455,11 +2338,6 @@ const control_flow_ir =
     \\  ret i32 %ld
     \\}
 ;
-
-test "ast lowering matches legacy for phi/switch/select/volatile" {
-    try expectAstMatchesLegacy(control_flow_ir, 1, 8);
-    try expectAstMatchesLegacy(control_flow_ir, 2, 8);
-}
 
 const globals_ir =
     \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -2516,11 +2394,6 @@ const intrinsics_ir =
     \\}
 ;
 
-test "ast lowering matches legacy for setjmp/longjmp and runtime intrinsics" {
-    try expectAstMatchesLegacy(intrinsics_ir, 1, 8);
-    try expectAstMatchesLegacy(intrinsics_ir, 2, 8);
-}
-
 const null_callee_ir =
     \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
     \\target triple = "x86_64-unknown-linux-gnu"
@@ -2532,10 +2405,8 @@ const null_callee_ir =
     \\}
 ;
 
-/// The legacy lowerer only recognises the bare `null()` spelling (its
-/// `findCallOpen` looks for an `@`/`%` callee token), so this form is checked
-/// against the AST path alone. Clang emits the bare spelling for an indirect
-/// null call; the argument form is accepted by the parser for robustness.
+/// The argument form is accepted by the parser for robustness. Clang emits the
+/// bare `null()` spelling for an indirect null call.
 const null_callee_args_ir =
     \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
     \\target triple = "x86_64-unknown-linux-gnu"
@@ -2546,25 +2417,6 @@ const null_callee_args_ir =
     \\  ret void
     \\}
 ;
-
-test "null callee calls lower to no instructions" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    var module = try parseFixture(allocator, null_callee_ir);
-    const result = try compile(allocator, &module, 1, 8);
-    try testing.expectEqual(@as(usize, 1), result.functions.len);
-    // The call is dropped, exactly like `lower.zig`'s early return for a
-    // `null` callee token.
-    try testing.expectEqualSlices(u8, &.{op.OP_RET_VOID}, result.functions[0].code.items);
-    try expectAstMatchesLegacy(null_callee_ir, 1, 8);
-    try expectAstMatchesLegacy(null_callee_ir, 2, 8);
-
-    var args_module = try parseFixture(allocator, null_callee_args_ir);
-    const args_result = try compile(allocator, &args_module, 1, 8);
-    try testing.expectEqualSlices(u8, &.{op.OP_RET_VOID}, args_result.functions[0].code.items);
-}
 
 const f32_literals_ir =
     \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -2587,6 +2439,321 @@ const f32_literals_ir =
     \\  ret void
     \\}
 ;
+
+// ---------------------------------------------------------------------------
+// Former AST/legacy difference cases (docs/ir-parser-differences.md).
+//
+// These are correctness properties, not layout accidents: the AST emits a valid
+// address or instruction where the retired text parser silently emitted 0 or
+// dropped the line. They are covered by `CompileResult` goldens below.
+// ---------------------------------------------------------------------------
+
+const inttoptr_global_ir =
+    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+    \\target triple = "x86_64-unknown-linux-gnu"
+    \\
+    \\@vram = global ptr inttoptr (i64 40960 to ptr), align 8
+    \\@flag = global i32 7, align 4
+    \\
+    \\define i32 @main() {
+    \\entry:
+    \\  ret i32 0
+    \\}
+;
+
+const external_constant_ir =
+    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+    \\target triple = "x86_64-unknown-linux-gnu"
+    \\
+    \\@a = external constant [0 x i8], align 1
+    \\
+    \\define i32 @f(ptr %p) {
+    \\entry:
+    \\  %cmp = icmp ugt ptr %p, @a
+    \\  %z = zext i1 %cmp to i32
+    \\  ret i32 %z
+    \\}
+;
+
+const metadata_global_ir =
+    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+    \\target triple = "x86_64-unknown-linux-gnu"
+    \\
+    \\@i = internal global i32 0, align 4
+    \\@j = internal global i32 0, align 4
+    \\@k = global i32 0, align 4
+    \\@llvm.compiler.used = appending global [1 x ptr] [ptr @k], section "llvm.metadata"
+    \\
+    \\define i32 @main() {
+    \\entry:
+    \\  ret i32 0
+    \\}
+;
+
+const global_name_in_initializer_ir =
+    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+    \\target triple = "x86_64-unknown-linux-gnu"
+    \\
+    \\%struct.test = type { ptr }
+    \\
+    \\@test.const_test = internal constant %struct.test { ptr @global_int }, align 8
+    \\@global_int = global i32 0, align 4
+    \\@flag = global i32 0, align 4
+    \\@global_test = global %struct.test zeroinitializer, align 8
+    \\
+    \\define i32 @test() {
+    \\entry:
+    \\  %v = load i32, ptr @flag, align 4
+    \\  ret i32 %v
+    \\}
+;
+
+const null_suffix_callee_ir =
+    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+    \\target triple = "x86_64-unknown-linux-gnu"
+    \\
+    \\@gi = global i32 0, align 4
+    \\
+    \\define internal ptr @getnull() {
+    \\entry:
+    \\  ret ptr null
+    \\}
+    \\
+    \\define void @foo(ptr %a, ptr %b) {
+    \\entry:
+    \\  ret void
+    \\}
+    \\
+    \\define i32 @main() {
+    \\entry:
+    \\  %call = call ptr @getnull()
+    \\  call void @foo(ptr @gi, ptr %call)
+    \\  ret i32 0
+    \\}
+;
+
+fn parseFixture(allocator: Allocator, text: []const u8) !ast.Module {
+    var p = parser.Parser.init(allocator, text);
+    return p.parse();
+}
+
+// --------------------------------------------------------------------- goldens
+//
+// A golden file is the canonical text image of everything `main.zig`
+// serializes into CIPKG/CIVM/CIPL/CIPI for one source: function names,
+// parameter metadata, bytecode bytes, every plan/ArgPlan/Loc field and the
+// external-symbol list, concatenated for each ABI the case covers. Comparing
+// it protects code bytes, plan ordering and sizes without a second frontend.
+//
+// Regenerate after an intentional codegen change (review the diff!):
+//   cd compiler-zig && CINTERP_WRITE_GOLDEN=1 \
+//     zig test src/lower_ast.zig --test-filter "write golden files"
+
+const GoldenCase = struct {
+    name: []const u8,
+    text: []const u8,
+    abis: []const u8,
+    golden: []const u8,
+};
+
+const golden_clang18 = @embedFile("testdata/lower_ast/golden/clang18.golden");
+const golden_hello = @embedFile("testdata/lower_ast/golden/hello.golden");
+const golden_structs = @embedFile("testdata/lower_ast/golden/structs.golden");
+const golden_ffi_qsort = @embedFile("testdata/lower_ast/golden/ffi_qsort.golden");
+const golden_ffi_callback = @embedFile("testdata/lower_ast/golden/ffi_callback.golden");
+const golden_misc = @embedFile("testdata/lower_ast/golden/misc.golden");
+const golden_control_flow = @embedFile("testdata/lower_ast/golden/control_flow.golden");
+const golden_globals = @embedFile("testdata/lower_ast/golden/globals.golden");
+const golden_intrinsics = @embedFile("testdata/lower_ast/golden/intrinsics.golden");
+const golden_null_callee = @embedFile("testdata/lower_ast/golden/null_callee.golden");
+const golden_null_callee_args = @embedFile("testdata/lower_ast/golden/null_callee_args.golden");
+const golden_f32_literals = @embedFile("testdata/lower_ast/golden/f32_literals.golden");
+const golden_inttoptr_global = @embedFile("testdata/lower_ast/golden/inttoptr_global.golden");
+const golden_external_constant = @embedFile("testdata/lower_ast/golden/external_constant.golden");
+const golden_metadata_global = @embedFile("testdata/lower_ast/golden/metadata_global.golden");
+const golden_global_name_in_initializer = @embedFile("testdata/lower_ast/golden/global_name_in_initializer.golden");
+const golden_null_suffix_callee = @embedFile("testdata/lower_ast/golden/null_suffix_callee.golden");
+
+/// ABI ids: 1 = SysV x86-64, 2 = Win64, 3 = Win32, 4 = AArch64 AAPCS64.
+const golden_cases = [_]GoldenCase{
+    .{ .name = "clang18", .text = fixture_clang18, .abis = &.{ 1, 2, 4 }, .golden = golden_clang18 },
+    .{ .name = "hello", .text = fixture_hello, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_hello },
+    .{ .name = "structs", .text = fixture_structs, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_structs },
+    .{ .name = "ffi_qsort", .text = fixture_ffi_qsort, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_ffi_qsort },
+    .{ .name = "ffi_callback", .text = fixture_ffi_callback, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_ffi_callback },
+    .{ .name = "misc", .text = fixture_misc, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_misc },
+    .{ .name = "control_flow", .text = control_flow_ir, .abis = &.{ 1, 2 }, .golden = golden_control_flow },
+    .{ .name = "globals", .text = globals_ir, .abis = &.{1}, .golden = golden_globals },
+    .{ .name = "intrinsics", .text = intrinsics_ir, .abis = &.{ 1, 2 }, .golden = golden_intrinsics },
+    .{ .name = "null_callee", .text = null_callee_ir, .abis = &.{ 1, 2 }, .golden = golden_null_callee },
+    .{ .name = "null_callee_args", .text = null_callee_args_ir, .abis = &.{1}, .golden = golden_null_callee_args },
+    .{ .name = "f32_literals", .text = f32_literals_ir, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_f32_literals },
+    .{ .name = "inttoptr_global", .text = inttoptr_global_ir, .abis = &.{1}, .golden = golden_inttoptr_global },
+    .{ .name = "external_constant", .text = external_constant_ir, .abis = &.{1}, .golden = golden_external_constant },
+    .{ .name = "metadata_global", .text = metadata_global_ir, .abis = &.{ 1, 2 }, .golden = golden_metadata_global },
+    .{ .name = "global_name_in_initializer", .text = global_name_in_initializer_ir, .abis = &.{1}, .golden = golden_global_name_in_initializer },
+    .{ .name = "null_suffix_callee", .text = null_suffix_callee_ir, .abis = &.{1}, .golden = golden_null_suffix_callee },
+};
+
+fn goldenCase(name: []const u8) *const GoldenCase {
+    for (&golden_cases) |*case| {
+        if (eql(case.name, name)) return case;
+    }
+    unreachable;
+}
+
+fn abiName(abi_id: u8) []const u8 {
+    return switch (abi_id) {
+        1 => "sysv",
+        2 => "win64",
+        3 => "win32",
+        4 => "aapcs64",
+        else => "unknown",
+    };
+}
+
+fn ptrSizeFor(abi_id: u8) u32 {
+    return if (abi_id == 3) 4 else 8;
+}
+
+fn writeLoc(out: anytype, loc: abi.Loc) !void {
+    try out.print("{d}:{d}:{d}:{d}", .{ loc.kind, loc.index, loc.size, loc.offset });
+}
+
+/// Canonical text image of one `CompileResult`. Every field that reaches
+/// CIVM/CIPL is covered; the trailing `externals` list is CIPI's data set.
+fn writeResult(out: anytype, abi_id: u8, ptr_size: u32, result: abi.CompileResult) !void {
+    try out.print("abi={s} ptr={d}\n", .{ abiName(abi_id), ptr_size });
+    for (result.functions) |func| {
+        try out.print("fn {s} ret={s} params={d} locals={d} varargs={d}\n", .{
+            func.name, func.ret, func.param_count, func.local_count, @intFromBool(func.is_varargs),
+        });
+        try out.print("  pnames=", .{});
+        for (func.param_names, 0..) |name, i| {
+            if (i != 0) try out.print(",", .{});
+            try out.print("{s}", .{name});
+        }
+        try out.print(" ptypes=", .{});
+        for (func.param_types, 0..) |ty, i| {
+            if (i != 0) try out.print(",", .{});
+            try out.print("{s}", .{ty});
+        }
+        try out.print(" pattrs=", .{});
+        for (func.param_attrs, 0..) |attr, i| {
+            if (i != 0) try out.print(",", .{});
+            try out.print("{s}", .{attr});
+        }
+        try out.print("\n  code=", .{});
+        for (func.code.items) |byte| try out.print("{x:0>2}", .{byte});
+        try out.print("\n", .{});
+    }
+    for (result.plans) |plan| {
+        try out.print("plan {s} args={d} retlocs={d} stack={d} sret={d} sse={d} retsize={d} conv={d}\n", .{
+            plan.name, plan.args.len, plan.ret_locs.len, plan.stack_size,
+            @intFromBool(plan.sret), plan.sse_count, plan.ret_size, plan.conv,
+        });
+        for (plan.args, 0..) |arg, i| {
+            try out.print("  arg{d} size={d} align={d} struct={d} locs=", .{
+                i, arg.size, arg.alignment, @intFromBool(arg.is_struct),
+            });
+            for (arg.locs, 0..) |loc, j| {
+                if (j != 0) try out.print(",", .{});
+                try writeLoc(out, loc);
+            }
+            try out.print("\n", .{});
+        }
+        try out.print("  retloc=", .{});
+        for (plan.ret_locs, 0..) |loc, j| {
+            if (j != 0) try out.print(",", .{});
+            try writeLoc(out, loc);
+        }
+        try out.print("\n", .{});
+    }
+    try out.print("externals={d}\n", .{result.external_data.len});
+    for (result.external_data) |name| try out.print("  ext {s}\n", .{name});
+}
+
+fn writeCase(allocator: Allocator, case: *const GoldenCase, out: anytype) !void {
+    for (case.abis) |abi_id| {
+        const ptr_size = ptrSizeFor(abi_id);
+        var module = try parseFixture(allocator, case.text);
+        const result = try compile(allocator, &module, abi_id, ptr_size);
+        try writeResult(out, abi_id, ptr_size, result);
+    }
+}
+
+fn expectGolden(allocator: Allocator, case: *const GoldenCase) !void {
+    var buf = std.ArrayList(u8).init(allocator);
+    try writeCase(allocator, case, buf.writer());
+    try testing.expectEqualStrings(case.golden, buf.items);
+}
+
+test "clang18 parser fixture lowers to the golden CIVM/CIPL (SysV/Win64/AAPCS64)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("clang18"));
+}
+
+test "hello fixture lowers to the golden CIVM/CIPL (all ABIs)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("hello"));
+}
+
+test "structs fixture lowers to the golden CIVM/CIPL (all ABIs)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("structs"));
+}
+
+test "ffi_qsort fixture lowers to the golden CIVM/CIPL (all ABIs)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("ffi_qsort"));
+}
+
+test "ffi_callback fixture lowers to the golden CIVM/CIPL (all ABIs)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("ffi_callback"));
+}
+
+test "misc fixture lowers to the golden CIVM/CIPL (all ABIs)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("misc"));
+}
+
+test "phi/switch/select/volatile lower to the golden CIVM/CIPL" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("control_flow"));
+}
+
+test "setjmp/longjmp and runtime intrinsics lower to the golden CIVM/CIPL" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("intrinsics"));
+}
+
+test "null callee calls lower to no instructions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator, null_callee_ir);
+    const result = try compile(allocator, &module, 1, 8);
+    try testing.expectEqual(@as(usize, 1), result.functions.len);
+    // The call is dropped; only the return instruction remains.
+    try testing.expectEqualSlices(u8, &.{op.OP_RET_VOID}, result.functions[0].code.items);
+
+    var args_module = try parseFixture(allocator, null_callee_args_ir);
+    const args_result = try compile(allocator, &args_module, 1, 8);
+    try testing.expectEqualSlices(u8, &.{op.OP_RET_VOID}, args_result.functions[0].code.items);
+
+    try expectGolden(allocator, goldenCase("null_callee"));
+    try expectGolden(allocator, goldenCase("null_callee_args"));
+}
 
 /// Count `OP_LOAD_CONST_I64 value` sequences in emitted CIVM code.
 fn countConstI64(code: []const u8, value: i64) usize {
@@ -2633,11 +2800,7 @@ test "decimal and hex f32 literals in stores, globals and call args" {
     // take_double arg.
     try testing.expectEqual(@as(usize, 1), countConstI64(func.code.items, @bitCast(@as(u64, 0x405147AE147AE148))));
 
-    // Whole-result equality (code bytes, plans, external symbols) with legacy.
-    try expectAstMatchesLegacy(f32_literals_ir, 1, 8);
-    try expectAstMatchesLegacy(f32_literals_ir, 2, 8);
-    try expectAstMatchesLegacy(f32_literals_ir, 3, 4);
-    try expectAstMatchesLegacy(f32_literals_ir, 4, 8);
+    try expectGolden(allocator, goldenCase("f32_literals"));
 }
 
 test "ast lowering consumes the parsed AST, not the source text" {
@@ -2695,7 +2858,7 @@ test "global layout, nested aggregates and multi-index GEP relocations" {
     try testing.expectEqualSlices(u8, &[_]u8{0} ** 8, data[32..40]);
     try testing.expectEqualSlices(u8, &[_]u8{0} ** 8, data[64..72]);
 
-    // Legacy GEP mode folds only the first index (addend 0 for both GEP
+    // Compatibility GEP mode folds only the first index (addend 0 for both GEP
     // initialisers); @elem's and @field's later indices are ignored on purpose.
     {
         var module = try parseFixture(allocator, globals_ir);
@@ -2723,32 +2886,8 @@ test "global layout, nested aggregates and multi-index GEP relocations" {
         try testing.expectEqual(@as(i64, 0), findReloc(relocs, "@.str").?.addend);
     }
 
-    // Both modes still produce identical bytecode for the module itself except
-    // for the relocation addend, which only `main`'s data install consumes.
-    try expectAstMatchesLegacy(globals_ir, 1, 8);
+    try expectGolden(allocator, goldenCase("globals"));
 }
-
-// ---------------------------------------------------------------------------
-// Deliberate AST/legacy differences (see docs/ir-parser-differences.md).
-//
-// The cases below are in `scripts/ir_parser_parity.py`'s allowlist. They are
-// correctness fixes, not layout accidents: the AST emits a valid address or
-// instruction where the legacy text parser silently emits 0 or drops the line.
-// Do not make the AST match legacy here by reproducing the legacy bug.
-// ---------------------------------------------------------------------------
-
-const inttoptr_global_ir =
-    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
-    \\target triple = "x86_64-unknown-linux-gnu"
-    \\
-    \\@vram = global ptr inttoptr (i64 40960 to ptr), align 8
-    \\@flag = global i32 7, align 4
-    \\
-    \\define i32 @main() {
-    \\entry:
-    \\  ret i32 0
-    \\}
-;
 
 test "global inttoptr initializer is materialized" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -2758,32 +2897,16 @@ test "global inttoptr initializer is materialized" {
     var module = try parseFixture(allocator, inttoptr_global_ir);
     const data = try TestHook.globalData(allocator, &module, 8);
     try testing.expectEqual(@as(usize, 16), data.len);
-    // 40960 == 0xA000, little-endian pointer image; the legacy parser slices
-    // after `i64` with a leading space and writes zero here.
+    // 40960 == 0xA000, little-endian pointer image.
     try testing.expectEqualSlices(u8, &.{ 0x00, 0xA0, 0, 0, 0, 0, 0, 0 }, data[0..8]);
     try testing.expectEqualSlices(u8, &.{ 7, 0, 0, 0 }, data[8..12]);
 
-    const ast_result = try compile(allocator, &module, 1, 8);
-    try testing.expectEqual(@as(usize, 1), countConstI64(ast_result.functions[0].code.items, 40960));
+    const result = try compile(allocator, &module, 1, 8);
+    try testing.expectEqual(@as(usize, 1), countConstI64(result.functions[0].code.items, 40960));
+    try testing.expectEqual(@as(usize, 0), result.external_data.len);
 
-    // Document the legacy gap: the same source produces a zero pointer chunk.
-    const legacy = try lower.compile(allocator, inttoptr_global_ir, 1, 8);
-    try testing.expectEqual(@as(usize, 0), countConstI64(legacy.functions[0].code.items, 40960));
+    try expectGolden(allocator, goldenCase("inttoptr_global"));
 }
-
-const external_constant_ir =
-    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
-    \\target triple = "x86_64-unknown-linux-gnu"
-    \\
-    \\@a = external constant [0 x i8], align 1
-    \\
-    \\define i32 @f(ptr %p) {
-    \\entry:
-    \\  %cmp = icmp ugt ptr %p, @a
-    \\  %z = zext i1 %cmp to i32
-    \\  ret i32 %z
-    \\}
-;
 
 test "external constant declarations are imported and addressed" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -2791,35 +2914,16 @@ test "external constant declarations are imported and addressed" {
     const allocator = arena.allocator();
 
     var module = try parseFixture(allocator, external_constant_ir);
-    const ast_result = try compile(allocator, &module, 1, 8);
-    try testing.expectEqual(@as(usize, 1), ast_result.external_data.len);
-    try testing.expectEqualStrings("@a", ast_result.external_data[0]);
+    const result = try compile(allocator, &module, 1, 8);
+    try testing.expectEqual(@as(usize, 1), result.external_data.len);
+    try testing.expectEqualStrings("@a", result.external_data[0]);
     // The comparison must use the external symbol address, not constant 0.
-    try testing.expect(std.mem.indexOf(u8, ast_result.functions[0].code.items, &.{ op.OP_ADDR_EXTERN, 0, 0 }) != null);
+    try testing.expect(std.mem.indexOf(u8, result.functions[0].code.items, &.{ op.OP_ADDR_EXTERN, 0, 0 }) != null);
 
-    // The legacy parser only treats `external global`/`external thread_local`
-    // declarations as imports; this reference consequently lowers to 0.
-    const legacy = try lower.compile(allocator, external_constant_ir, 1, 8);
-    try testing.expectEqual(@as(usize, 0), legacy.external_data.len);
-    try testing.expect(std.mem.indexOf(u8, legacy.functions[0].code.items, &.{ op.OP_ADDR_EXTERN, 0, 0 }) == null);
+    try expectGolden(allocator, goldenCase("external_constant"));
 }
 
-const metadata_global_ir =
-    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
-    \\target triple = "x86_64-unknown-linux-gnu"
-    \\
-    \\@i = internal global i32 0, align 4
-    \\@j = internal global i32 0, align 4
-    \\@k = global i32 0, align 4
-    \\@llvm.compiler.used = appending global [1 x ptr] [ptr @k], section "llvm.metadata"
-    \\
-    \\define i32 @main() {
-    \\entry:
-    \\  ret i32 0
-    \\}
-;
-
-test "llvm metadata globals do not reserve VM storage in either frontend" {
+test "llvm metadata globals do not reserve VM storage" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -2829,29 +2933,8 @@ test "llvm metadata globals do not reserve VM storage in either frontend" {
     // i, j and k only; @llvm.compiler.used is linker metadata, not a VM object.
     try testing.expectEqual(@as(usize, 16), data.len);
 
-    // The legacy parser now skips @llvm.* metadata globals as well, so this
-    // case is no longer in the allowlist: both frontends emit the same CIB.
-    try expectAstMatchesLegacy(metadata_global_ir, 1, 8);
-    try expectAstMatchesLegacy(metadata_global_ir, 2, 8);
+    try expectGolden(allocator, goldenCase("metadata_global"));
 }
-
-const global_name_in_initializer_ir =
-    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
-    \\target triple = "x86_64-unknown-linux-gnu"
-    \\
-    \\%struct.test = type { ptr }
-    \\
-    \\@test.const_test = internal constant %struct.test { ptr @global_int }, align 8
-    \\@global_int = global i32 0, align 4
-    \\@flag = global i32 0, align 4
-    \\@global_test = global %struct.test zeroinitializer, align 8
-    \\
-    \\define i32 @test() {
-    \\entry:
-    \\  %v = load i32, ptr @flag, align 4
-    \\  ret i32 %v
-    \\}
-;
 
 test "initializer mentioning a global name keeps the global allocated" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -2868,40 +2951,12 @@ test "initializer mentioning a global name keeps the global allocated" {
     try testing.expectEqual(@as(u32, 0), relocs[0].offset);
     try testing.expectEqualStrings("@global_int", relocs[0].target);
 
-    const ast_result = try compile(allocator, &module, 1, 8);
+    const result = try compile(allocator, &module, 1, 8);
     // The load of @flag must use offset 12, after the constant object.
-    try testing.expect(std.mem.indexOf(u8, ast_result.functions[0].code.items, &.{ op.OP_ADDR_CONST, 12, 0, 0, 0 }) != null);
+    try testing.expect(std.mem.indexOf(u8, result.functions[0].code.items, &.{ op.OP_ADDR_CONST, 12, 0, 0, 0 }) != null);
 
-    // Legacy searches for the word `global` and finds it inside `@global_int`;
-    // it therefore drops @test.const_test and places @flag at offset 4.
-    const legacy = try lower.compile(allocator, global_name_in_initializer_ir, 1, 8);
-    try testing.expect(std.mem.indexOf(u8, legacy.functions[0].code.items, &.{ op.OP_ADDR_CONST, 4, 0, 0, 0 }) != null);
-    try testing.expect(std.mem.indexOf(u8, legacy.functions[0].code.items, &.{ op.OP_ADDR_CONST, 12, 0, 0, 0 }) == null);
+    try expectGolden(allocator, goldenCase("global_name_in_initializer"));
 }
-
-const null_suffix_callee_ir =
-    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
-    \\target triple = "x86_64-unknown-linux-gnu"
-    \\
-    \\@gi = global i32 0, align 4
-    \\
-    \\define internal ptr @getnull() {
-    \\entry:
-    \\  ret ptr null
-    \\}
-    \\
-    \\define void @foo(ptr %a, ptr %b) {
-    \\entry:
-    \\  ret void
-    \\}
-    \\
-    \\define i32 @main() {
-    \\entry:
-    \\  %call = call ptr @getnull()
-    \\  call void @foo(ptr @gi, ptr %call)
-    \\  ret i32 0
-    \\}
-;
 
 test "call result is kept when the callee name ends in null" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -2909,18 +2964,30 @@ test "call result is kept when the callee name ends in null" {
     const allocator = arena.allocator();
 
     var module = try parseFixture(allocator, null_suffix_callee_ir);
-    const ast_result = try compile(allocator, &module, 1, 8);
-    const ast_main = ast_result.functions[2];
-    try testing.expectEqualStrings("main", ast_main.name);
+    const result = try compile(allocator, &module, 1, 8);
+    const main_func = result.functions[2];
+    try testing.expectEqualStrings("main", main_func.name);
     // @getnull is function 0, @foo is function 1: both calls must be present.
-    try testing.expect(std.mem.indexOf(u8, ast_main.code.items, &.{ op.OP_CALL, 0, 0 }) != null);
-    try testing.expect(std.mem.indexOf(u8, ast_main.code.items, &.{ op.OP_CALL, 1, 0 }) != null);
+    try testing.expect(std.mem.indexOf(u8, main_func.code.items, &.{ op.OP_CALL, 0, 0 }) != null);
+    try testing.expect(std.mem.indexOf(u8, main_func.code.items, &.{ op.OP_CALL, 1, 0 }) != null);
 
-    // Legacy's `endsWith(rhs, "null()")` check mistakes `@getnull()` for a
-    // null callee and drops the call (and its stored result) entirely.
-    const legacy = try lower.compile(allocator, null_suffix_callee_ir, 1, 8);
-    const legacy_main = legacy.functions[2];
-    try testing.expectEqualStrings("main", legacy_main.name);
-    try testing.expect(std.mem.indexOf(u8, legacy_main.code.items, &.{ op.OP_CALL, 0, 0 }) == null);
-    try testing.expect(std.mem.indexOf(u8, legacy_main.code.items, &.{ op.OP_CALL, 1, 0 }) != null);
+    try expectGolden(allocator, goldenCase("null_suffix_callee"));
+}
+
+test "write golden files" {
+    const enabled = std.process.getEnvVarOwned(testing.allocator, "CINTERP_WRITE_GOLDEN") catch return;
+    defer testing.allocator.free(enabled);
+    if (!eql(enabled, "1")) return;
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    for (&golden_cases) |*case| {
+        var buf = std.ArrayList(u8).init(allocator);
+        try writeCase(allocator, case, buf.writer());
+        const path = try std.fmt.allocPrint(allocator, "src/testdata/lower_ast/golden/{s}.golden", .{case.name});
+        try std.fs.cwd().writeFile(.{ .sub_path = path, .data = buf.items });
+        std.debug.print("wrote {s} ({d} bytes)\n", .{ path, buf.items.len });
+    }
 }

@@ -6,11 +6,12 @@ through a fixed assembly ABI engine; there is no libffi, no `@call` stub matrix,
 and no runtime code generation / executable memory.
 
 - **Compiler** (Zig, build-time): invokes `zig cc -S -emit-llvm -O0`, parses
-  the LLVM IR text with a typed lexer/parser/AST + subset verifier, then emits
-  CIVM bytecode, FFI `CallPlan` table, and a `CIPKG` v2 package with target
-  metadata (`CIPM`) and external-symbol link metadata (`CIPI`). The legacy
-  string parser remains selectable with `--ir-parser=legacy`; the original
-  Python compiler remains available for differential testing and rollback.
+  the LLVM IR text once into a typed AST with a subset verifier, then lowers it
+  into CIVM bytecode, the FFI `CallPlan` table (`src/abi.zig`) and a `CIPKG` v2
+  package with target metadata (`CIPM`) and external-symbol link metadata
+  (`CIPI`). The AST is the only IR frontend; the former string parser has been
+  removed. The original Python compiler remains available for differential
+  testing and rollback.
 - **Runtime** (Zig 0.13): stack VM with linear memory, C ABI (`ci_vm_*`),
   compile-time ABI selection, fixed assembly engines for SysV x86-64,
   Win64, Win32 cdecl/stdcall and AArch64 AAPCS64, native symbol resolution

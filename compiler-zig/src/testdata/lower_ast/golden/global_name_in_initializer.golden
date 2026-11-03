@@ -1,0 +1,5 @@
+abi=sysv ptr=8
+fn test ret=i32 params=0 locals=1 varargs=0
+  pnames= ptypes= pattrs=
+  code=650c000000610421000020000010ffffffff000000001c1020000000000000001e1020000000000000001f01
+externals=0

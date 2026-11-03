@@ -32,9 +32,17 @@ pub fn build(b: *std.Build) void {
     });
     const run_ir_tests = b.addRunArtifact(ir_tests);
 
-    // Lowering tests: AST lowering must reproduce the legacy text path
-    // byte-for-byte (src/lower_ast.zig embeds the `.ll` fixtures under
-    // src/testdata/lower_ast and src/ir/testdata).
+    // ABI plan unit tests (src/abi.zig) plus the AST lowering tests. The
+    // lowering tests compare emitted CIVM/CIPL against embedded golden files
+    // under src/testdata/lower_ast/golden; the `.ll` fixtures live under
+    // src/testdata/lower_ast and src/ir/testdata.
+    const abi_tests = b.addTest(.{
+        .root_source_file = b.path("src/abi.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_abi_tests = b.addRunArtifact(abi_tests);
+
     const lower_ast_tests = b.addTest(.{
         .root_source_file = b.path("src/lower_ast.zig"),
         .target = target,
@@ -49,9 +57,10 @@ pub fn build(b: *std.Build) void {
     });
     const run_winmd_tests = b.addRunArtifact(winmd_tests);
 
-    const test_step = b.step("test", "Run compiler-zig unit tests (including src/ir and src/lower_ast)");
+    const test_step = b.step("test", "Run compiler-zig unit tests (including src/abi, src/ir and src/lower_ast)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_ir_tests.step);
+    test_step.dependOn(&run_abi_tests.step);
     test_step.dependOn(&run_lower_ast_tests.step);
     test_step.dependOn(&run_winmd_tests.step);
 

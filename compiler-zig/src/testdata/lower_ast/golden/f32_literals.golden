@@ -1,0 +1,64 @@
+abi=sysv ptr=8
+fn literal_args ret=void params=1 locals=1 varargs=0
+  pnames=p ptypes=ptr pattrs=ptr
+  code=10713d8a4200000000200000620410713d8a4200000000200000620410713d8a420000000070000010713d8a42000000007001001048e17a14ae47514070020002
+plan take_float args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=4 align=4 struct=0 locs=1:0:4:0
+  retloc=
+plan take_float args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=4 align=4 struct=0 locs=1:0:4:0
+  retloc=
+plan take_double args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=8 align=8 struct=0 locs=1:0:8:0
+  retloc=
+externals=2
+  ext @take_float
+  ext @take_double
+abi=win64 ptr=8
+fn literal_args ret=void params=1 locals=1 varargs=0
+  pnames=p ptypes=ptr pattrs=ptr
+  code=10713d8a4200000000200000620410713d8a4200000000200000620410713d8a420000000070000010713d8a42000000007001001048e17a14ae47514070020002
+plan take_float args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=4 align=4 struct=0 locs=1:0:4:0
+  retloc=
+plan take_float args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=4 align=4 struct=0 locs=1:0:4:0
+  retloc=
+plan take_double args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=8 align=8 struct=0 locs=1:0:8:0
+  retloc=
+externals=2
+  ext @take_float
+  ext @take_double
+abi=win32 ptr=4
+fn literal_args ret=void params=1 locals=1 varargs=0
+  pnames=p ptypes=ptr pattrs=ptr
+  code=10713d8a4200000000200000620410713d8a4200000000200000620410713d8a420000000070000010713d8a42000000007001001048e17a14ae47514070020002
+plan take_float args=1 retlocs=0 stack=4 sret=0 sse=0 retsize=0 conv=0
+  arg0 size=4 align=4 struct=0 locs=2:0:4:0
+  retloc=
+plan take_float args=1 retlocs=0 stack=4 sret=0 sse=0 retsize=0 conv=0
+  arg0 size=4 align=4 struct=0 locs=2:0:4:0
+  retloc=
+plan take_double args=1 retlocs=0 stack=8 sret=0 sse=0 retsize=0 conv=0
+  arg0 size=8 align=8 struct=0 locs=2:0:8:0
+  retloc=
+externals=2
+  ext @take_float
+  ext @take_double
+abi=aapcs64 ptr=8
+fn literal_args ret=void params=1 locals=1 varargs=0
+  pnames=p ptypes=ptr pattrs=ptr
+  code=10713d8a4200000000200000620410713d8a4200000000200000620410713d8a420000000070000010713d8a42000000007001001048e17a14ae47514070020002
+plan take_float args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=4 align=4 struct=0 locs=1:0:4:0
+  retloc=
+plan take_float args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=4 align=4 struct=0 locs=1:0:4:0
+  retloc=
+plan take_double args=1 retlocs=0 stack=0 sret=0 sse=1 retsize=0 conv=0
+  arg0 size=8 align=8 struct=0 locs=1:0:8:0
+  retloc=
+externals=2
+  ext @take_float
+  ext @take_double

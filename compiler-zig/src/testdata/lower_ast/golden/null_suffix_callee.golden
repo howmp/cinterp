@@ -1,0 +1,11 @@
+abi=sysv ptr=8
+fn getnull ret=ptr params=0 locals=0 varargs=0
+  pnames= ptypes= pattrs=
+  code=10000000000000000001
+fn foo ret=void params=2 locals=2 varargs=0
+  pnames=a,b ptypes=ptr,ptr pattrs=ptr,ptr
+  code=02
+fn main ret=i32 params=0 locals=1 varargs=0
+  pnames= ptypes= pattrs=
+  code=660800000010000000000000000065000000006208400000210000650000000020000040010010000000000000000010ffffffff000000001c1020000000000000001e1020000000000000001f01
+externals=0

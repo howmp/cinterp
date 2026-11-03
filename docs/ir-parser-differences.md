@@ -1,48 +1,41 @@
-# AST vs legacy IR frontend differences
+# IR frontend correctness notes (former AST/string-parser differences)
 
-`make parser-parity` compiles `examples/`, `tests/csuite/`, the former
-metadata cases, and the fetched allowlist with both frontends. Current result:
+The Zig compiler used to have two IR frontends: the original text-lowering path
+in `src/lower.zig` and the typed AST path in `src/ir/` + `src/lower_ast.zig`.
+The AST became the default, and the string parser has now been removed:
+`--ir-parser=legacy|ast` and `make parser-parity` no longer exist. There is one
+frontend (`src/ir/parser.zig` → `src/lower_ast.zig`, with ABI plans in
+`src/abi.zig`).
 
-```text
-parser-parity: identical=62 known-diff=10 skipped=1 unexpected=0 stale=0
-```
+While both frontends existed, `scripts/ir_parser_parity.py` compared them over
+`examples/`, `tests/csuite/` and the fetched gcc-torture/llvm-regression corpus.
+62 sources were byte-identical and 10 differed. In every one of those 10 cases
+the AST was correct and the string parser had a parsing bug; matching the string
+parser would have meant reproducing the bug. `src/lower.zig` was therefore
+removed without copying those behaviours.
 
-`skipped=1` is `examples/winapi.c`, which does not compile for the Linux target
-under either frontend. `stale=0` means every allowlist entry still differs; an
-allowlisted source that becomes byte-identical fails the gate so the exception
-cannot rot.
+The 10 former cases are still covered as AST correctness tests in
+`compiler-zig/src/lower_ast.zig`, with expected `CompileResult` goldens under
+`compiler-zig/src/testdata/lower_ast/golden/`. A regression now shows up as a
+failing golden or property assertion rather than as a parity diff.
 
-## Allowlist policy
-
-The allowlist contains only cases where the AST output is correct and the
-legacy text parser is wrong. Matching legacy in these cases would mean
-reproducing a legacy parsing bug, so the difference is kept, documented, and
-covered by a targeted unit test instead. The script also records which CIB
-sections, functions and imports each entry may change; a new section, function
-or symbol fails as `WRONG DIFF SHAPE`.
-
-The parity script (`scripts/ir_parser_parity.py`) is the authoritative list.
-
-## Remaining differences (10)
-
-### 1. Global `inttoptr` constant image (2 cases)
+## 1. Global `inttoptr` constant image (2 cases)
 
 - `gcc-torture/execute/20021010-2` (`@global_vramPtr = global ptr inttoptr (i64 40960 to ptr)`)
 - `llvm-regression-c/2003-06-16-InvalidInitializer` (`@Ptr = global ptr inttoptr (i64 8 to ptr)`)
 
-Cause: the legacy `parseConstant` pointer branch locates `i64` in
-`inttoptr (i64 N to ptr)` and then slices the remainder starting with a leading
-space, so it parses an empty integer and leaves the data image zero. The AST
-constant writer stores the encoded pointer value (`40960` / `8`).
+Cause: the string parser's `parseConstant` pointer branch located `i64` in
+`inttoptr (i64 N to ptr)` and then sliced the remainder starting with a leading
+space, so it parsed an empty integer and left the data image zero.
 
-Expected AST behavior: the data image contains the little-endian
-pointer-sized value from the `inttoptr` constant. Expected legacy behavior:
-the same object is zeroed.
+AST behavior: the data image contains the little-endian pointer-sized value from
+the `inttoptr` constant (`40960` / `8`).
 
 Tests: `global inttoptr initializer is materialized` in
-`compiler-zig/src/lower_ast.zig`.
+`compiler-zig/src/lower_ast.zig` (data image bytes plus golden
+`inttoptr_global.golden`).
 
-### 2. `external constant` declarations (6 cases)
+## 2. `external constant` declarations (6 cases)
 
 - `gcc-torture/compile/20030708-1` (`@a = external constant [0 x i8]`)
 - `gcc-torture/compile/20031124-1` (`@stop = external constant [0 x i8]`)
@@ -51,81 +44,90 @@ Tests: `global inttoptr initializer is materialized` in
 - `gcc-torture/compile/980816-1` (`@XtStrings`)
 - `gcc-torture/compile/pr39983` (`@a = external constant [1 x i32]`)
 
-Cause: legacy `parseGlobals` only records `external global` and
+Cause: the string parser only recorded `external global` and
 `external thread_local` declarations in the external-symbol table. An
-`external constant` is dropped, so any code that takes its address lowers to
-constant `0` and the symbol never reaches CIPI. The AST adds external constant
-declarations to `external_data` and lowers references with `OP_ADDR_EXTERN`.
+`external constant` was dropped, so code taking its address lowered to constant
+`0` and the symbol never reached CIPI.
 
-Expected AST behavior: the symbol is a data import (`CIPI` kind 1) and
-references use the imported address. Expected legacy behavior: address `0`,
-no import. No executable behavior changes for the suite because these are
-compile-only inputs; the generated code is still the correct representation.
+AST behavior: external constant declarations are added to `external_data` and
+references lower with `OP_ADDR_EXTERN`, i.e. the symbol is a data import
+(`CIPI` kind 1) and references use the imported address. These inputs are
+compile-only, so executable behavior is unchanged; the generated code is the
+correct representation.
 
 Tests: `external constant declarations are imported and addressed` in
-`compiler-zig/src/lower_ast.zig`.
+`compiler-zig/src/lower_ast.zig` (external-symbol list, `OP_ADDR_EXTERN`, golden
+`external_constant.golden`).
 
-### 3. Global initializer mentioning another global (1 case)
+## 3. Global initializer mentioning another global (1 case)
 
 - `gcc-torture/compile/pr19853`:
   `@test.const_test = internal constant %struct.test { ptr @global_int }`.
 
-Cause: legacy `parseGlobals` searches the text after `=` for the word
-`global` before `constant`. It matches the `global` inside the initializer's
-`@global_int`, mis-parses the type and drops the whole `@test.const_test`
-object. The AST parses the declared type (`%struct.test`) and allocates the
+Cause: the string parser searched the text after `=` for the word `global`
+before `constant`. It matched the `global` inside the initializer's
+`@global_int`, mis-parsed the type and dropped the whole `@test.const_test`
 object.
 
-Expected AST layout: `@test.const_test` at 0, `@global_int` at 8, `@flag` at
-12, `@global_test` at 16 (24-byte image), with a relocation at offset 0 to
-`@global_int`. Expected legacy layout: the constant object is absent, so
-`@flag` sits at 4.
+AST layout: `@test.const_test` at 0, `@global_int` at 8, `@flag` at 12,
+`@global_test` at 16 (24-byte image), with a relocation at offset 0 to
+`@global_int`.
 
 Tests: `initializer mentioning a global name keeps the global allocated` in
-`compiler-zig/src/lower_ast.zig`.
+`compiler-zig/src/lower_ast.zig` (layout, relocation, `OP_ADDR_CONST 12`, golden
+`global_name_in_initializer.golden`).
 
-### 4. Callee name ending in `null` (1 case)
+## 4. Callee name ending in `null` (1 case)
 
 - `gcc-torture/execute/pr49886`:
   `%call = call ptr @getnull()` followed by
   `call void @foo(ptr @gi, ptr %call)`.
 
-Cause: legacy `lowerCall` returns early when the instruction text ends with
-`null()`. That was meant for a bare `call void null()` but also matches
-`@getnull()`, so the call and its stored result disappear; the later call reads
-the uninitialized stack slot. The AST compares the parsed callee token, so
-`@getnull` is a normal call and only a bare `null` callee is dropped.
+Cause: the string parser's `lowerCall` returned early when the instruction text
+ended with `null()`. That was meant for a bare `call void null()` but also
+matched `@getnull()`, so the call and its stored result disappeared; the later
+call then read an uninitialized stack slot.
 
-Expected AST behavior: `CALL @getnull`, store the result, then
-`CALL @foo` with that result. Expected legacy behavior: only the `@foo` call.
+AST behavior: the parsed callee token is compared, so `@getnull` is a normal
+call and only a bare `null` callee is dropped. `CALL @getnull`, the result store
+and `CALL @foo` with that result are all emitted.
 
-Tests: `call result is kept when the callee name ends in null` in
-`compiler-zig/src/lower_ast.zig`.
+Tests: `call result is kept when the callee name ends in null` and
+`null callee calls lower to no instructions` in `compiler-zig/src/lower_ast.zig`
+(goldens `null_suffix_callee.golden`, `null_callee.golden`,
+`null_callee_args.golden`).
 
-## Removed from the allowlist
+## LLVM linker metadata globals (formerly different, never allowlisted)
 
 `gcc-torture/execute/pr78791` and
 `llvm-regression-c/.../execute/20101011-1` used to differ because the AST
-skipped `@llvm.compiler.used` while legacy allocated 8 bytes of zeroed data
-(and a larger `SET_MEM_TOP`). LLVM linker metadata globals are not program
-objects and must not reserve VM storage. `lower.zig` now skips
-`@llvm.*`/`@.llvm.*` globals the same way `lower_ast.buildGlobals` does, so both
-frontends emit byte-identical CIBs. The two sources remain in the parity corpus
-(not the allowlist) so a regression is reported as `UNEXPECTED`/`STALE`.
+skipped `@llvm.compiler.used` while the string parser allocated 8 bytes of
+zeroed data (and a larger `SET_MEM_TOP`). LLVM linker metadata globals are not
+program objects and must not reserve VM storage, so the string parser was fixed
+to skip `@llvm.*`/`@.llvm.*` globals too before it was removed.
 
-Test: `llvm metadata globals do not reserve VM storage in either frontend` in
-`compiler-zig/src/lower_ast.zig`.
+Test: `llvm metadata globals do not reserve VM storage` in
+`compiler-zig/src/lower_ast.zig` (data-image length plus golden
+`metadata_global.golden`).
 
-## Gates
+## Tests and gates
 
 ```bash
-make parser-parity                 # 62 identical / 10 known / 0 unexpected / 0 stale
-cd compiler-zig && zig build test  # targeted AST-vs-legacy tests
-make test-suites                   # standard, default AST frontend
-make test-suites-full              # full, default AST frontend
+cd compiler-zig && zig build test   # unit tests incl. golden CIVM/CIPL comparisons
+make test-suites                    # standard suite, AST frontend
+make test-suites-full               # full suite, AST frontend
+make c-testsuite                    # four-target csuite
+make test-winapi                    # Windows API imports under Wine
 ```
 
-The legacy parser remains available with `--ir-parser=legacy` for byte-level
-comparison and rollback. Do not "fix" a parity failure by making the AST copy
-the legacy behavior above; add a correctness test and a documented allowlist
-entry instead.
+Golden files are the canonical text image of every `CompileResult` field that
+reaches CIVM/CIPL/CIPI. Regenerate them only for an intentional codegen change,
+and review the diff:
+
+```bash
+cd compiler-zig && CINTERP_WRITE_GOLDEN=1 \
+  zig test src/lower_ast.zig --test-filter "write golden files"
+```
+
+Do not "fix" a failing golden by reintroducing one of the string-parser bugs
+above; add a correctness test and update this document instead.

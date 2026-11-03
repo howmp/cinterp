@@ -1,20 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const lower = @import("lower.zig");
+const abi = @import("abi.zig");
 const lower_ast = @import("lower_ast.zig");
 const ir = @import("ir/parser.zig");
 const verify = @import("ir/verify.zig");
 const winmd = @import("winmd.zig");
 
 const Allocator = std.mem.Allocator;
-
-/// Which LLVM IR frontend lowers the module.
-///
-/// * `ast` (default): parse once into the typed AST (`ir/parser.zig`), verify
-///   target consistency, then lower from `lower_ast.zig`.
-/// * `legacy`: the original text-based lowering in `lower.zig`, retained for
-///   byte-level differential/rollback comparisons.
-const IrParser = enum { legacy, ast };
 
 const Target = struct {
     name: []const u8,
@@ -48,7 +40,6 @@ const Options = struct {
     cc_path: []const u8 = "zig",
     keep_ir: bool = false,
     dump: bool = false,
-    ir_parser: IrParser = .ast,
     dump_ast: bool = false,
 };
 
@@ -92,11 +83,11 @@ fn targetSerialize(allocator: Allocator, target: Target) ![]u8 {
     return out.toOwnedSlice();
 }
 
-fn serializePlans(allocator: Allocator, plans: []const lower.Plan, abi: u8) ![]u8 {
+fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]u8 {
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPL");
     try out.append(3);
-    try out.append(abi);
+    try out.append(abi_id);
     try writeU16(&out, @intCast(plans.len));
     try writeU16(&out, 0);
     for (plans) |plan| {
@@ -150,7 +141,7 @@ fn writeWindowsProviders(out: *std.ArrayList(u8), db: ?*winmd.Database, arch: u8
     return true;
 }
 
-fn serializeImports(allocator: Allocator, plans: []const lower.Plan, external_data: []const []const u8, target: Target) ![]u8 {
+fn serializeImports(allocator: Allocator, plans: []const abi.Plan, external_data: []const []const u8, target: Target) ![]u8 {
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPI");
     try out.append(1);
@@ -224,7 +215,7 @@ fn serializeImports(allocator: Allocator, plans: []const lower.Plan, external_da
     return out.toOwnedSlice();
 }
 
-fn moduleSerialize(allocator: Allocator, functions: []const lower.Function) ![]u8 {
+fn moduleSerialize(allocator: Allocator, functions: []const abi.Function) ![]u8 {
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIVM");
     try out.append(1);
@@ -293,37 +284,26 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8) !void {
 
 fn usage() void {
     std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir] [--dump]\n" ++
-        "                      [--ir-parser=legacy|ast] [--dump-ast]\n", .{});
+        "                      [--dump-ast]\n", .{});
 }
 
-fn parseIrParser(value: []const u8) ?IrParser {
-    if (std.mem.eql(u8, value, "legacy")) return .legacy;
-    if (std.mem.eql(u8, value, "ast")) return .ast;
-    return null;
-}
-
-/// Lower the IR text with the selected frontend.
-fn lowerModule(allocator: Allocator, ir_text: []const u8, opts: Options) !lower.CompileResult {
-    switch (opts.ir_parser) {
-        .legacy => return lower.compile(allocator, ir_text, opts.target.abi, opts.target.ptr_bits / 8),
-        .ast => {
-            var p = ir.Parser.init(allocator, ir_text);
-            const module = p.parse() catch {
-                std.debug.print("{d}:{d}: error: {s} (found '{s}')\n", .{
-                    p.diagnostic.line, p.diagnostic.column, p.diagnostic.message, p.diagnostic.found,
-                });
-                return error.IrParseError;
-            };
-            if (opts.dump_ast) {
-                lower_ast.dumpModule(std.io.getStdErr().writer(), &module) catch {};
-            }
-            verify.verify(&module, opts.target.arch, opts.target.os, opts.target.ptr_bits) catch |e| {
-                std.debug.print("IR target verification failed: {s}\n", .{@errorName(e)});
-                return error.IrTargetMismatch;
-            };
-            return lower_ast.compile(allocator, &module, opts.target.abi, opts.target.ptr_bits / 8);
-        },
+/// Parse the IR text into the typed AST, verify target consistency and lower it.
+fn lowerModule(allocator: Allocator, ir_text: []const u8, opts: Options) !abi.CompileResult {
+    var p = ir.Parser.init(allocator, ir_text);
+    const module = p.parse() catch {
+        std.debug.print("{d}:{d}: error: {s} (found '{s}')\n", .{
+            p.diagnostic.line, p.diagnostic.column, p.diagnostic.message, p.diagnostic.found,
+        });
+        return error.IrParseError;
+    };
+    if (opts.dump_ast) {
+        lower_ast.dumpModule(std.io.getStdErr().writer(), &module) catch {};
     }
+    verify.verify(&module, opts.target.arch, opts.target.os, opts.target.ptr_bits) catch |e| {
+        std.debug.print("IR target verification failed: {s}\n", .{@errorName(e)});
+        return error.IrTargetMismatch;
+    };
+    return lower_ast.compile(allocator, &module, opts.target.abi, opts.target.ptr_bits / 8);
 }
 
 pub fn main() !void {
@@ -353,7 +333,6 @@ pub fn main() !void {
     var cc_path: []const u8 = "zig";
     var keep_ir = false;
     var dump = false;
-    var ir_parser: IrParser = .ast;
     var dump_ast = false;
 
     var i: usize = 2;
@@ -399,21 +378,6 @@ pub fn main() !void {
             dump = true;
         } else if (std.mem.eql(u8, a, "--dump-ast")) {
             dump_ast = true;
-        } else if (std.mem.eql(u8, a, "--ir-parser")) {
-            i += 1;
-            if (i >= argv.len) {
-                usage();
-                std.process.exit(2);
-            }
-            ir_parser = parseIrParser(argv[i]) orelse {
-                std.debug.print("unknown IR frontend: {s} (expected legacy|ast)\n", .{argv[i]});
-                std.process.exit(2);
-            };
-        } else if (std.mem.startsWith(u8, a, "--ir-parser=")) {
-            ir_parser = parseIrParser(a["--ir-parser=".len..]) orelse {
-                std.debug.print("unknown IR frontend: {s} (expected legacy|ast)\n", .{a["--ir-parser=".len..]});
-                std.process.exit(2);
-            };
         } else if (a.len > 0 and a[0] == '-') {
             usage();
             std.process.exit(2);
@@ -443,7 +407,6 @@ pub fn main() !void {
         .cc_path = cc_path,
         .keep_ir = keep_ir,
         .dump = dump,
-        .ir_parser = ir_parser,
         .dump_ast = dump_ast,
     });
     if (target.os == 2) {
@@ -480,16 +443,34 @@ test "target lookup" {
     try std.testing.expect(findTarget("nope") == null);
 }
 
-test "ir parser selection defaults to legacy" {
-    const defaults = Options{
+test "lowerModule parses and lowers IR through the AST frontend" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text =
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  ret i32 42
+        \\}
+    ;
+    const opts = Options{
         .source = "x.c",
         .output = "x.cib",
         .target = findTarget("x86_64-linux").?,
     };
-    try std.testing.expectEqual(IrParser.ast, defaults.ir_parser);
-    try std.testing.expect(!defaults.dump_ast);
-    try std.testing.expectEqual(IrParser.legacy, parseIrParser("legacy").?);
-    try std.testing.expectEqual(IrParser.ast, parseIrParser("ast").?);
-    try std.testing.expect(parseIrParser("") == null);
-    try std.testing.expect(parseIrParser("AST") == null);
+    try std.testing.expect(!opts.dump_ast);
+    const result = try lowerModule(allocator, text, opts);
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("main", result.functions[0].name);
+    // The function body starts by materialising the constant and ends with a
+    // (32-bit truncated) return.
+    const op = @import("opcodes.zig");
+    const code = result.functions[0].code.items;
+    try std.testing.expectEqual(@as(u8, op.OP_LOAD_CONST_I64), code[0]);
+    try std.testing.expectEqual(@as(i64, 42), std.mem.readInt(i64, code[1..9], .little));
+    try std.testing.expectEqual(@as(u8, op.OP_RET), code[code.len - 1]);
 }

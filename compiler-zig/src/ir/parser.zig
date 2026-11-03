@@ -1,10 +1,10 @@
 //! Recursive-descent parser for the LLVM IR text subset consumed by the
 //! cinterp Zig frontend.
 //!
-//! Scope: everything `lower.zig` reads today (module header, type definitions,
-//! globals, declarations, definitions, blocks, the ~45 instruction forms and
-//! the `llvm.*` intrinsics, which are simply calls). Anything else that is
-//! *legal* at module level (comdats, module flags, metadata records,
+//! Scope: everything `lower_ast.zig` reads today (module header, type
+//! definitions, globals, declarations, definitions, blocks, the ~45 instruction
+//! forms and the `llvm.*` intrinsics, which are simply calls). Anything else
+//! that is *legal* at module level (comdats, module flags, metadata records,
 //! `uselistorder`, `attributes #N`, `#dbg_*`) is captured as an opaque record
 //! instead of being rejected; anything unsupported *inside* a function body is
 //! reported as a `line:column` diagnostic rather than panicking or being

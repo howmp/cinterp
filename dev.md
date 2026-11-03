@@ -1195,8 +1195,10 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 21.2 实现与构建
 
 - `compiler-zig/src/main.zig`：CLI、`zig cc` 驱动、target 映射、CIPM/CIPI/
-  CIB v2 写入；`lower.zig`：IR 解析、CIVM lowering、SysV/Win64/Win32/AAPCS64
-  plan、byval/sret、varargs、callback、setjmp、f80/fp128、全局重定位。
+  CIB v2 写入；`src/ir/` + `src/lower_ast.zig`：IR 解析与 CIVM lowering；
+  `src/abi.zig`：`CompileResult`/`Plan` 等序列化类型与 SysV/Win64/Win32/AAPCS64
+  plan、byval/sret 构造。lowering 仍覆盖 varargs、callback、setjmp、f80/fp128、
+  全局重定位。
 - 前端参数固定为：
   `zig cc -S -emit-llvm -O0 -fno-discard-value-names -fno-sanitize=all
   -fno-stack-protector -ffine-grained-bitfield-accesses`；
@@ -1252,26 +1254,28 @@ make release-artifacts
 - full 的 benchmark 在 8 并发下会因 120s wall-clock 超时；默认
   `make test-suites-full` 单并发为 **4323/4521（198 skip）**，与 Python 基线一致。
 
-### 21.6 IR 解析器重构（2026-11-03）
+### 21.6 IR 解析器重构与旧解析器删除（2026-11-03）
 
-- **新前端**：`compiler-zig/src/ir/{lexer,ast,parser,verify,tests}.zig` 提供 no-copy
+- **唯一前端**：`compiler-zig/src/ir/{lexer,ast,parser,verify,tests}.zig` 提供 no-copy
   token、typed `Module/Function/Instruction/Type/Value/Attr` AST、多行 switch、
   constexpr、byval/sret、f80/fp128、alias/ifunc opaque record 和 `line:column`
-  诊断；`src/lower_ast.zig` 从 AST 生成 CIVM/CIPL，`--ir-parser=ast` 已是默认。
-- **回退**：`--ir-parser=legacy` 保留原 `lower.zig` 字符串解析器；默认和 legacy
-  共用 `CompileResult`/CIPKG/CIPL/CIPM/CIPI 序列化。
+  诊断；`src/lower_ast.zig` 从 AST 生成 CIVM。旧字符串解析器 `src/lower.zig`
+  已删除，`--ir-parser=legacy|ast` 选项与 `make parser-parity` 一并移除。
+- **共享 ABI 模块**：`CompileResult`/`Function`/`Plan`/`ArgPlan`/`Loc` 与
+  `buildPlanForAbi`（SysV/Win64/Win32/AAPCS64、byval/sret、返回 Loc 分类）
+  原样迁入 `src/abi.zig`；`main.zig` 与 `lower_ast.zig` 只依赖该模块，
+  CIVM/CIPL/CIPM/CIPI 字节与 plan 顺序不变。
 - **验证**：AST full **4323/4521（198 skip）**、standard **396/495（99 skip）**、
-  smoke 17/17、四目标 csuite 17/17；examples 默认与 legacy CIB 逐字节一致；
-  parser/AST/verifier/winmd 单测通过；前端使用 `-g0`，debug info 本来就不进入 CIB。
+  smoke 17/17、四目标 csuite 17/17；示例 fixtures 与 17 个 lowering 用例的
+  golden（`src/testdata/lower_ast/golden/`）在删除前后逐字节一致；
+  parser/AST/verifier/abi/winmd 单测通过；前端使用 `-g0`，debug info 本来就不进入 CIB。
 - **Windows API 自动链接**：winmd 数据嵌入 `cinterp-cc`；Win64/Win32 的
   `GetTickCount64`/`GetSystemMetrics`/`GetModuleHandleA`/`wsprintfA` 在 Wine 下
   Python/AST 均为 `result: 7`（`make test-winapi`）。
-- **已知字节差异**：当前 `make parser-parity` 有 62 个逐字节一致、10 个显式 allowlist
-  差异、0 个未解释/失效差异；`llvm.compiler.used` 的元数据差异已通过 legacy 同步
-  跳过 LLVM 元数据全局消除。剩余 10 项均为 AST 修正 legacy 解析 bug：`inttoptr`
-  全局常量、`external constant` 导入、初始化器中 `@global*` 误匹配、以及以
-  `null` 结尾的 callee 被误判为 null 而丢调用；不得为对齐而复制这些 bug。详见
-  `docs/ir-parser-differences.md`。
+- **former legacy 差异**：旧 parity 的 10 个差异全部是 AST 修正字符串解析 bug
+  （`inttoptr` 全局常量、`external constant` 导入、初始化器中 `@global*` 误匹配、
+  以 `null` 结尾的 callee 丢调用）。现在保留为 AST 正确性单测与 golden 期望，
+  详见 `docs/ir-parser-differences.md`；不得为对齐旧行为而复制这些 bug。
 
 ### 21.5 已知限制
 

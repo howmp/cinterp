@@ -3,8 +3,8 @@
 `cinterp-cc` is the default build-time compiler. It invokes the `zig cc` C
 frontend, parses the resulting LLVM IR text with a typed lexer/parser/AST and a
 subset verifier, then emits the same CIVM bytecode and CIPKG v2 package format as
-the original Python compiler. `--ir-parser=ast` is the default;
-`--ir-parser=legacy` keeps the old string parser for rollback/differential use.
+the original Python compiler. The typed AST is the only IR frontend; the former
+string parser has been removed.
 
 ## Requirements
 
@@ -31,8 +31,12 @@ LLVM IR text
   -> ir/lexer.zig        spans/tokens (no-copy)
   -> ir/parser.zig       typed Module/Function/BasicBlock/Instruction AST
   -> ir/verify.zig       subset allowlist + target/datalayout checks
-  -> lower_ast.zig       CIVM + CIPL plans
+  -> lower_ast.zig       CIVM functions
+  -> abi.zig             CIPL call plans (SysV/Win64/Win32/AAPCS64)
 ```
+
+`cinterp-cc compile --dump-ast` prints a structural summary of the parsed module
+(block/instruction counts per function) to stderr for debugging.
 
 The parser only accepts the instruction/type/intrinsic subset consumed by the
 lowerer. Unsupported legal IR produces a `line:column` diagnostic instead of a

@@ -1,0 +1,5 @@
+abi=sysv ptr=8
+fn null_call_args ret=void params=1 locals=1 varargs=0
+  pnames=p ptypes=ptr pattrs=ptr
+  code=02
+externals=0

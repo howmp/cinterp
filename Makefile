@@ -1,4 +1,4 @@
-.PHONY: all test test-py compiler-zig runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross parser-parity test-winapi test-suites-smoke-py test-suites-py test-suites-full-py fetch-suites generate-diff
+.PHONY: all test test-py compiler-zig runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross test-winapi test-suites-smoke-py test-suites-py test-suites-full-py fetch-suites generate-diff
 
 all: test
 
@@ -25,9 +25,6 @@ lint: compiler-zig runtime
 	build/cinterp-cc compile examples/ffi_qsort.c -o build/lint-qsort.cib
 	build/cinterp-cc compile examples/ffi_callback.c -o build/lint-callback.cib
 	python3 scripts/civm_lint.py build/lint-hello.cib build/lint-qsort.cib build/lint-callback.cib
-
-parser-parity: compiler-zig runtime
-	python3 scripts/ir_parser_parity.py
 
 test-winapi: compiler-zig
 	python3 scripts/test_winapi.py
