@@ -9,9 +9,10 @@ and no runtime code generation / executable memory.
   the LLVM IR text once into a typed AST with a subset verifier, then lowers it
   into CIVM bytecode, the FFI `CallPlan` table (`src/abi.zig`) and a `CIPKG` v2
   package with target metadata (`CIPM`) and external-symbol link metadata
-  (`CIPI`). The AST is the only IR frontend; the former string parser has been
-  removed. The original Python compiler remains available for differential
-  testing and rollback.
+  (`CIPI`). The AST is the only IR frontend; the former string parser and the
+  original Python compiler has been removed. Python is used only by the test,
+  fuzz and benchmark harnesses plus the offline `tools/gen_*.py` metadata
+  generators.
 - **Runtime** (Zig 0.13): stack VM with linear memory, C ABI (`ci_vm_*`),
   compile-time ABI selection, fixed assembly engines for SysV x86-64,
   Win64, Win32 cdecl/stdcall and AArch64 AAPCS64, native symbol resolution
@@ -22,8 +23,8 @@ and no runtime code generation / executable memory.
 
 ## Quick start
 
-Requirements: Zig 0.13 (runtime and `zig cc` frontend), Python 3.10+ (tests and
-the legacy reference compiler only).
+Requirements: Zig 0.13 (runtime and `zig cc` frontend), plus Python 3.10+ only
+for the test/fuzz/benchmark harnesses.
 
 ```bash
 # build the Zig compiler and release runtime
@@ -39,12 +40,9 @@ make compiler-zig runtime
 # 7 2.5
 # result: 0
 
-# Python reference compiler (rollback / differential)
-PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c -o build/hello-py.cib
-
 # struct byval + sret FFI through a user shared library
 cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so
-PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_structs.c -o build/ffi_structs.cib
+./build/cinterp-cc compile examples/ffi_structs.c -o build/ffi_structs.cib
 ./runtime/zig-out/bin/cinterp-run --lib build/libstruct_helpers.so build/ffi_structs.cib
 # result: 28
 
@@ -52,11 +50,11 @@ PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_structs.c -o bui
 ./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib
 
 # versions
-PYTHONPATH=compiler/src python3 -m cinterp --version
+./build/cinterp-cc --version
 ./runtime/zig-out/bin/cinterp-run --version
 
 # cross-target packages (build the runtime with the matching -Dtarget)
-PYTHONPATH=compiler/src python3 -m cinterp compile examples/hello.c \
+./build/cinterp-cc compile examples/hello.c \
   --target x86_64-windows -o build/hello-win64.cib
 cd runtime && zig build -Dtarget=x86_64-windows-gnu && cd ..
 # make cross-test        # Win64/Win32 (native Windows or wine) + ARM64 (qemu)
@@ -92,7 +90,7 @@ make bench
 make size-cross
 
 # release tarballs (LICENSE, SBOM, split debug, pkg-config/CMake/Rust bindings),
-# wheel, SHA256SUMS and optional GPG signature
+# SHA256SUMS and optional GPG signature
 make release-artifacts
 ```
 
@@ -105,8 +103,8 @@ Build profiles:
   drop `.eh_frame`/`.eh_frame_hdr`. Concise error codes and CLI messages remain.
 - Current sizes: Debug ≈ 8.8 MiB, ReleaseSmall ≈ 99 KiB (Linux x64).
 
-`make test` runs runtime/compiler unit tests, all end-to-end examples, and
-negative paths (missing input, corrupt/truncated packages, unknown symbol).
+`make test` runs runtime and compiler-zig unit tests, all end-to-end examples,
+and negative paths (missing input, corrupt/truncated packages, unknown symbol).
 `make c-testsuite` runs the local 10-case C subset. The upstream
 c-testsuite supported set currently passes 217/217 with 3 explicitly skipped
 tests (external data symbols, vector types, complex aggregate initializers);
@@ -150,7 +148,7 @@ CIPL and the opcode table.
 ## Compiler
 
 ```bash
-PYTHONPATH=compiler/src python3 -m cinterp compile source.c -o out.cib \
+./build/cinterp-cc compile source.c -o out.cib \
   [--dump] [--dump-imports] [--keep-ir] [--target TARGET] \
   [--cib-version 1|2] [--no-auto-link] [--link-db DIR]
 ```
@@ -159,7 +157,7 @@ PYTHONPATH=compiler/src python3 -m cinterp compile source.c -o out.cib \
 bindings; `--keep-ir` keeps the generated LLVM IR next to the package.
 `--cib-version 1` emits legacy packages without CIPM/CIPI. `--no-auto-link`
 disables automatic C-standard-library/Windows-API binding. `--link-db DIR`
-overrides the generated cstdapi/winmd databases. Targets: `x86_64-linux`
+overrides the embedded cstdapi/winmd databases. Targets: `x86_64-linux`
 (default native), `x86_64-windows`, `i686-windows`, `aarch64-linux`. Windows
 targets automatically use Zig's bundled MinGW headers (`libc/include/any-windows-any`)
 when available; set `ZIG_LIB_DIR` to override.
@@ -277,13 +275,15 @@ with `UnsupportedOs`/`UnsupportedLibc`.
 ## Repository layout
 
 ```text
-compiler/              Python package (build-time compiler)
-  src/cinterp/
-    llvm_ir/lower.py   LLVM IR parser/lowerer (CIVM + plans)
-    ffi/plan.py        CallPlan model, per-ABI plan builders, CIPL serializer
-    link/              CIPM target metadata, CIPI serializer, cstdapi/winmd databases
-    codegen/           CIPKG writer
-    cli.py             cinterp compile
+compiler-zig/          Zig compiler (build-time)
+  src/main.zig         cinterp-cc CLI, CIPKG/CIPM/CIPI writer
+  src/ir/              typed LLVM IR lexer/parser/AST/verifier
+  src/lower_ast.zig    AST -> CIVM lowering
+  src/abi.zig          CallPlan model and per-ABI plan builders
+  src/cstdapi.zig      embedded C-library link metadata and --link-db
+  src/imports.zig      structured CIPI table and serializer
+  src/winmd.zig        embedded Windows API metadata
+  src/data/            cstdapi/winmd/wrapper metadata
 docs/cib.md            binary package format reference
 runtime/               Zig VM/runtime (shipped)
   src/vm.zig           VM, linear memory, C ABI, callback dispatcher
@@ -295,7 +295,8 @@ runtime/               Zig VM/runtime (shipped)
 examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
                        MEMORY/register/mixed struct FFI, qsort callback, math,
                        float32 FFI, bitfields
-scripts/test.sh        integration suite
+scripts/               Python test/fuzz/benchmark harnesses
+tools/                  offline link-metadata regeneration scripts
 spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
 dev.md                 architecture, decisions, ABI details, boundaries
 ```

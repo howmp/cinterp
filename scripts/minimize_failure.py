@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
-PYTHONPATH = str(ROOT / "compiler/src")
+COMPILER = Path(os.environ.get("CINTERP_COMPILER", str(ROOT / "build/cinterp-cc")))
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)
 
 
@@ -64,12 +64,12 @@ def evaluate(
         return Outcome("native_timeout")
 
     cib = work / ".min_candidate.cib"
-    env = dict(os.environ, PYTHONPATH=PYTHONPATH)
+    env = dict(os.environ)
     if includes:
         cpath = os.pathsep.join(str(p) for p in includes)
         env["CPATH"] = cpath + (os.pathsep + env["CPATH"] if env.get("CPATH") else "")
     cc = run(
-        [sys.executable, "-m", "cinterp", "compile", str(source), "-o", str(cib)],
+        [str(COMPILER), "compile", str(source), "-o", str(cib)],
         ROOT,
         max(60, timeout),
         env,
@@ -179,11 +179,11 @@ class Minimizer:
         output.write_text("\n".join(lines) + "\n")
         minimized_outcome = evaluate(output, self.work, self.includes, self.clang, self.timeout)
         cib = output.with_suffix(".cib")
-        env = dict(os.environ, PYTHONPATH=PYTHONPATH)
+        env = dict(os.environ)
         if self.includes:
             env["CPATH"] = os.pathsep.join(str(p) for p in self.includes)
         cc = run(
-            [sys.executable, "-m", "cinterp", "compile", str(output), "-o", str(cib)],
+            [str(COMPILER), "compile", str(output), "-o", str(cib)],
             ROOT,
             60,
             env,

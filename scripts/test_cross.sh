@@ -3,14 +3,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-export PYTHONPATH="$ROOT/compiler/src"
 
 TARGETS="${CROSS_TARGETS:-win64,win32,arm64}"
 HOST="${HOST:-}"
 REMOTE="${REMOTE:-}"
 QEMU="${QEMU:-qemu-aarch64}"
 SYSROOT="${SYSROOT:-/usr/aarch64-linux-gnu}"
-PYTHON="${PYTHON:-python3}"
+CINTERP_CC="${CINTERP_COMPILER:-$ROOT/build/cinterp-cc}"
 OUT="$ROOT/build/cross"
 mkdir -p "$OUT"
 
@@ -49,7 +48,7 @@ win_runner() {
 
 compile() {
     local target="$1" name="$2"
-    "$PYTHON" -m cinterp compile "examples/$name.c" --target "$target" -o "$OUT/$name-$target.cib" >/dev/null
+    "$CINTERP_CC" compile "examples/$name.c" --target "$target" -o "$OUT/$name-$target.cib" >/dev/null
 }
 
 win_run() {
@@ -152,10 +151,10 @@ if want win32; then
         zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
             -o "$OUT/lib${h}32.dll" "examples/$h.c"
     done
-    "$PYTHON" -m cinterp compile examples/ffi_stdcall.c --target i686-windows -o "$OUT/ffi_stdcall-i686-windows.cib" >/dev/null
+    "$CINTERP_CC" compile examples/ffi_stdcall.c --target i686-windows -o "$OUT/ffi_stdcall-i686-windows.cib" >/dev/null
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_stdcall_helper32.dll" examples/ffi_stdcall_helper.c
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_fastcall_helper32.dll" examples/ffi_fastcall_helper.c
-    "$PYTHON" -m cinterp compile examples/ffi_fastcall.c --target i686-windows -o "$OUT/ffi_fastcall-i686-windows.cib" >/dev/null
+    "$CINTERP_CC" compile examples/ffi_fastcall.c --target i686-windows -o "$OUT/ffi_fastcall-i686-windows.cib" >/dev/null
     if [ -n "$HOST" ]; then
         scp "$OUT/cinterp-run32.exe" "$OUT"/*-i686-windows.cib "$OUT"/lib*32.dll "$HOST:$REMOTE" >/dev/null
     fi

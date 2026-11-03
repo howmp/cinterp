@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generate a compact Windows API link index from winmd's apis.json."""
+"""Generate a compact Windows API link index from winmd's apis.json.
+
+Offline maintenance tool; the checked-in output is
+`compiler-zig/src/data/winmd.generated.json.gz`.
+"""
 from __future__ import annotations
 
 import argparse

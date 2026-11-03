@@ -5,16 +5,15 @@
 ## 单一版本源
 
 - 仓库根目录 `VERSION` 是唯一版本源，格式为语义化版本（当前 `0.1.0`）。
-- 编译器通过 `cinterp.__version__` 读取它；`python -m cinterp --version` 输出 `cinterp <VERSION>`。
+- 编译器 `compiler-zig/build.zig` 在构建时读取仓库根目录 `VERSION`；`cinterp-cc --version` 输出 `cinterp-cc <VERSION>`，CIPM `producer` 使用同一值。
 - 运行时在构建时读取 `runtime/../VERSION`（即仓库根目录），写入 `cinterp-run --version`、`ci_version()` 和共享库 SONAME 版本。
 - `scripts/package_release.sh` 只从 `VERSION` 取版本，不再接受硬编码副本。
-- `pyproject.toml` 使用 `dynamic = ["version"]`，由 `cinterp.__version__` 提供。
 
 ## 组件版本
 
 | 组件 | 当前版本 | 写入方 | 读取方 |
 | --- | ---: | --- | --- |
-| CIPKG 包 | 2（同时可写 1） | 编译器 `--cib-version` | 运行时读 1、2 |
+| CIPKG 包 | 2（同时可写 1） | `cinterp-cc --cib-version` | 运行时读 1、2 |
 | CIVM 字节码模块 | 1 | 编译器 | 运行时读 1 |
 | CIPL FFI 计划表 | 3（运行时兼容 2） | 编译器 | 运行时读 2、3 |
 | CIPM 目标元数据 | 1 | 编译器 | 运行时读 1 |

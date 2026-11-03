@@ -4,7 +4,7 @@
 
 ## 1. 产品概述
 
-实现一个完整的 C 语言解释器系统，包含 Python 编译器前端和 Zig 运行时虚拟机。前端用 clang 生成 LLVM IR，Python 将其降为紧凑的栈式字节码，并为每个外部调用/callback 生成 ABI 计划；运行时用 Zig 实现字节码解释器，用**固定汇编 ABI 引擎**按计划完成原生调用和 callback，不链接 libffi，不使用 `@call` 桩矩阵，不申请动态可执行内存。
+实现一个完整的 C 语言解释器系统，包含 Zig 编译器前端和 Zig 运行时虚拟机。前端用 `zig cc`（Zig 捆绑的 clang）生成 LLVM IR，Zig lowerer 将其降为紧凑的栈式字节码，并为每个外部调用/callback 生成 ABI 计划；运行时用 Zig 实现字节码解释器，用**固定汇编 ABI 引擎**按计划完成原生调用和 callback，不链接 libffi，不使用 `@call` 桩矩阵，不申请动态可执行内存。Python 仅用于测试、fuzz、benchmark 和离线元数据生成，不再包含编译器实现。
 
 设计目标：
 
@@ -17,7 +17,7 @@
 ## 2. 已确认决策
 
 - **运行时语言**：Zig 0.13（pin）。
-- **前端**：Python + clang LLVM IR（`-O0`），不使用 libclang AST。
+- **前端**：Zig + `zig cc` LLVM IR（`-O0`），typed AST parser + subset verifier；不使用 libclang/LLVM 进程内 API。
 - **平台**：Linux x64、Windows x64、Windows x86、Linux ARM64 已实现；32 位仅 Windows x86，不做 Linux i386/ARM32。
 - **C11 范围**：核心 C11 + 结构体 FFI。
 - **FFI**：不链接 libffi，不使用 `@call` 桩矩阵，不申请动态可执行内存；编译期生成 FFI ABI 计划，运行时用固定汇编引擎执行；callback 用静态 trampoline 池 + 反向计划。
@@ -27,10 +27,10 @@
 
 ## 3. 核心功能
 
-### 3.1 编译器（Python，build-time）
+### 3.1 编译器（Zig，build-time）
 
-- **前端**：调用 `clang -S -emit-llvm -O0 -g` 生成 LLVM IR，不依赖 libclang Python 绑定。
-- **IR 生成**：把 LLVM IR 降为基于栈的字节码。
+- **前端**：调用 `zig cc -S -emit-llvm -O0 -g0` 生成 LLVM IR，不依赖 Python 或外部 clang。
+- **IR 生成**：`compiler-zig/src/ir/` 解析为 typed AST，`lower_ast.zig` 将其降为基于栈的字节码。
 - **FFI ABI 计划**：为每个外部调用/callback 生成寄存器/栈位置、结构体分类、varargs 信息和反向计划。
 - **输出格式**：二进制字节码为主；文本格式仅用于调试 dump。
 - **错误报告**：带源文件/行号的编译错误；不支持的 LLVM IR 模式明确报错。
@@ -49,14 +49,14 @@
 
 ## 4. 技术栈与目标平台
 
-### 4.1 编译器部分（Python）
+### 4.1 编译器部分（Zig）
 
-- **语言版本**：Python 3.10+
-- **前端**：clang 可执行文件（pin 版本，例如 clang 16+），通过 subprocess 调用
-- **标准库**：`dataclasses`、`struct`、`argparse`、`pathlib`
-- **测试**：`pytest`
+- **语言版本**：Zig 0.13（与运行时同一 pin）
+- **C 前端**：`zig cc`（Zig 捆绑 clang 18），通过 subprocess 调用
+- **实现**：typed IR lexer/parser/AST、subset verifier、CIVM lowering、CIPL/CIPM/CIPI writer
+- **链接元数据**：内嵌 cstdapi/winmd/link_wrappers，`--link-db` 可覆盖 cstdapi/winmd
 
-不引入 libclang Python 绑定。
+不依赖 libclang/LLVM 进程内 API，也不依赖 Python 编译器包。
 
 ### 4.2 运行时部分（Zig + 汇编）
 
@@ -147,7 +147,7 @@ clang -S -emit-llvm -O0 -g -fno-discard-value-names -o program.ll program.c
 - 不需要实现 mem2reg、SSA 构造、复杂优化 pass。
 - 后续可选 `-O1`，但需要补 phi 处理，不作为 v1 必需项。
 
-Python 侧用标准库解析文本 LLVM IR（大文件可选 llvmlite，但默认不引入）。
+Zig 侧用 `compiler-zig/src/ir/` 的 typed lexer/parser 解析文本 LLVM IR，并在 lowering 前执行 subset verifier。
 
 支持的 LLVM IR 子集：
 
@@ -451,34 +451,17 @@ ci_abi_call_sysv64:
 
 ```text
 cl/
-├── compiler/                          # Python 编译器（build-time）
-│   ├── pyproject.toml
-│   ├── src/
-│   │   └── cinterp/
-│   │       ├── __init__.py
-│   │       ├── cli.py
-│   │       ├── llvm_ir/
-│   │       │   ├── __init__.py
-│   │       │   ├── parser.py
-│   │       │   ├── model.py
-│   │       │   └── lower.py
-│   │       ├── ir/
-│   │       │   ├── __init__.py
-│   │       │   ├── instructions.py
-│   │       │   ├── types.py
-│   │       │   ├── module.py
-│   │       │   └── layout.py
-│   │       ├── ffi/
-│   │       │   ├── __init__.py
-│   │       │   ├── plan.py            # CallPlan/CallbackPlan
-│   │       │   ├── abi_x86_64.py      # SysV/Win64 计划
-│   │       │   ├── abi_x86_win32.py   # Windows x86 计划
-│   │       │   └── abi_arm64.py       # AArch64 AAPCS64 计划（预留）
-│   │       ├── codegen/
-│   │       │   ├── binary_writer.py
-│   │       │   └── text_dump.py
-│   │       └── utils/
-│   └── tests/
+├── compiler-zig/                      # Zig 编译器（build-time）
+│   ├── build.zig
+│   └── src/
+│       ├── main.zig                   # CLI、CIPKG/CIPM/CIPI writer
+│       ├── ir/                        # typed LLVM IR lexer/parser/AST/verifier
+│       ├── lower_ast.zig              # AST -> CIVM lowering
+│       ├── abi.zig                    # CallPlan/CallbackPlan
+│       ├── cstdapi.zig                # C 标准库链接元数据 / --link-db
+│       ├── imports.zig                # CIPI 结构与序列化
+│       ├── winmd.zig                  # Windows API 元数据
+│       └── data/                      # cstdapi/winmd/link_wrappers
 │
 ├── runtime/                           # Zig 运行时（shipped）
 │   ├── build.zig
@@ -526,7 +509,7 @@ cl/
 └── README.md
 ```
 
-> **当前实现（2026-10-31 更新）**：已落地 `compiler/src/cinterp/{llvm_ir/lower.py, ffi/plan.py, link/, codegen/binary_writer.py, cli.py}`、`runtime/src/{vm.zig, main.zig, ffi/}`、`examples/`、`scripts/test.sh`；`make test` 通过。上方目录中的更多拆分文件是后续重构目标。当前编译器/运行时支持 SysV x64、Win64、Win32 与 AArch64 AAPCS64：标量/控制流、线性内存、globals/字符串、float32/double、bitfield、标量/指针/varargs FFI、MEMORY/register/mixed struct、Win64/Win32 sret/byval、AAPCS64 HFA；callback trampoline 覆盖全部四种 ABI。`long double` 使用 x86 f80 / AArch64 f128 精确表示并接入 FFI/printf；c-testsuite 支持集 217/217（3 skip）；fuzz/CI/自动链接已接入。
+> **当前实现（2026-11-03 更新）**：Zig 编译器 `compiler-zig/` 是唯一编译器；Python `compiler/` 已删除。当前编译器/运行时支持 SysV x64、Win64、Win32 与 AArch64 AAPCS64：标量/控制流、线性内存、globals/字符串、float32/double、bitfield、标量/指针/varargs FFI、MEMORY/register/mixed struct、Win64/Win32 sret/byval、AAPCS64 HFA；callback trampoline 覆盖全部四种 ABI。`long double` 使用 x86 f80 / AArch64 f128 精确表示并接入 FFI/printf；c-testsuite 支持集 217/217（3 skip）；fuzz/CI/自动链接已接入。
 
 ## 12. 关键代码结构
 
@@ -667,33 +650,9 @@ ci_cb_sysv_entry:
     ret
 ```
 
-### 12.6 Python 侧计划模型
+### 12.6 计划模型的唯一实现
 
-```python
-@dataclass
-class Loc:
-    kind: str          # gpr/xmm/stack/sret/...
-    index: int
-    size: int
-    offset: int
-
-@dataclass
-class ArgPlan:
-    locs: list[Loc]
-    size: int
-    alignment: int
-    is_struct: bool = False
-
-@dataclass
-class CallPlan:
-    args: list[ArgPlan]
-    ret_locs: list[Loc]
-    stack_size: int
-    sret: bool
-    sse_count: int
-```
-
-> 当前 `spike/callplan_gen` 的 Python 模型与上面一致（x86-64 SysV 子集）；Win32 的 `cleanup_bytes`、完整 `abi` 字段在对应 ABI 实现时加入。
+`compiler-zig/src/abi.zig` 的 `Loc`/`ArgPlan`/`Plan` 是唯一计划模型；`main.zig` 将其序列化为 CIPL，`lower_ast.zig` 通过 `buildPlanForAbi` 构造计划。原 Python 计划模型已随 `compiler/` 删除，不再有第二份实现。
 
 ## 13. 体积、性能与错误处理
 
@@ -716,7 +675,7 @@ class CallPlan:
 
 ### 13.3 错误处理
 
-- 前端：Python 异常 + 源文件/行号；不支持的 LLVM IR/ABI 模式明确报错。
+- 前端：Zig 错误 + `line:column` 诊断；不支持的 LLVM IR/ABI 模式明确报错。
 - 运行时：错误码 + 错误字符串缓冲区；不跨 native 栈展开。
 - FFI 计划缺失/ABI 不匹配：加载期或调用期报错，不做运行时猜测。
 - `dlopen`/`dlsym` 失败保留 `dlerror` 文本。
@@ -726,12 +685,12 @@ class CallPlan:
 当前测试入口：
 
 ```bash
-make test            # runtime/compiler 单测 + 20 个端到端用例 + 错误路径
+make test            # runtime 单测 + compiler-zig 单测 + 端到端用例 + 错误路径
 make c-testsuite     # 本地 C 子集（10/10）
 python3 scripts/c_testsuite_upstream.py  # 上游支持集 217/217，3 skip
 make fuzz            # load-only package/plan 变异
 make fuzz-exec       # 字节码执行 fuzz（300 变异 0 crash）
-make differential    # clang 原生 vs cinterp 返回值差分
+make differential    # clang 原生 vs cinterp-cc 返回值差分
 make bench           # 每用例平均运行时间
 make size-cross      # 四个目标 ReleaseSmall 体积
 make release-artifacts
@@ -740,7 +699,7 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 
 测试分层：
 
-- 前端单测：LLVM IR 解析、降级、ABI 计划、二进制 round-trip。
+- 前端单测：`compiler-zig` 的 LLVM IR 解析、AST/verifier、降级、ABI 计划、二进制 round-trip（`cd compiler-zig && zig build test`）。
 - 运行时单测：CIVM、栈/帧、内存/计划校验、错误路径。
 - 端到端：hello/arrays/structs/malloc/puts/printf/snprintf、float/double/long double、struct FFI、HFA、packed、qsort/callback、ABI 边界。
 - 交叉矩阵：Win64 19、Win32 20（含 stdcall）、ARM64 19；真实 Windows SSH + qemu。
@@ -758,7 +717,7 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 - **AAPCS64**：HFA 3/4、栈 HFA、HFA callback 4 向量和 fp128/long double callback 已覆盖；少数大结构体组合仍需分诊。
 - **SysV**：packed/未对齐、MEMORY/sret、mixed aggregate 已覆盖；>2 eightbyte 非 MEMORY 聚合、i128、向量类型未纳入。
 - **外部数据符号**：`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*` 等已解析，Windows UCRT helper 也接入；更冷门的数据符号仍按 provider/fallback 处理。
-- **工具链/信任**：clang `-O0`；VM 指针就是宿主指针，运行时提供安全的 CIB 信任模型，不提供进程内沙箱或 Safe 模式。不可信输入由宿主自行隔离。
+- **工具链/信任**：`zig cc -O0`；VM 指针就是宿主指针，运行时提供安全的 CIB 信任模型，不提供进程内沙箱或 Safe 模式。不可信输入由宿主自行隔离。
 
 ## 16. 剩余风险与后续方向
 
@@ -995,7 +954,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **`_Complex`**：明确不支持，已列入非目标；不为 complex ABI 增加实现。
 - **可增长线性内存与配额**：明确放弃。运行时继续使用固定 `MAX_MEM`/`MAX_STACK`/`MAX_FRAMES`/`MAX_MODULE` 上限，超出时返回现有 OOM/资源错误码；不实现可增长内存或 per-package 配额。
-- **`atexit`**：作为普通 libc 符号处理，不实现 VM 级退出栈。glibc 的 `atexit` 来自 `libc_nonshared.a` 包装对象，最终调用 `__cxa_atexit(func, arg, dso)`；`libc.so.6` 只动态导出 `__cxa_atexit`。编译器通过 `compiler/src/cinterp/link/link_wrappers.json` 的 target link-wrapper 元数据在 lowering 阶段直接生成 `__cxa_atexit(cb, 0, 0)`，不再需要运行时 `atexit` 特化。CLI 在 VM 仍存活时调用 libc `exit`，保证回调可执行。`examples/ffi_atexit.c` 输出 `result: 42` 后执行 `bye`。类似“头文件声明名 ≠ 动态导出名/参数形态”的符号应继续放入 link wrapper 元数据，而不是散落 runtime shim。
+- **`atexit`**：作为普通 libc 符号处理，不实现 VM 级退出栈。glibc 的 `atexit` 来自 `libc_nonshared.a` 包装对象，最终调用 `__cxa_atexit(func, arg, dso)`；`libc.so.6` 只动态导出 `__cxa_atexit`。`compiler-zig/src/lower_ast.zig` 在 lowering 阶段直接生成 `__cxa_atexit(cb, 0, 0)`，不再需要运行时 `atexit` 特化。CLI 在 VM 仍存活时调用 libc `exit`，保证回调可执行。`examples/ffi_atexit.c` 输出 `result: 42` 后执行 `bye`。类似“头文件声明名 ≠ 动态导出名/参数形态”的符号应继续放入 link wrapper 元数据，而不是散落 runtime shim。
 - **`signal`**：作为普通 callback 使用，复用现有 trampoline，不新增 VM signal 机制。`examples/ffi_signal.c` 注册内部 handler、`raise(SIGUSR1)` 后返回 42。
 - **GCC builtins**：明确放弃，移出计划；不新增 builtin lowering。
 - 回归已加入 `scripts/test.sh`。
@@ -1003,10 +962,10 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 20.7 外部符号 alias/wrapper 的通用处理（2026-10-31）
 
 - **信息位置**：头文件只给声明，LLVM IR 也只有声明名；glibc/MSVC 的包装和别名来自链接期的 linker script、`libc_nonshared.a`、导入库或导出名规则，因此仅凭头文件/IR 无法知道 `atexit -> __cxa_atexit` 或 `snprintf -> _snprintf`。
-- **统一元数据**：`compiler/src/cinterp/link/link_wrappers.json` 同时描述：
+- **统一元数据**：`compiler-zig/src/data/link_wrappers.json` 同时描述：
   - `targets.<os>.<symbol>`：真实符号、provider、额外参数（argument adapter，如 atexit 的两个零参数）。
   - `aliases.<os>.<symbol>`：同签名符号改名（如 Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）。
-- **编译期使用**：`cstdapi.alias()` 在 lowering 前改名；`cstdapi.wrapper()` 追加参数并改用真实 plan 名；`cstdapi.lookup()` 为真实符号提供 CIPI provider。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
+- **编译期使用**：`compiler-zig/src/cstdapi.zig` 从内嵌元数据读取 aliases；`compiler-zig/src/lower_ast.zig` 处理 `atexit -> __cxa_atexit` 的参数适配；`cstdapi.zig` 为真实符号提供 CIPI provider。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
 - **runtime 简化**：删除 `runtime/src/ffi/native.zig` 的 `alias()`、`vm.resolveNative()` 的 alias fallback、`strtol/wcstol` shim，以及 `_`/`@` 名称猜测。运行时现在只按 CIB provider、显式 `--lib` 和系统 fallback 查找，不再包含具体函数名分支。
 - **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4292/4519、standard 394/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。
 
@@ -1092,7 +1051,9 @@ zig build -Dtarget=aarch64-linux-gnu
 - GCC compile excluded 全量 609 重跑：20 通过；回收 `20071102-1`、`920615-1`、`pr113603`、`pr43191`；其余通过项为 vector/_Complex non-goal。compile excluded 减少到 605。
 - 之后没有新的无需产品决策的回收项；剩余为 dialect/asm/vector/builtin/diagnostic 分类和平台 skip。
 
-### 20.19 Python 编译性能优化（2026-10-31）
+### 20.19 Python 编译性能优化（2026-10-31，历史记录）
+
+> 本节记录已删除的 Python 编译器路径；当前 `cinterp-cc` 为唯一编译器，`--inprocess`/`--batch` 已移除。
 
 - **profile**：`20000112-1.c` 单次 clang IR ~27ms、完整 Python compile ~70-80ms；`compile_text` 的小文件 regex/lowering 约 40ms。瓶颈是进程启动、link DB 加载、IR 文本处理，不是单一算法。
 - **lazy DB**：无外部 plan 时 `cstdapi.apply`/`winmd.apply` 直接返回，避免每次 compile 加载 cstdapi JSON。
@@ -1165,8 +1126,8 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 20.26 发布与生产质量收口（2026-11-02）
 
 - **许可证/声明**：`LICENSE`（MIT）、`THIRD_PARTY_NOTICES.md`（winmd MIT；cstdapi 上游未声明许可证，仅消费生成的事实性符号表；Zig/Clang/Python 为构建工具）随每个 tarball 发布。
-- **单一版本源**：根 `VERSION` 为唯一来源；Python `cinterp.__version__`、`pyproject.toml` dynamic version、runtime `build_options.version`、`cinterp-run --version`、`ci_version()`、共享库 SONAME 均由它派生。`docs/compatibility.md` 固化 CIPKG/CIVM/CIPL/CIPM/CIPI、`runtime_version`、C ABI 与 N−1 读取保证。
-- **发布链**：`scripts/package_release.sh` 生成四个目标 tarball + wheel + 每目标 SPDX 2.3 SBOM + `SHA256SUMS`，支持 `CINTERP_GPG_KEY` 分离签名；`split_debug` 用 objcopy 生成 `.debug` 和 `.gnu_debuglink`。`.github/workflows/release.yml` 在 tag 上跑集成/差分测试、版本校验、构建、可选签名并发布。GPG 路径已用临时 key 实测 `Good signature`；生产 key 由 release secret 提供。
+- **单一版本源**：根 `VERSION` 为唯一来源；`compiler-zig/build.zig` 读取并注入 `cinterp-cc --version` 与 CIPM producer，runtime `build_options.version`、`cinterp-run --version`、`ci_version()`、共享库 SONAME 均由它派生。`docs/compatibility.md` 固化 CIPKG/CIVM/CIPL/CIPM/CIPI、`runtime_version`、C ABI 与 N−1 读取保证。
+- **发布链**：`scripts/package_release.sh` 生成四个目标 tarball + 每目标 SPDX 2.3 SBOM + `SHA256SUMS`，支持 `CINTERP_GPG_KEY` 分离签名；`split_debug` 用 objcopy 生成 `.debug` 和 `.gnu_debuglink`。`.github/workflows/release.yml` 在 tag 上跑集成/差分测试、版本校验、构建、可选签名并发布。GPG 路径已用临时 key 实测 `Good signature`；生产 key 由 release secret 提供。Python wheel 已随 Python 编译器删除。
 - **绑定**：tarball 内含 `pkgconfig/cinterp.pc`、`cmake/cinterpConfig.cmake`、`rust/cinterp-sys`（raw FFI + 小 safe wrapper）。已验证 `pkg-config` + C host、CMake `find_package`、cargo 消费者运行 `result=42`。
 - **内存**：plan store 改为按包内 plan 数分配（旧固定 6.5 MB）；VM 的 value stack、线性内存、module buffer 改为按配置/包分配。`ci_vm_config.memory_size`（默认 1 MiB，最大 16 MiB）与旧 `struct_size` 兼容。实测空 VM ≈ 0.9 MiB（imports 上限从 256 提升到 512 后），原结构约 10 MiB。
 - **OS/libc 校验**：`platform.os_id` 不再把非 Windows 全部映射为 Linux；非 Linux/Windows 返回 `UnsupportedOs`。编译期检查确认 `x86_64-macos` → `os_id=0, os_supported=false`，`x86_64-linux-gnu` → `os_id=1, os_supported=true`。Linux musl 构建在 load 阶段返回 `UnsupportedLibc`；`native.defaultC()` 在 musl 下不再尝试 `libc.so.6`。已用 `-Dtarget=x86_64-linux-musl` 实测。
@@ -1213,6 +1174,8 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 21.3 阶段结果
 
+> P0/P1/P4/P5 中涉及 Python 编译器的记录是迁移阶段的历史证据；2026-11-03 后 Python 编译器已删除，见 §22。
+
 - **P0/P1**：Python 编译器 `--cc zig` 验证、`compiler-zig/` 骨架与完整 lowerer；
   examples/FFI/HFA/callback/long double/sret 全部通过。
 - **P2**：standard **396/495（99 skip）**、full **4323/4521（198 skip）**，
@@ -1233,7 +1196,6 @@ zig build -Dtarget=aarch64-linux-gnu
 ```bash
 make compiler-zig runtime
 make test
-make test-py
 make lint
 make test-suites-smoke
 make test-suites
@@ -1271,7 +1233,7 @@ make release-artifacts
   parser/AST/verifier/abi/winmd 单测通过；前端使用 `-g0`，debug info 本来就不进入 CIB。
 - **Windows API 自动链接**：winmd 数据嵌入 `cinterp-cc`；Win64/Win32 的
   `GetTickCount64`/`GetSystemMetrics`/`GetModuleHandleA`/`wsprintfA` 在 Wine 下
-  Python/AST 均为 `result: 7`（`make test-winapi`）。
+  均为 `result: 7`（`make test-winapi`）。
 - **former legacy 差异**：旧 parity 的 10 个差异全部是 AST 修正字符串解析 bug
   （`inttoptr` 全局常量、`external constant` 导入、初始化器中 `@global*` 误匹配、
   以 `null` 结尾的 callee 丢调用）。现在保留为 AST 正确性单测与 golden 期望，
@@ -1283,5 +1245,54 @@ make release-artifacts
   `__snprintf_chk` 1005 args 会生成不可加载包，但 full 编译测试通过，属于
   已知引擎上限，不是可执行包回归。
 - GitHub Actions 需要在 push 后实际运行；本地等价命令已全部通过。
-- Python 路径至少保留一个大版本；出现 P0 回归时使用 `make test-py` /
-  `make test-suites-py`，或 `CINTERP_COMPILER=python scripts/test.sh`。
+- Python 编译器路径已于 2026-11-03 删除，不再提供 `make test-py` /
+  `CINTERP_COMPILER=python` 回退；回归使用 Zig 编译器单测与 `make test`。
+
+## 22. Python 编译器移除（2026-11-03）
+
+### 22.1 范围
+
+- 删除 `compiler/`（`pyproject.toml`、`src/cinterp/**`、`tests/**`）；`cinterp-cc` 是唯一编译器。
+- 链接元数据迁移到 `compiler-zig/src/data/`：`cstdapi.generated.json`、`link_wrappers.json`、`winmd.generated.json.gz`；编译器通过 `@embedFile` 内嵌，`--link-db DIR` 仍可覆盖 cstdapi/winmd。
+- Python 保留在测试/验证链路：`scripts/test_suites.py`、fuzz、benchmark、differential、`minimize_failure.py`，以及 `tools/gen_cstdapi.py` / `tools/gen_winmd.py` 离线再生成脚本。它们不参与 `cinterp-cc` 的编译路径。
+
+### 22.2 CLI 对等
+
+四个原先只有 Python 编译器支持的选项已移植到 `cinterp-cc`：
+
+- `--cib-version 1|2`：v1 写 15 字节 CIPKG 头（CIVM+CIPL，无 CIPM/CIPI），v2 保持 25 字节头。
+- `--no-auto-link`：只保留外部数据条目，不写 cstdapi/winmd 的 plan import。
+- `--link-db DIR`：目录或文件路径；缺失时回退内嵌 cstdapi/winmd。
+- `--dump-imports`：直接遍历结构化 CIPI 表，输出 `import[plan N] name: lib:symbol, ...`。
+
+导入表由 `compiler-zig/src/imports.zig` 统一构建和序列化；`compiler-zig/src/cstdapi.zig` 复刻 Python 的 available/provider/`_snprintf` 前导下划线回退语义；Windows `snprintf`/`vsnprintf` 别名来自迁移后的 `link_wrappers.json`。
+
+### 22.3 测试与发布链
+
+- `scripts/test_suites.py` 删除 `--inprocess`/`--batch`/`--compiler python`，始终调用 `--compiler-path`（默认 `build/cinterp-cc`）；CIB 缓存指纹改按编译器可执行文件计算。
+- 所有 fuzz/差分/benchmark/cross 脚本改用 `build/cinterp-cc`。
+- `make test` 运行 `compiler-zig` 单测（`zig build test`）和端到端测试；`make test-py`、`test-suites-*-py` 删除。
+- 发布链移除 Python wheel 和 `bin/cinterp` 的 Python 回退；Linux tarball 仍提供 `bin/cinterp-cc` + `bin/cinterp` wrapper。
+
+### 22.4 验证
+
+```bash
+make compiler-zig runtime
+cd compiler-zig && zig build test
+make test
+make lint
+make c-testsuite
+make differential
+make test-suites-smoke
+```
+
+另外验证：
+
+```bash
+./build/cinterp-cc --version
+./build/cinterp-cc compile examples/ffi_printf.c -o build/t.cib --dump-imports
+./build/cinterp-cc compile examples/ffi_printf.c -o build/t.cib --no-auto-link --dump-imports
+./build/cinterp-cc compile examples/ffi_printf.c -o build/t.cib --link-db compiler-zig/src/data --dump-imports
+./build/cinterp-cc compile examples/hello.c -o build/hello-v1.cib --cib-version 1
+./runtime/zig-out/bin/cinterp-run build/hello-v1.cib
+```

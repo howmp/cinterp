@@ -11,18 +11,12 @@ mkdir -p "$OUT"
 copy_common() {
     local dest="$1"
     cp LICENSE THIRD_PARTY_NOTICES.md README.md VERSION "$dest/"
-    mkdir -p "$dest/docs" "$dest/compiler" "$dest/examples"
+    mkdir -p "$dest/docs" "$dest/examples"
     cp docs/*.md "$dest/docs/"
     cp -a examples/. "$dest/examples/"
-    cp -a compiler/src "$dest/compiler/"
-    cp compiler/pyproject.toml "$dest/compiler/"
-    find "$dest/compiler" \( -type d -name __pycache__ -o -type d -name '*.egg-info' \) \
-        -prune -exec rm -rf {} +
 
     mkdir -p "$dest/bin" "$dest/pkgconfig" "$dest/cmake" \
         "$dest/rust/cinterp-sys/src"
-    cp packaging/bin/cinterp.in "$dest/bin/cinterp"
-    chmod +x "$dest/bin/cinterp"
     sed "s/@VERSION@/$VERSION/g" packaging/cinterp.pc.in \
         > "$dest/pkgconfig/cinterp.pc"
     sed "s/@VERSION@/$VERSION/g" packaging/cmake/cinterpConfig.cmake.in \
@@ -79,6 +73,8 @@ build_one() {
         (cd compiler-zig && zig build -Doptimize=ReleaseSmall >/dev/null)
         mkdir -p "$dest/bin"
         cp compiler-zig/zig-out/bin/cinterp-cc "$dest/bin/cinterp-cc"
+        cp packaging/bin/cinterp.in "$dest/bin/cinterp"
+        chmod +x "$dest/bin/cinterp"
     fi
     for dll in runtime/zig-out/bin/*.dll; do
         if [ -e "$dll" ]; then cp "$dll" "$dest/"; fi
@@ -102,15 +98,9 @@ build_one x86_64-windows-gnu win64-x86_64
 build_one x86-windows-gnu win32-x86
 build_one aarch64-linux-gnu arm64
 
-if python3 -c "import setuptools" >/dev/null 2>&1; then
-    python3 -m pip wheel --no-deps --no-build-isolation ./compiler -w "$OUT" >/dev/null
-else
-    python3 -m pip wheel --no-deps ./compiler -w "$OUT" >/dev/null
-fi
-
 (
     cd "$OUT"
-    sha256sum ./*.tar.gz ./*.whl ./*.spdx.json > SHA256SUMS
+    sha256sum ./*.tar.gz ./*.spdx.json > SHA256SUMS
 )
 
 if [ -n "${CINTERP_GPG_KEY:-}" ]; then

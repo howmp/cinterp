@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PYTHONPATH = str(ROOT / "compiler/src")
+COMPILER = ROOT / "build/cinterp-cc"
 SEEDS = ["hello", "arrays", "ffi_structs"]
 
 TARGETS = {
@@ -56,12 +56,11 @@ def mutate(data: bytes, rng: random.Random) -> bytes:
 
 
 def compile_seed(name: str, target: str, out: Path) -> Path:
-    env = dict(os.environ, PYTHONPATH=PYTHONPATH)
     package = out / f"{name}-{target}.cib"
     subprocess.run(
-        [sys.executable, "-m", "cinterp", "compile",
+        [str(COMPILER), "compile",
          str(ROOT / "examples" / f"{name}.c"), "--target", target, "-o", str(package)],
-        check=True, env=env, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        check=True, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     return package
 

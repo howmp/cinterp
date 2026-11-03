@@ -11,10 +11,9 @@ vendored.
 
 - Source: https://github.com/howmp/winmd
 - Upstream commit used: 9b8027802f05b1c84a8630e7f739eb519add9767
-- License: MIT (recorded in `compiler/src/cinterp/link/winmd.generated.json.gz`)
-- Generated files: `compiler/src/cinterp/link/winmd.generated.json.gz`
-  (Python compiler) and `compiler-zig/src/data/winmd.generated.json.gz`
-  (embedded in the Zig compiler for Windows API provider lookup)
+- License: MIT (recorded in `compiler-zig/src/data/winmd.generated.json.gz`)
+- Generated file: `compiler-zig/src/data/winmd.generated.json.gz` (embedded in
+  `cinterp-cc` for Windows API provider lookup)
 
 MIT License
 
@@ -44,11 +43,11 @@ SOFTWARE.
 - Upstream commit used: abba9c4569939b4eca640419a7bf2c97e8b550ee
 - License: the upstream snapshot does not declare a license. cinterp only
   consumes the generated factual symbol-availability table
-  (`compiler/src/cinterp/link/cstdapi.generated.json`); no upstream source
+  (`compiler-zig/src/data/cstdapi.generated.json`); no upstream source
   code, documentation or other creative text is included. If the upstream
   project later publishes a license, this notice and the generated data must
   be revalidated against it.
-- Generated file: `compiler/src/cinterp/link/cstdapi.generated.json`
+- Generated file: `compiler-zig/src/data/cstdapi.generated.json`
 
 ## Build and test toolchain (not redistributed)
 
@@ -59,7 +58,8 @@ They are not included in cinterp release tarballs:
   targets.
 - Clang/LLVM (Apache-2.0 with LLVM exceptions) — emits LLVM IR that the
   compiler lowers.
-- Python 3.10+ (PSF-2.0) — runs the build-time compiler.
+- Python 3.10+ (PSF-2.0) — runs the test/fuzz/benchmark harnesses and the
+  offline `tools/gen_*.py` metadata generators; the compiler is Zig-only.
 - MinGW-w64 headers and import libraries (bundled with Zig) — used when
   compiling Windows targets.
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-export PYTHONPATH="$ROOT/compiler/src"
+COMPILER="${CINTERP_COMPILER:-$ROOT/build/cinterp-cc}"
 RUNTIME="$ROOT/runtime/zig-out/bin/cinterp-run"
 DIR="${C_TESTSUITE_DIR:-$ROOT/tests/csuite}"
 OUT="$ROOT/build/csuite"
@@ -27,7 +27,7 @@ for source in "$DIR"/*.c; do
         continue
     fi
     cib="$OUT/$name.cib"
-    if ! python3 -m cinterp compile "$source" -o "$cib" >/dev/null 2>"$OUT/$name.compile.log"; then
+    if ! "$COMPILER" compile "$source" -o "$cib" >/dev/null 2>"$OUT/$name.compile.log"; then
         echo "FAIL $name (compile)"
         sed -n '1,5p' "$OUT/$name.compile.log" >&2
         fail=$((fail + 1))

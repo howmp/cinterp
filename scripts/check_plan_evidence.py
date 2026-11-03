@@ -40,7 +40,7 @@ for f in ("build/cross/cinterp-run-arm64", "build/cross/cinterp-run64.exe", "bui
 # ---- P4: differential / generated diff / suites / lint / fuzz ----------------
 diff = text("evidence-differential.txt")
 names = ("hello", "arrays", "structs", "math", "bitfields", "ptrstruct", "longdouble")
-check("P4 differential 7/7", all(re.search(rf"^OK {n} -> .+ \(python/zig agree\)$", diff, re.M) for n in names), "7 cases agree")
+check("P4 differential 7/7", all(re.search(rf"^OK {n} -> .+ \(native/zig agree\)$", diff, re.M) for n in names), "7 cases agree")
 check("P4 differential no FAIL", "FAIL" not in diff, "no FAIL line")
 gen = json.loads((B / "generate-diff-nightly.json").read_text())
 check("P4 yarpgen 100 no failure", gen["counts"].get("failure", 0) == 0 and sum(gen["counts"].values()) == 100, json.dumps(gen["counts"]))
@@ -66,9 +66,8 @@ for pat in (
 need("evidence-fuzz-capi-asan.txt", r"fuzz-capi-asan: 200 mutations, 0 crashes", "P4 C API sanitizer fuzz")
 
 # ---- P5: default compiler, tests, size, release ------------------------------
-for name in ("evidence-make-test.txt", "evidence-make-test-py.txt"):
-    body = text(name)
-    check(f"P5 {name} all tests", "all tests passed" in body and "OK C embedding API" in body and "FAIL" not in body, "all tests passed + C API")
+body = text("evidence-make-test.txt")
+check("P5 make test", "all tests passed" in body and "OK C embedding API" in body and "FAIL" not in body, "all tests passed + C API")
 size = text("evidence-size.txt")
 m = re.search(r"runtime ReleaseSmall: (\S+)", size)
 check("P5 runtime size", m is not None, m.group(0) if m else "missing")
@@ -77,7 +76,6 @@ check("P5 qsort CIB size", re.search(r"ffi_qsort.cib: (\d+)", size) is not None,
 rel = B / "release"
 tars = list(rel.glob("cinterp-*-*.tar.gz"))
 check("P5 release tarballs", len(tars) == 4, f"{len(tars)} tarballs")
-check("P5 release wheel", len(list(rel.glob("*.whl"))) == 1, "one wheel")
 check("P5 release sums", (rel / "SHA256SUMS").is_file(), "SHA256SUMS")
 linux_tar = rel / "cinterp-0.1.0-sysv-x86_64.tar.gz"
 with tarfile.open(linux_tar) as tf:
@@ -88,8 +86,9 @@ check("P5 tarball smoke", "compile_rc=0" in smoke and "run_rc=0" in smoke and "r
 mk = (ROOT / "Makefile").read_text()
 ts = (ROOT / "scripts/test.sh").read_text()
 check("P5 Makefile default", "build/cinterp-cc" in mk and "test: compiler-zig" in mk, "default + compiler-zig target")
-check("P5 test.sh default", "CINTERP_COMPILER" in ts and "build/cinterp-cc" in ts, "compiler env/default")
-check("P5 rollback", "test-py" in mk and "CINTERP_COMPILER=python" in mk, "Python path preserved")
+check("P5 test.sh default", "build/cinterp-cc" in ts and "compiler-zig" in ts, "Zig compiler default")
+removed_compiler = "compiler" + "/src"
+check("P5 Python compiler removed", removed_compiler not in mk and "test-py" not in mk, "no Python compiler path")
 
 # ---- report -----------------------------------------------------------------
 failed = [c for c in checks if not c["ok"]]

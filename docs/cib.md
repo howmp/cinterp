@@ -9,12 +9,11 @@
 
 运行时按“包 → 目标校验 → 模块 → 计划 → import 校验 → 固定汇编引擎”的顺序工作。`CIPKG` v1（无 CIPM/CIPI）仍然可读。本文描述的是**当前实现**的二进制格式；代码是最终事实来源：
 
-- `compiler/src/cinterp/codegen/binary_writer.py`：`CIPKG`
-- `compiler/src/cinterp/llvm_ir/lower.py`：CIVM、opcode、globals 初始化
-- `compiler/src/cinterp/ffi/plan.py`：CIPL、`Loc`/`ArgPlan`/`CallPlan`
-- `compiler/src/cinterp/link/target.py`：CIPM
-- `compiler/src/cinterp/link/imports.py`：CIPI
-- `compiler/src/cinterp/link/cstdapi.py` / `winmd.py`：C 标准库/Windows API 自动链接
+- `compiler-zig/src/main.zig`：`CIPKG`、CIPM、CIPI 写入
+- `compiler-zig/src/lower_ast.zig`：CIVM、opcode、globals 初始化
+- `compiler-zig/src/abi.zig`：CIPL、`Loc`/`ArgPlan`/`CallPlan`
+- `compiler-zig/src/imports.zig`：CIPI 结构与序列化
+- `compiler-zig/src/cstdapi.zig` / `winmd.zig`：C 标准库/Windows API 自动链接
 - `runtime/src/vm.zig`：CIVM 解析、opcode 执行、C ABI、provider 解析
 - `runtime/src/ffi/plan_loader.zig`：CIPL 解析
 - `runtime/src/ffi/link_loader.zig`：CIPM/CIPI 解析
@@ -158,8 +157,8 @@ provider[]:
 
 编译器按 target 自动生成 CIPI，只写实际使用的外部符号：
 
-- **C 标准库**：`compiler/src/cinterp/link/cstdapi.generated.json` 由 `tools/gen_cstdapi.py` 从 cstdapi 生成；Linux 候选 `libc.so.6`/`libm.so.6`，Windows 候选 `ucrtbase.dll`/`msvcrt.dll`/`ntdll.dll`，包含 `_snprintf` 等别名。
-- **Windows API**：`compiler/src/cinterp/link/winmd.generated.json.gz` 由 `tools/gen_winmd.py` 从 winmd 生成；name → DLL/callconv/min_os/arch_mask，运行期按 DLL 自动加载。
+- **C 标准库**：`compiler-zig/src/data/cstdapi.generated.json` 由 `tools/gen_cstdapi.py` 从 cstdapi 生成并被编译器内嵌；Linux 候选 `libc.so.6`/`libm.so.6`，Windows 候选 `ucrtbase.dll`/`msvcrt.dll`/`ntdll.dll`，包含 `_snprintf` 等别名。
+- **Windows API**：`compiler-zig/src/data/winmd.generated.json.gz` 由 `tools/gen_winmd.py` 从 winmd 生成；name → DLL/callconv/min_os/arch_mask，运行期按 DLL 自动加载。
 - `--no-auto-link` 关闭生成；未命中的自定义符号继续使用 `--lib`/旧 fallback。
 
 ## 3. CIVM 模块（v1）
@@ -440,7 +439,7 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 
 ## 6. 完整示例：`hello.cib`
 
-运行 `cinterp compile examples/hello.c -o build/hello.cib --no-auto-link` 后（159 字节，CIPKG v2）：
+运行 `./build/cinterp-cc compile examples/hello.c -o build/hello.cib --no-auto-link` 后（CIPKG v2）。下表的字段布局不变，但下面的 CIVM 指令字节是旧版示例；当前 `cinterp-cc` 的 `hello.c` 包为 189B（module 83B、plan 10B、meta 61B、import 10B），具体指令以 `xxd` 输出为准：
 
 ```
 43 49 50 4b 47        CIPKG
@@ -514,7 +513,7 @@ import[plan 0] printf: libc.so.6:printf libm.so.6:printf
 xxd -g1 build/hello.cib
 
 # 查看编译器生成函数/计划/import 摘要
-PYTHONPATH=compiler/src python3 -m cinterp compile examples/ffi_printf.c -o build/printf.cib --dump --dump-imports
+./build/cinterp-cc compile examples/ffi_printf.c -o build/printf.cib --dump --dump-imports
 
 # 只加载/校验，不执行；同时查看目标/import 元数据
 ./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib

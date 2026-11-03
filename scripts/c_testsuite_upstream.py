@@ -5,18 +5,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_COMPILER = ROOT / "build/cinterp-cc"
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
-PYTHONPATH = str(ROOT / "compiler/src")
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)
 
-def run_case(src: Path, outdir: Path) -> tuple[str, str]:
+def run_case(src: Path, outdir: Path, compiler: Path) -> tuple[str, str]:
     expected_path = Path(str(src) + ".expected")
     expected = expected_path.read_bytes() if expected_path.exists() else b""
     cib = outdir / (src.stem + ".cib")
-    env = dict(os.environ, PYTHONPATH=PYTHONPATH)
+    env = dict(os.environ)
     try:
         comp = subprocess.run(
-            [sys.executable, "-m", "cinterp", "compile", str(src), "-o", str(cib)],
+            [str(compiler), "compile", str(src), "-o", str(cib)],
             env=env, cwd=ROOT, capture_output=True, timeout=300,
         )
     except subprocess.TimeoutExpired:
@@ -40,7 +40,12 @@ def main() -> int:
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--report", default="")
     ap.add_argument("--skip-file", default=str(ROOT / "tests/csuite/cinterp.skip"))
+    ap.add_argument("--compiler-path", default=str(DEFAULT_COMPILER))
     args = ap.parse_args()
+    compiler = Path(args.compiler_path)
+    if not compiler.is_file():
+        print(f"missing compiler: {compiler} (run make compiler-zig)", file=sys.stderr)
+        return 2
     directory = Path(args.dir)
     skip = set()
     skip_path = Path(args.skip_file)
@@ -53,7 +58,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cinterp-csuite-") as td:
         outdir = Path(td)
         with ThreadPoolExecutor(max_workers=args.jobs) as ex:
-            futures = [ex.submit(run_case, src, outdir) for src in sources]
+            futures = [ex.submit(run_case, src, outdir, compiler) for src in sources]
             for fut in as_completed(futures):
                 results.append(fut.result())
     results.sort()

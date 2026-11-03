@@ -11,11 +11,11 @@ extern "C" {
 /*
  * cinterp embedding API, ABI 2.
  *
- * The runtime executes a precompiled CIB package. It does not need clang or
- * the Python compiler at runtime. A VM owns one package at a time and is
- * intended to be used by one thread at a time. Separate VM instances may be
- * used independently; callback trampolines are process-wide and are retired
- * permanently when their owning VM is destroyed.
+ * The runtime executes a precompiled CIB package produced by cinterp-cc at
+ * build time. It does not need clang or Python at runtime. A VM owns one
+ * package at a time and is intended to be used by one thread at a time.
+ * Separate VM instances may be used independently; callback trampolines are
+ * process-wide and are retired permanently when their owning VM is destroyed.
  */
 
 #define CI_ABI_VERSION 2

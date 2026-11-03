@@ -1,10 +1,10 @@
 # Zig compiler frontend
 
-`cinterp-cc` is the default build-time compiler. It invokes the `zig cc` C
+`cinterp-cc` is the only build-time compiler. It invokes the `zig cc` C
 frontend, parses the resulting LLVM IR text with a typed lexer/parser/AST and a
-subset verifier, then emits the same CIVM bytecode and CIPKG v2 package format as
-the original Python compiler. The typed AST is the only IR frontend; the former
-string parser has been removed.
+subset verifier, then emits CIVM bytecode, CIPL plans and CIPKG v2 packages.
+The typed AST is the only IR frontend; the former string parser and the original
+Python compiler have both been removed.
 
 ## Requirements
 
@@ -47,8 +47,8 @@ triple/OS/pointer-width and little-endian consistency are checked before lowerin
 
 `cinterp-cc` embeds `winmd.generated.json.gz` and resolves Windows API names
 (including Win32 stdcall decoration such as `\01_GetTickCount64@0`) to the
-correct DLL/provider. `make test-winapi` compiles `examples/winapi.c` with both
-the Python and AST frontends for Win64/Win32 and runs them under Wine.
+correct DLL/provider. `make test-winapi` compiles `examples/winapi.c` for
+Win64/Win32 and runs it under Wine.
 
 ## Build and use
 
@@ -66,9 +66,10 @@ For cross targets use `--target`:
 ./build/cinterp-cc compile --target i686-windows examples/hello.c -o build/hello-win32.cib
 ```
 
-## Rollback
+## Testing
 
-The Python compiler remains in `compiler/`. Use `make test-py`,
-`make test-suites-py`, or set `CINTERP_COMPILER=python` for `scripts/test.sh`.
-Release tarballs include `bin/cinterp` which prefers the adjacent `cinterp-cc`
-and falls back to Python.
+Python is used only by the test, fuzz and benchmark harnesses plus the offline
+`tools/gen_*.py` metadata generators. The compiler itself has no Python
+dependency. `make test` runs the Zig compiler unit tests and the end-to-end
+integration suite; release tarballs include `bin/cinterp` as a thin wrapper
+around the adjacent `cinterp-cc`.

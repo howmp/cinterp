@@ -4,34 +4,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-export PYTHONPATH="$ROOT/compiler/src"
 RUNTIME="$ROOT/runtime/zig-out/bin/cinterp-run"
 OUT="$ROOT/build"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
-COMPILER="${CINTERP_COMPILER:-$ROOT/build/cinterp-cc}"
+COMPILER="$ROOT/build/cinterp-cc"
 mkdir -p "$OUT"
 
 compile() {
-    local use_python=0
-    for arg in "$@"; do
-        case "$arg" in
-            --dump-imports|--cib-version|--no-auto-link|--link-db|--link-db=*)
-                use_python=1
-                ;;
-        esac
-    done
-    if [ "$COMPILER" = "python" ] || [ "$use_python" = 1 ]; then
-        PYTHONPATH="$ROOT/compiler/src" python3 -m cinterp compile "$@"
-    else
-        "$COMPILER" compile "$@"
-    fi
+    "$COMPILER" compile "$@"
 }
 
 echo "== runtime unit tests"
 (cd runtime && zig build test --summary all)
 
 echo "== compiler unit tests"
-python3 -m unittest discover -s compiler/tests
+(cd compiler-zig && zig build test --summary all)
 
 echo "== build runtime"
 (cd runtime && zig build -Doptimize=ReleaseSmall)
@@ -218,7 +205,7 @@ if "$RUNTIME" "$OUT/missing_symbol.cib" >/dev/null 2>&1; then
     exit 1
 fi
 echo "OK unknown symbol"
-python3 -m cinterp --version 2>&1 | grep -Fq "cinterp $VERSION"
+"$COMPILER" --version 2>&1 | grep -Fq "cinterp-cc $VERSION"
 "$RUNTIME" --version 2>&1 | grep -Fq "cinterp-run $VERSION"
 echo "OK version"
 
@@ -247,13 +234,16 @@ printf '%s\n' "$v1_out" | grep -Fq "result: 42"
 echo "OK legacy CIPKG v1"
 
 compile examples/ffi_printf.c --no-auto-link -o "$OUT/ffi_printf-nolink.cib" --dump-imports >"$OUT/nolink.txt"
-grep -Fq "imports=0" "$OUT/nolink.txt"
+if grep -Fq "import[plan 0]" "$OUT/nolink.txt"; then
+    echo "FAIL --no-auto-link still emitted a function plan import" >&2
+    exit 1
+fi
 nolink_out="$("$RUNTIME" "$OUT/ffi_printf-nolink.cib" 2>&1)"
 printf '%s\n' "$nolink_out" | grep -Fq "result: 0"
 echo "OK --no-auto-link fallback"
 
-compile examples/ffi_printf.c -o "$OUT/ffi_printf-linkdb.cib" --link-db compiler/src/cinterp/link --dump-imports >"$OUT/linkdb.txt"
-grep -Fq "imports=1" "$OUT/linkdb.txt"
+compile examples/ffi_printf.c -o "$OUT/ffi_printf-linkdb.cib" --link-db compiler-zig/src/data --dump-imports >"$OUT/linkdb.txt"
+grep -Fq "import[plan 0] printf" "$OUT/linkdb.txt"
 echo "OK --link-db override"
 
 echo "== C embedding API (static + shared)"

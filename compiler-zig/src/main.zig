@@ -4,7 +4,10 @@ const abi = @import("abi.zig");
 const lower_ast = @import("lower_ast.zig");
 const ir = @import("ir/parser.zig");
 const verify = @import("ir/verify.zig");
+const cstdapi = @import("cstdapi.zig");
+const imports = @import("imports.zig");
 const winmd = @import("winmd.zig");
+const build_options = @import("build_options");
 
 const Allocator = std.mem.Allocator;
 
@@ -17,6 +20,7 @@ const Target = struct {
     abi: u8,
     ptr_bits: u8,
     features: u64,
+    link_db: []const u8 = "",
 };
 
 const targets = [_]Target{
@@ -41,6 +45,10 @@ const Options = struct {
     keep_ir: bool = false,
     dump: bool = false,
     dump_ast: bool = false,
+    dump_imports: bool = false,
+    cib_version: u8 = 2,
+    auto_link: bool = true,
+    link_db: ?[]const u8 = null,
 };
 
 fn writeU16(list: *std.ArrayList(u8), v: u16) !void {
@@ -61,8 +69,18 @@ fn writeU64(list: *std.ArrayList(u8), v: u64) !void {
     try list.appendSlice(&buf);
 }
 
+fn archMask(arch: u8) u8 {
+    return switch (arch) {
+        1 => 1,
+        2 => 2,
+        3 => 4,
+        else => 0,
+    };
+}
+
 fn targetSerialize(allocator: Allocator, target: Target) ![]u8 {
-    const producer = "cinterp 0.1.0";
+    const producer = try std.fmt.allocPrint(allocator, "cinterp {s}", .{build_options.version});
+    const link_db = target.link_db;
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPM");
     try out.append(1);
@@ -76,9 +94,10 @@ fn targetSerialize(allocator: Allocator, target: Target) ![]u8 {
     try writeU64(&out, target.features);
     try writeU16(&out, 1);
     try writeU16(&out, @intCast(target.triple.len));
-    try writeU16(&out, 0);
+    try writeU16(&out, @intCast(link_db.len));
     try writeU16(&out, @intCast(producer.len));
     try out.appendSlice(target.triple);
+    try out.appendSlice(link_db);
     try out.appendSlice(producer);
     return out.toOwnedSlice();
 }
@@ -123,96 +142,128 @@ fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]
     return out.toOwnedSlice();
 }
 
-fn writeProvider(out: *std.ArrayList(u8), lib: []const u8, symbol: []const u8) !void {
-    try out.append(1); // SONAME
-    try out.append(@intCast(lib.len));
-    try out.appendSlice(lib);
-    try out.append(@intCast(symbol.len));
-    try out.appendSlice(symbol);
-    try writeU16(out, 0); // ordinal
-    try out.append(0); // version
-}
-
-fn writeWindowsProviders(out: *std.ArrayList(u8), db: ?*winmd.Database, arch: u8, name: []const u8) !bool {
-    const database = db orelse return false;
-    const api = database.lookup(name, arch) orelse return false;
-    try out.append(@intCast(api.providers.len));
-    for (api.providers) |p| try writeProvider(out, p.dll, p.symbol);
-    return true;
-}
-
-fn serializeImports(allocator: Allocator, plans: []const abi.Plan, external_data: []const []const u8, target: Target) ![]u8 {
-    var out = std.ArrayList(u8).init(allocator);
-    try out.appendSlice("CIPI");
-    try out.append(1);
-    try out.append(0);
-    var function_count: u16 = 0;
-    for (plans) |plan| {
-        if (!std.mem.startsWith(u8, plan.name, "callback:")) function_count += 1;
+fn convertWinmdProviders(allocator: Allocator, providers: []const winmd.Provider) ![]imports.Provider {
+    const out = try allocator.alloc(imports.Provider, providers.len);
+    for (providers, 0..) |provider, index| {
+        out[index] = .{ .lib = provider.dll, .symbol = provider.symbol };
     }
+    return out;
+}
+
+fn fallbackWindowsProviders(allocator: Allocator, name: []const u8) ![]imports.Provider {
+    const out = try allocator.alloc(imports.Provider, 2);
+    out[0] = .{ .lib = "ucrtbase.dll", .symbol = name };
+    out[1] = .{ .lib = "msvcrt.dll", .symbol = name };
+    return out;
+}
+
+fn buildImportTable(
+    allocator: Allocator,
+    plans: []const abi.Plan,
+    external_data: []const []const u8,
+    target: Target,
+    cstd_db: *cstdapi.Database,
+    win_db: ?*winmd.Database,
+    auto_link: bool,
+) !imports.Table {
+    var table = imports.Table.init(allocator);
+    errdefer table.deinit();
+
     var plan_names = std.StringHashMap(void).init(allocator);
     defer plan_names.deinit();
+    var function_plan_count: usize = 0;
     for (plans) |plan| {
-        if (!std.mem.startsWith(u8, plan.name, "callback:")) try plan_names.put(plan.name, {});
-    }
-    var data_count: u16 = 0;
-    for (external_data) |raw_name| {
-        const name = if (raw_name.len > 0 and raw_name[0] == '@') raw_name[1..] else raw_name;
-        if (target.os == 2 and plan_names.contains(name)) continue;
-        if (data_count >= std.math.maxInt(u16) - function_count) break;
-        data_count += 1;
-    }
-    try writeU16(&out, data_count + function_count);
-    try writeU16(&out, 0);
-    const linux = target.os == 1;
-    var win_db: ?winmd.Database = null;
-    if (!linux) win_db = try winmd.Database.init(allocator);
-    defer if (win_db) |*db| db.deinit();
-    var data_written: u16 = 0;
-    for (external_data) |raw_name| {
-        if (data_written >= data_count) break;
-        const name = if (raw_name.len > 0 and raw_name[0] == '@') raw_name[1..] else raw_name;
-        if (target.os == 2 and plan_names.contains(name)) continue;
-        data_written += 1;
-        try writeU16(&out, 0xffff);
-        try out.append(1); // data
-        try out.append(11); // required | lazy | allow_override
-        try out.append(0);
-        try out.append(0);
-        try writeU16(&out, 0);
-        try out.append(@intCast(name.len));
-        try out.appendSlice(name);
-        if (linux) {
-            try out.append(2);
-            try writeProvider(&out, "libc.so.6", name);
-            try writeProvider(&out, "libm.so.6", name);
-        } else if (!try writeWindowsProviders(&out, if (win_db) |*db| db else null, target.arch, name)) {
-            try out.append(2);
-            try writeProvider(&out, "ucrtbase.dll", name);
-            try writeProvider(&out, "msvcrt.dll", name);
-        }
-    }
-    for (plans, 0..) |plan, plan_index| {
         if (std.mem.startsWith(u8, plan.name, "callback:")) continue;
-        try writeU16(&out, @intCast(plan_index));
-        try out.append(0); // function
-        try out.append(11);
-        try out.append(plan.conv);
-        try out.append(0);
-        try writeU16(&out, 0);
-        try out.append(@intCast(plan.name.len));
-        try out.appendSlice(plan.name);
-        if (linux) {
-            try out.append(2);
-            try writeProvider(&out, "libc.so.6", plan.name);
-            try writeProvider(&out, "libm.so.6", plan.name);
-        } else if (!try writeWindowsProviders(&out, if (win_db) |*db| db else null, target.arch, plan.name)) {
-            try out.append(2);
-            try writeProvider(&out, "ucrtbase.dll", plan.name);
-            try writeProvider(&out, "msvcrt.dll", plan.name);
+        function_plan_count += 1;
+        try plan_names.put(plan.name, {});
+    }
+    if (function_plan_count > std.math.maxInt(u16)) return error.TooManyImports;
+    const max_data_entries = std.math.maxInt(u16) - function_plan_count;
+
+    for (external_data) |raw_name| {
+        // CIPI counts are u16. Compile-only stress inputs can declare more
+        // symbols than the format can address; keep the lower indices (the
+        // ones bytecode can reference) and drop the tail.
+        if (table.entries.items.len >= max_data_entries) break;
+        const name = if (raw_name.len > 0 and raw_name[0] == '@') raw_name[1..] else raw_name;
+        // External-data indices are referenced directly by OP_ADDR_EXTERN.
+        // Keep the table complete so those indices never shift. Windows
+        // historically omits entries that are also function plans.
+        if (target.os == 2 and plan_names.contains(name)) continue;
+        var providers: []imports.Provider = undefined;
+        if (target.os == 1) {
+            const out = try allocator.alloc(imports.Provider, 2);
+            out[0] = .{ .lib = "libc.so.6", .symbol = name };
+            out[1] = .{ .lib = "libm.so.6", .symbol = name };
+            providers = out;
+        } else if (win_db) |db| {
+            if (db.lookup(name, target.arch)) |api| {
+                providers = try convertWinmdProviders(allocator, api.providers);
+            } else {
+                providers = try fallbackWindowsProviders(allocator, name);
+            }
+        } else {
+            providers = try fallbackWindowsProviders(allocator, name);
+        }
+        try table.add(.{
+            .plan_index = 0xffff,
+            .name = name,
+            .kind = 1,
+            .flags = 12,
+            .arch_mask = archMask(target.arch),
+            .providers = providers,
+        });
+    }
+
+    if (auto_link) {
+        for (plans, 0..) |plan, plan_index| {
+            if (std.mem.startsWith(u8, plan.name, "callback:")) continue;
+            var providers: ?[]imports.Provider = null;
+            var call_conv = plan.conv;
+            var min_os: u16 = 0;
+            if (target.os == 2) {
+                if (win_db) |db| {
+                    if (db.lookup(plan.name, target.arch)) |api| {
+                        providers = try convertWinmdProviders(allocator, api.providers);
+                        call_conv = api.conv;
+                        min_os = api.min_os;
+                    }
+                }
+            }
+            if (providers == null) {
+                providers = try cstd_db.lookup(target.name, target.os, plan.name);
+            }
+            if (providers) |list| {
+                if (list.len == 0) continue;
+                try table.add(.{
+                    .plan_index = @intCast(plan_index),
+                    .name = plan.name,
+                    .kind = 0,
+                    .flags = 11,
+                    .call_conv = call_conv,
+                    .arch_mask = archMask(target.arch),
+                    .min_os = min_os,
+                    .providers = list,
+                });
+            }
         }
     }
-    return out.toOwnedSlice();
+    return table;
+}
+
+fn dumpImports(writer: anytype, table: *const imports.Table) !void {
+    for (table.entries.items) |entry| {
+        try writer.print("  import[plan {d}] {s}:", .{ entry.plan_index, entry.name });
+        if (entry.providers.len == 0) {
+            try writer.writeAll(" (unresolved)");
+        } else {
+            for (entry.providers, 0..) |provider, index| {
+                if (index > 0) try writer.writeAll(",");
+                try writer.print(" {s}:{s}", .{ provider.lib, provider.symbol });
+            }
+        }
+        try writer.writeByte('\n');
+    }
 }
 
 fn moduleSerialize(allocator: Allocator, functions: []const abi.Function) ![]u8 {
@@ -234,20 +285,38 @@ fn moduleSerialize(allocator: Allocator, functions: []const abi.Function) ![]u8 
     return out.toOwnedSlice();
 }
 
-fn packageSerialize(allocator: Allocator, module: []const u8, plans: []const u8, meta: []const u8, imports: []const u8) ![]u8 {
+fn packageSerialize(
+    allocator: Allocator,
+    module: []const u8,
+    plans: []const u8,
+    meta: []const u8,
+    import_bytes: []const u8,
+    cib_version: u8,
+) ![]u8 {
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPKG");
+    if (cib_version == 1) {
+        try out.append(1);
+        try out.append(0);
+        try writeU32(&out, @intCast(module.len));
+        try writeU32(&out, @intCast(plans.len));
+        try out.appendSlice(module);
+        try out.appendSlice(plans);
+        return out.toOwnedSlice();
+    }
+    var flags: u8 = 0x1;
+    if (import_bytes.len > 0) flags |= 0x2;
     try out.append(2);
-    try out.append(0x3);
+    try out.append(flags);
     try writeU16(&out, 25);
     try writeU32(&out, @intCast(module.len));
     try writeU32(&out, @intCast(plans.len));
     try writeU32(&out, @intCast(meta.len));
-    try writeU32(&out, @intCast(imports.len));
+    try writeU32(&out, @intCast(import_bytes.len));
     try out.appendSlice(module);
     try out.appendSlice(plans);
     try out.appendSlice(meta);
-    try out.appendSlice(imports);
+    try out.appendSlice(import_bytes);
     return out.toOwnedSlice();
 }
 
@@ -261,7 +330,7 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8) !void {
         try argv.append(try std.fmt.allocPrint(allocator, "--target={s}", .{opts.target.zig_triple}));
     }
     try argv.appendSlice(&.{
-        "-S", "-emit-llvm", "-O0", "-g0", "-fno-discard-value-names",
+        "-S",                "-emit-llvm",           "-O0",                              "-g0", "-fno-discard-value-names",
         "-fno-sanitize=all", "-fno-stack-protector", "-ffine-grained-bitfield-accesses",
     });
     if (opts.target.os == 2) {
@@ -283,8 +352,18 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8) !void {
 }
 
 fn usage() void {
-    std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir] [--dump]\n" ++
-        "                      [--dump-ast]\n", .{});
+    std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir]\n" ++
+        "                      [--dump] [--dump-ast] [--dump-imports]\n" ++
+        "                      [--cib-version 1|2] [--no-auto-link] [--link-db DIR]\n", .{});
+}
+
+fn resolveDbFile(allocator: Allocator, path: []const u8, name: []const u8) ![]const u8 {
+    if (std.fs.cwd().openDir(path, .{})) |dir_value| {
+        var dir = dir_value;
+        dir.close();
+        return try std.fs.path.join(allocator, &.{ path, name });
+    } else |_| {}
+    return try allocator.dupe(u8, path);
 }
 
 /// Parse the IR text into the typed AST, verify target consistency and lower it.
@@ -306,6 +385,18 @@ fn lowerModule(allocator: Allocator, ir_text: []const u8, opts: Options) !abi.Co
     return lower_ast.compile(allocator, &module, opts.target.abi, opts.target.ptr_bits / 8);
 }
 
+fn parseCibVersion(value: []const u8) u8 {
+    const version = std.fmt.parseInt(u8, value, 10) catch {
+        std.debug.print("invalid --cib-version: {s}\n", .{value});
+        std.process.exit(2);
+    };
+    if (version != 1 and version != 2) {
+        std.debug.print("invalid --cib-version: {s} (expected 1 or 2)\n", .{value});
+        std.process.exit(2);
+    }
+    return version;
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -319,7 +410,7 @@ pub fn main() !void {
         std.process.exit(2);
     }
     if (std.mem.eql(u8, argv[1], "--version")) {
-        std.debug.print("cinterp-cc 0.1.0\n", .{});
+        std.debug.print("cinterp-cc {s}\n", .{build_options.version});
         return;
     }
     if (!std.mem.eql(u8, argv[1], "compile")) {
@@ -334,6 +425,10 @@ pub fn main() !void {
     var keep_ir = false;
     var dump = false;
     var dump_ast = false;
+    var dump_imports = false;
+    var cib_version: u8 = 2;
+    var auto_link = true;
+    var link_db: ?[]const u8 = null;
 
     var i: usize = 2;
     while (i < argv.len) : (i += 1) {
@@ -378,6 +473,32 @@ pub fn main() !void {
             dump = true;
         } else if (std.mem.eql(u8, a, "--dump-ast")) {
             dump_ast = true;
+        } else if (std.mem.eql(u8, a, "--dump-imports")) {
+            dump_imports = true;
+        } else if (std.mem.eql(u8, a, "--cib-version")) {
+            i += 1;
+            if (i >= argv.len) {
+                usage();
+                std.process.exit(2);
+            }
+            cib_version = parseCibVersion(argv[i]);
+        } else if (std.mem.startsWith(u8, a, "--cib-version=")) {
+            cib_version = parseCibVersion(a["--cib-version=".len..]);
+        } else if (std.mem.eql(u8, a, "--no-auto-link")) {
+            auto_link = false;
+        } else if (std.mem.eql(u8, a, "--link-db")) {
+            i += 1;
+            if (i >= argv.len) {
+                usage();
+                std.process.exit(2);
+            }
+            link_db = argv[i];
+        } else if (std.mem.startsWith(u8, a, "--link-db=")) {
+            link_db = a["--link-db=".len..];
+            if (link_db.?.len == 0) {
+                std.debug.print("--link-db requires a directory or file path\n", .{});
+                std.process.exit(2);
+            }
         } else if (a.len > 0 and a[0] == '-') {
             usage();
             std.process.exit(2);
@@ -398,7 +519,13 @@ pub fn main() !void {
     const ll_path = try std.fmt.allocPrint(allocator, "{s}.{x}.ll", .{ out, std.crypto.random.int(u64) });
     defer if (!keep_ir) std.fs.cwd().deleteFile(ll_path) catch {};
 
-    try runZigCc(allocator, .{ .source = src, .output = out, .target = target, .cc_path = cc_path, .keep_ir = keep_ir }, ll_path);
+    try runZigCc(allocator, .{
+        .source = src,
+        .output = out,
+        .target = target,
+        .cc_path = cc_path,
+        .keep_ir = keep_ir,
+    }, ll_path);
     const ir_text = try std.fs.cwd().readFileAlloc(allocator, ll_path, 64 * 1024 * 1024);
     const result = try lowerModule(allocator, ir_text, .{
         .source = src,
@@ -408,39 +535,110 @@ pub fn main() !void {
         .keep_ir = keep_ir,
         .dump = dump,
         .dump_ast = dump_ast,
+        .dump_imports = dump_imports,
+        .cib_version = cib_version,
+        .auto_link = auto_link,
+        .link_db = link_db,
     });
+
+    var cstd_db = if (link_db) |path|
+        try cstdapi.Database.initFromPath(allocator, path)
+    else
+        try cstdapi.Database.initDefault(allocator);
+    defer cstd_db.deinit();
+
+    var win_db: ?winmd.Database = null;
+    defer if (win_db) |*db| db.deinit();
     if (target.os == 2) {
-        var db = try winmd.Database.init(allocator);
-        defer db.deinit();
-        for (result.plans) |*plan| {
-            if (db.lookup(plan.name, target.arch)) |api| plan.conv = api.conv;
+        if (link_db) |path| {
+            const win_path = try resolveDbFile(allocator, path, "winmd.generated.json.gz");
+            win_db = try winmd.Database.initFromPath(allocator, win_path);
+        } else {
+            win_db = try winmd.Database.init(allocator);
+        }
+    }
+
+    for (result.plans) |*plan| {
+        if (cstd_db.alias(target.os, plan.name)) |aliased| {
+            plan.name = aliased;
+        }
+        if (target.os == 2) {
+            if (win_db) |*db| {
+                if (db.lookup(plan.name, target.arch)) |api| plan.conv = api.conv;
+            }
+        }
+    }
+
+    var import_table = buildImportTable(
+        allocator,
+        result.plans,
+        result.external_data,
+        target,
+        &cstd_db,
+        if (win_db) |*db| db else null,
+        auto_link,
+    ) catch |err| {
+        if (err == error.UnavailableSymbol) std.process.exit(1);
+        return err;
+    };
+    defer import_table.deinit();
+
+    if (auto_link and result.plans.len > 0) {
+        target.link_db = cstd_db.databaseId();
+        if (target.os == 2) {
+            if (win_db) |*db| {
+                target.link_db = try std.fmt.allocPrint(allocator, "{s};{s}", .{ target.link_db, db.databaseId() });
+            }
         }
     }
 
     const module = try moduleSerialize(allocator, result.functions);
     const plans = try serializePlans(allocator, result.plans, target.abi);
     const meta = try targetSerialize(allocator, target);
-    const imports = try serializeImports(allocator, result.plans, result.external_data, target);
-    const package = try packageSerialize(allocator, module, plans, meta, imports);
+    const import_bytes = try import_table.serialize(allocator);
+    const package = try packageSerialize(allocator, module, plans, meta, import_bytes, cib_version);
     const file = try std.fs.cwd().createFile(out, .{});
     defer file.close();
     try file.writeAll(package);
 
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print(
+        "{s}: {d}B module, {d}B plans, {d} functions, {d} external plans, target={s}, cib=v{d}, imports={d}, cc=zig\n",
+        .{ out, module.len, plans.len, result.functions.len, result.plans.len, target.name, cib_version, import_table.count() },
+    );
     if (dump) {
-        std.debug.print("{s}: {d}B module, {d}B plans, {d} functions, {d} plans, target={s}\n", .{
-            out, module.len, plans.len, result.functions.len, result.plans.len, target.name,
-        });
         for (result.functions) |func| {
-            std.debug.print("  {s}: params={d} locals={d} code={d}\n", .{
+            try stdout.print("  {s}: params={d} locals={d} code={d}\n", .{
                 func.name, func.param_count, func.local_count, func.code.items.len,
             });
         }
+        for (result.plans, 0..) |plan, index| {
+            try stdout.print("  plan[{d}] {s}: args={d} ret={d} stack={d}\n", .{
+                index, plan.name, plan.args.len, plan.ret_locs.len, plan.stack_size,
+            });
+        }
+    }
+    if (dump_imports) {
+        try dumpImports(stdout, &import_table);
     }
 }
 
 test "target lookup" {
     try std.testing.expect(findTarget("x86_64-linux") != null);
     try std.testing.expect(findTarget("nope") == null);
+}
+
+test "package v1 uses the 15-byte legacy header" {
+    const module = "CIVM";
+    const plans = "CIPL";
+    const package = try packageSerialize(std.testing.allocator, module, plans, "", "", 1);
+    defer std.testing.allocator.free(package);
+    try std.testing.expectEqualSlices(u8, "CIPKG", package[0..5]);
+    try std.testing.expectEqual(@as(u8, 1), package[5]);
+    try std.testing.expectEqual(@as(u8, 0), package[6]);
+    try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, package[7..11], .little));
+    try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, package[11..15], .little));
+    try std.testing.expectEqual(@as(usize, 23), package.len);
 }
 
 test "lowerModule parses and lowers IR through the AST frontend" {

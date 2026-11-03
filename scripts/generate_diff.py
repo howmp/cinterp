@@ -23,7 +23,6 @@ except ImportError:  # module execution from another cwd
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
-PYTHONPATH = str(ROOT / "compiler/src")
 DEFAULT_YARPGEN = ROOT / "build/suites/yarpgen/build/yarpgen"
 DEFAULT_CSMITH = ROOT / "build/suites/csmith/build/src/csmith"
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)
@@ -31,8 +30,6 @@ DEFAULT_COMPILER = os.environ.get("CINTERP_COMPILER", str(ROOT / "build/cinterp-
 
 
 def compile_cmd(source: Path, output: Path) -> list[str]:
-    if DEFAULT_COMPILER == "python":
-        return [sys.executable, "-m", "cinterp", "compile", str(source), "-o", str(output)]
     return [DEFAULT_COMPILER, "compile", str(source), "-o", str(output)]
 
 
@@ -65,7 +62,7 @@ def case_csmith(seed: int, csmith: Path, work: Path) -> dict:
         result.update(status="skip", reason="native reference timed out")
         return result
     cib = gen / "test.cib"
-    env = dict(os.environ, PYTHONPATH=PYTHONPATH, CPATH=os.pathsep.join([str(runtime), str(build_runtime)]))
+    env = dict(os.environ, CPATH=os.pathsep.join([str(runtime), str(build_runtime)]))
     cc = run(compile_cmd(test_c, cib), ROOT, 120, env)
     if cc is None:
         result.update(status="skip", reason="cinterp compile timeout")
@@ -126,7 +123,7 @@ def case(seed: int, yarpgen: Path, work: Path, max_source_bytes: int = 8_000_000
         result.update(status="skip", reason="native reference timed out")
         return result
     cib = gen / "test.cib"
-    env = dict(os.environ, PYTHONPATH=PYTHONPATH)
+    env = dict(os.environ)
     cc = run(compile_cmd(combined, cib), ROOT, 120, env)
     if cc is None:
         result.update(status="skip", reason="cinterp compile timeout")

@@ -5,20 +5,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
-PYTHONPATH = str(ROOT / "compiler/src")
+COMPILER = ROOT / "build/cinterp-cc"
 BASE_SEEDS = ["hello", "arrays", "structs", "math", "bitfields", "ptrstruct", "longdouble"]
 FFI_SEEDS = ["ffi_printf", "ffi_malloc", "ffi_snprintf", "ffi_qsort", "ffi_structs", "ffi_callback"]
 
 def compile_seed(name: str, out: Path) -> Path:
-    env = dict(os.environ, PYTHONPATH=PYTHONPATH)
     package = out / f"{name}.cib"
     src = str(ROOT / "examples" / f"{name}.c")
-    if os.environ.get("CINTERP_COMPILER") == "python":
-        cmd = [sys.executable, "-m", "cinterp", "compile", src, "-o", str(package)]
-    else:
-        cmd = [str(ROOT / "build/cinterp-cc"), "compile", src, "-o", str(package)]
-    subprocess.run(cmd,
-                   env=env, cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([str(COMPILER), "compile", src, "-o", str(package)],
+                   cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return package
 
 def mutate(data: bytes, rng: random.Random) -> bytes:

@@ -1,10 +1,8 @@
 #!/bin/sh
 set -eu
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-ROOT=$(CDPATH= cd -- "$SELF_DIR/.." && pwd)
 if [ -x "$SELF_DIR/cinterp-cc" ]; then
     exec "$SELF_DIR/cinterp-cc" "$@"
 fi
-PYTHONPATH="$ROOT/compiler/src${PYTHONPATH:+:$PYTHONPATH}"
-export PYTHONPATH
-exec python3 -m cinterp "$@"
+echo "cinterp: cinterp-cc not found next to $0" >&2
+exit 127

@@ -5,17 +5,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
-PYTHONPATH = str(ROOT / "compiler/src")
+COMPILER = ROOT / "build/cinterp-cc"
 CASES = ["hello", "arrays", "math", "bitfields", "ptrstruct", "longdouble", "ffi_printf"]
 ITERS = 20
 
 def main() -> int:
-    env = dict(os.environ, PYTHONPATH=PYTHONPATH)
     with tempfile.TemporaryDirectory(prefix="cinterp-bench-") as td:
         for name in CASES:
             cib = Path(td) / f"{name}.cib"
-            subprocess.run([sys.executable, "-m", "cinterp", "compile", str(ROOT / "examples" / f"{name}.c"), "-o", str(cib)],
-                           env=env, cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([str(COMPILER), "compile", str(ROOT / "examples" / f"{name}.c"), "-o", str(cib)],
+                           cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run([str(RUNTIME), str(cib)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             start = time.perf_counter()
             for _ in range(ITERS):

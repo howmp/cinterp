@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate cinterp's C-standard-library link database from cstdapi.
 
-This is a build-time tool. The generated JSON is checked in; the compiler and
-runtime never need network access or the upstream repository.
+This is an offline maintenance tool. The generated JSON is checked in at
+`compiler-zig/src/data/cstdapi.generated.json`; the compiler and runtime never
+need network access or the upstream repository.
 """
 from __future__ import annotations
 

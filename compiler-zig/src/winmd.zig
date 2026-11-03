@@ -29,11 +29,25 @@ fn archMask(arch: u8) u8 {
 pub const Database = struct {
     arena: std.heap.ArenaAllocator,
     root: std.json.Value,
+    database_id: []const u8,
 
     pub fn init(allocator: Allocator) !Database {
+        return initFromGz(allocator, db_gz);
+    }
+
+    /// Load a winmd database from a file. A missing/unreadable path falls back
+    /// to the embedded database, matching `--link-db` behavior.
+    pub fn initFromPath(allocator: Allocator, path: []const u8) !Database {
+        const data = std.fs.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024) catch
+            return init(allocator);
+        defer allocator.free(data);
+        return initFromGz(allocator, data);
+    }
+
+    fn initFromGz(allocator: Allocator, compressed_bytes: []const u8) !Database {
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
-        var compressed = std.io.fixedBufferStream(db_gz);
+        var compressed = std.io.fixedBufferStream(compressed_bytes);
         var json = std.ArrayList(u8).init(arena.allocator());
         try std.compress.gzip.decompress(compressed.reader(), json.writer());
         const root = try std.json.parseFromSliceLeaky(
@@ -42,11 +56,22 @@ pub const Database = struct {
             json.items,
             .{},
         );
-        return .{ .arena = arena, .root = root };
+        const commit = blk: {
+            if (root != .object) break :blk "unknown";
+            const value = root.object.get("upstream_commit") orelse break :blk "unknown";
+            if (value != .string) break :blk "unknown";
+            break :blk value.string;
+        };
+        const id = try std.fmt.allocPrint(arena.allocator(), "winmd@{s}", .{commit});
+        return .{ .arena = arena, .root = root, .database_id = id };
     }
 
     pub fn deinit(self: *Database) void {
         self.arena.deinit();
+    }
+
+    pub fn databaseId(self: *const Database) []const u8 {
+        return self.database_id;
     }
 
     pub fn lookup(self: *Database, name: []const u8, arch: u8) ?Result {

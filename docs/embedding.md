@@ -52,8 +52,7 @@ The crate exposes the raw `ci_vm_*` symbols plus a small safe wrapper; see
 ## Compile a package
 
 ```bash
-PYTHONPATH=compiler/src python3 -m cinterp compile app.c -o app.cib \
-  --target x86_64-linux
+./build/cinterp-cc compile app.c -o app.cib --target x86_64-linux
 ```
 
 Use the target that matches the runtime you will load the package into.
