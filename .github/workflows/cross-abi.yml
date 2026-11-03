@@ -14,6 +14,8 @@ jobs:
         with:
           version: 0.13.0
       - run: sudo apt-get update && sudo apt-get install -y clang python3 make qemu-user gcc-aarch64-linux-gnu
+      - name: Build compiler
+        run: make compiler
       - name: ARM64 AAPCS64 cross suite
         run: ./scripts/test_cross.sh --targets arm64
       - name: ARM64 load-only fuzz
@@ -30,6 +32,13 @@ jobs:
         with:
           python-version: '3.11'
       - run: choco install llvm --no-progress -y
+      - name: Build compiler
+        shell: bash
+        run: |
+          cd compiler
+          zig build
+          mkdir -p ../build
+          cp zig-out/bin/cinterp-cc.exe ../build/cinterp-cc.exe
       - name: Win64 + Win32 cross suite
         shell: bash
         run: |

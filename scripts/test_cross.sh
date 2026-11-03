@@ -9,7 +9,6 @@ HOST="${HOST:-}"
 REMOTE="${REMOTE:-}"
 QEMU="${QEMU:-qemu-aarch64}"
 SYSROOT="${SYSROOT:-/usr/aarch64-linux-gnu}"
-CINTERP_CC="${CINTERP_COMPILER:-$ROOT/build/cinterp-cc}"
 OUT="$ROOT/build/cross"
 mkdir -p "$OUT"
 
@@ -30,6 +29,37 @@ want() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Pick the compiler the same way `make compiler` produces it. Git Bash/MSYS
+# builds name the binary cinterp-cc.exe, so prefer that when it is present.
+resolve_cinterp_cc() {
+    if [ -n "${CINTERP_COMPILER:-}" ]; then
+        echo "$CINTERP_COMPILER"
+        return 0
+    fi
+    if [ -x "$ROOT/build/cinterp-cc.exe" ]; then
+        echo "$ROOT/build/cinterp-cc.exe"
+        return 0
+    fi
+    if [ -x "$ROOT/build/cinterp-cc" ]; then
+        echo "$ROOT/build/cinterp-cc"
+        return 0
+    fi
+    return 1
+}
+
+if ! CINTERP_CC="$(resolve_cinterp_cc)"; then
+    echo "error: cinterp compiler not found; expected build/cinterp-cc.exe or build/cinterp-cc." >&2
+    echo "       run 'make compiler' (or 'cd compiler && zig build' and copy the binary to build/)," >&2
+    echo "       or set CINTERP_COMPILER=/path/to/cinterp-cc" >&2
+    exit 2
+fi
+if [ ! -x "$CINTERP_CC" ]; then
+    echo "error: cinterp compiler '$CINTERP_CC' is not executable" >&2
+    echo "       run 'make compiler' or set CINTERP_COMPILER=/path/to/cinterp-cc" >&2
+    exit 2
+fi
+echo "compiler: $CINTERP_CC"
+
 is_windows_shell() {
     case "$(uname -s)" in
         MINGW*|MSYS*|CYGWIN*) return 0 ;;
@@ -49,6 +79,30 @@ win_runner() {
 compile() {
     local target="$1" name="$2"
     "$CINTERP_CC" compile "examples/$name.c" --target "$target" -o "$OUT/$name-$target.cib" >/dev/null
+}
+
+# Win32 __stdcall/__fastcall are only correct when the plan carries the calling
+# convention, so assert the plan dump instead of only checking the result.
+assert_conv() {
+    local name="$1" symbol="$2" want="$3" out line
+    if ! out="$("$CINTERP_CC" compile "examples/$name.c" --target i686-windows \
+        -o "$OUT/$name-dump.cib" --dump 2>&1)"; then
+        echo "FAIL $name: compile --dump failed" >&2
+        printf '%s\n' "$out" >&2
+        exit 1
+    fi
+    line="$(printf '%s\n' "$out" | grep -F "plan" | grep -F "$symbol" | head -n1)"
+    if [ -z "$line" ]; then
+        echo "FAIL $name: no plan for '$symbol' in --dump output" >&2
+        printf '%s\n' "$out" >&2
+        exit 1
+    fi
+    if ! printf '%s\n' "$line" | grep -Fq "conv=$want"; then
+        echo "FAIL $name: expected conv=$want for '$symbol', got: $line" >&2
+        echo "      (cinterp-cc --dump must print the plan conv field; see plan item B.5/C.1)" >&2
+        exit 1
+    fi
+    echo "OK $name $symbol conv=$want"
 }
 
 win_run() {
@@ -155,6 +209,20 @@ if want win32; then
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_stdcall_helper32.dll" examples/ffi_stdcall_helper.c
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_fastcall_helper32.dll" examples/ffi_fastcall_helper.c
     "$CINTERP_CC" compile examples/ffi_fastcall.c --target i686-windows -o "$OUT/ffi_fastcall-i686-windows.cib" >/dev/null
+    # Plan conv must be 1 (stdcall) / 2 (fastcall) for the Win32 FFI plans.
+    assert_conv ffi_stdcall c_std_add3 1
+    assert_conv ffi_fastcall fast_add 2
+    # __stdcall callback (workstream E). The helper calls an int(__stdcall *)(int,int).
+    for required in examples/ffi_callback_stdcall.c examples/ffi_callback_stdcall_helper.c; do
+        if [ ! -f "$required" ]; then
+            echo "FAIL Win32: missing $required; the stdcall callback case cannot be verified" >&2
+            exit 1
+        fi
+    done
+    "$CINTERP_CC" compile examples/ffi_callback_stdcall.c --target i686-windows \
+        -o "$OUT/ffi_callback_stdcall-i686-windows.cib" >/dev/null
+    zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
+        -o "$OUT/libffi_callback_stdcall_helper32.dll" examples/ffi_callback_stdcall_helper.c
     if [ -n "$HOST" ]; then
         scp "$OUT/cinterp-run32.exe" "$OUT"/*-i686-windows.cib "$OUT"/lib*32.dll "$HOST:$REMOTE" >/dev/null
     fi
@@ -179,6 +247,7 @@ if want win32; then
     win_run cinterp-run32.exe packed-i686-windows.cib libpacked_helper32.dll 7
     win_run cinterp-run32.exe ffi_stdcall-i686-windows.cib libffi_stdcall_helper32.dll 60
     win_run cinterp-run32.exe ffi_fastcall-i686-windows.cib libffi_fastcall_helper32.dll 123
+    win_run cinterp-run32.exe ffi_callback_stdcall-i686-windows.cib libffi_callback_stdcall_helper32.dll 42
     win_run cinterp-run32.exe winapi-i686-windows.cib "" 7
 fi
 

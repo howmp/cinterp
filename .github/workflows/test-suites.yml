@@ -42,10 +42,13 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y clang python3 make cmake m4
       - run: python3 scripts/fetch_suites.py --all --support
       - run: make test-suites-nightly
+      - name: verify plan evidence
+        run: python3 scripts/check_plan_evidence.py --require-nightly
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-suites-nightly
           path: |
-            build/test-suites-full.json
-            build/generate-diff-report.json
+            build/test-suites-nightly.json
+            build/generate-diff-nightly.json
+          if-no-files-found: error

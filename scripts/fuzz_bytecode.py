@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 COMPILER = ROOT / "build/cinterp-cc"
+DEFAULT_ARTIFACTS = ROOT / "build/fuzz-artifacts"
 SEEDS = ["hello", "arrays", "structs", "ffi_printf", "ffi_structs"]
 
 OPCODES = [
@@ -97,15 +98,21 @@ def functions(data: bytes, start: int, length: int) -> list[dict]:
     return out
 
 
-def mutate(data: bytes, rng: random.Random) -> bytes:
+def mutate(data: bytes, rng: random.Random) -> bytes | None:
+    """Return a mutated package, or None when the input could not be mutated.
+
+    ``None`` covers both unparsable packages (no CIVM module span/functions) and
+    mutations that left the bytes unchanged; the caller counts those as skipped
+    so an all-skipped run cannot look like a clean fuzz pass.
+    """
     buf = bytearray(data)
     span = module_span(buf)
     if span is None:
-        return data
+        return None
     start, length = span
     funcs = functions(buf, start, length)
     if not funcs:
-        return data
+        return None
     kind = rng.randrange(7)
     fn = rng.choice(funcs)
     if kind == 0 and fn["code_len"] > 0:
@@ -127,35 +134,56 @@ def mutate(data: bytes, rng: random.Random) -> bytes:
     else:
         pos = fn["code_off"] + rng.randrange(fn["code_len"] or 1)
         buf[pos] ^= 1 << rng.randrange(8)
-    return bytes(buf)
+    mutated = bytes(buf)
+    return None if mutated == data else mutated
+
+
+def save_artifact(artifacts: Path, name: str, candidate: Path) -> Path:
+    artifacts.mkdir(parents=True, exist_ok=True)
+    target = artifacts / name
+    target.write_bytes(candidate.read_bytes())
+    return target
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=500)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=2.0)
+    parser.add_argument(
+        "--tolerate-timeouts",
+        action="store_true",
+        help="count mutated-bytecode infinite loops as expected timeouts instead of failures",
+    )
     parser.add_argument("--runtime", type=Path, default=RUNTIME)
+    parser.add_argument("--artifacts", type=Path, default=DEFAULT_ARTIFACTS,
+                        help="directory for crash candidates (default: build/fuzz-artifacts)")
     parser.add_argument("--exec", action="store_true", help="execute mutated packages")
     args = parser.parse_args()
     if not args.runtime.exists():
         print(f"missing runtime: {args.runtime}", file=sys.stderr)
         return 2
     runtime = args.runtime.resolve()
+    artifacts = args.artifacts.resolve()
     rng = random.Random(args.seed)
-    crashes = timeouts = runs = 0
+    crashes = timeouts = runs = executed = skipped = 0
     with tempfile.TemporaryDirectory(prefix="cinterp-fuzz-bytecode-") as td:
         tmp = Path(td)
         seeds = [compile_seed(name, tmp) for name in SEEDS]
         for _ in range(args.iterations):
             data = rng.choice(seeds).read_bytes()
-            candidate = tmp / "candidate.cib"
-            candidate.write_bytes(mutate(data, rng))
+            mutated = mutate(data, rng)
             runs += 1
+            if mutated is None:
+                skipped += 1
+                continue
+            candidate = tmp / "candidate.cib"
+            candidate.write_bytes(mutated)
             command = [str(runtime)]
             if not args.exec:
                 command.append("--load-only")
             command.append(str(candidate))
+            executed += 1
             try:
                 proc = subprocess.run(
                     command,
@@ -166,10 +194,13 @@ def main() -> int:
                 )
             except subprocess.TimeoutExpired:
                 timeouts += 1
+                saved = save_artifact(
+                    artifacts, f"fuzz-bytecode-timeout-r{runs}-seed{args.seed}.cib", candidate)
+                print(f"TIMEOUT mutation #{runs} (saved {saved})", file=sys.stderr)
                 continue
             if proc.returncode < 0 or proc.returncode >= 128:
-                saved = Path("/tmp/cinterp-fuzz-bytecode-crash.cib")
-                saved.write_bytes(candidate.read_bytes())
+                saved = save_artifact(
+                    artifacts, f"fuzz-bytecode-crash-r{runs}-seed{args.seed}.cib", candidate)
                 print(
                     f"CRASH signal/abort rc={proc.returncode} on mutation #{runs} "
                     f"(saved {saved})",
@@ -177,8 +208,23 @@ def main() -> int:
                 )
                 crashes += 1
     mode = "exec" if args.exec else "load-only"
-    print(f"fuzz-bytecode ({mode}): {runs} mutations, {crashes} crashes, {timeouts} timeouts")
-    return 1 if crashes else 0
+    print(
+        f"fuzz-bytecode ({mode}): {runs} mutations, {skipped} skipped, "
+        f"{executed} executed, {crashes} crashes, {timeouts} timeouts"
+    )
+    if skipped and skipped == runs:
+        print(
+            "fuzz-bytecode: every mutation was skipped (unparsable or no-op); "
+            "nothing was fuzzed",
+            file=sys.stderr,
+        )
+        return 2
+    if executed == 0:
+        print("fuzz-bytecode: no mutation was executed; nothing was fuzzed", file=sys.stderr)
+        return 2
+    if crashes or (timeouts and not args.tolerate_timeouts):
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

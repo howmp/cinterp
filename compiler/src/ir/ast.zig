@@ -92,6 +92,10 @@ pub const FunctionType = struct {
     params: []const *const Type,
     varargs: bool = false,
     span: Span = .{},
+    // LLVM textual IR keeps the calling convention out of the type: a
+    // non-default cconv is printed on the `call` instruction (see
+    // `Call.cc`), e.g. `call x86_stdcallcc i32 %fp(i32, i32)`. There is
+    // therefore no `cc` field here; indirect-call lowering reads `Call.cc`.
 };
 
 pub const Type = union(enum) {

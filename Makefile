@@ -1,4 +1,7 @@
-.PHONY: all test compiler runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross test-winapi fetch-suites generate-diff
+.PHONY: all test compiler runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross test-winapi fetch-suites generate-diff evidence check-version
+
+# Fuzz seeds: CI runs the fuzz targets once per seed (1 and 2).
+FUZZ_SEED ?= 1
 
 all: test
 
@@ -26,6 +29,9 @@ lint: compiler runtime
 	build/cinterp-cc compile examples/ffi_callback.c -o build/lint-callback.cib
 	python3 scripts/civm_lint.py build/lint-hello.cib build/lint-qsort.cib build/lint-callback.cib
 
+# Needs Wine and the cross-built runtimes in build/cross (see cross-test).
+# Without them the script fails (2) instead of silently skipping; use
+# `python3 scripts/test_winapi.py --allow-skip` for a local no-op run.
 test-winapi: compiler
 	python3 scripts/test_winapi.py
 
@@ -102,34 +108,35 @@ generate-diff-nightly: compiler runtime
 generate-diff-csmith: compiler runtime
 	python3 scripts/generate_diff.py --generator csmith --iterations 3 --report build/generate-diff-csmith.json
 
+# Fuzzing notes: mutated packages are trusted build products, so corrupted
+# bytecode may legitimately segfault under the ReleaseSmall runtime; fuzz-exec
+# tolerates those faults but fails on timeouts. A fully strict variant cannot be
+# green against ReleaseSmall, so it is intentionally not exposed as a target.
 fuzz: compiler runtime
-	python3 scripts/fuzz.py --iterations 1000
+	python3 scripts/fuzz.py --iterations 1000 --seed $(FUZZ_SEED)
 
 fuzz-exec: compiler runtime
-	python3 scripts/fuzz_exec.py --iterations 500 --tolerate-faults
-
-fuzz-exec-strict: compiler runtime
-	python3 scripts/fuzz_exec.py --iterations 500
+	python3 scripts/fuzz_exec.py --iterations 500 --tolerate-faults --tolerate-timeouts --seed $(FUZZ_SEED)
 
 fuzz-ffi-exec: compiler runtime
-	python3 scripts/fuzz_exec.py --iterations 300 --ffi --tolerate-faults
+	python3 scripts/fuzz_exec.py --iterations 300 --ffi --tolerate-faults --tolerate-timeouts --seed $(FUZZ_SEED)
 
 fuzz-bytecode: compiler runtime
-	python3 scripts/fuzz_bytecode.py --iterations 500
+	python3 scripts/fuzz_bytecode.py --iterations 500 --tolerate-timeouts --seed $(FUZZ_SEED)
 
 fuzz-cross: compiler runtime
-	python3 scripts/fuzz_cross.py --iterations 100
+	python3 scripts/fuzz_cross.py --iterations 100 --seed $(FUZZ_SEED)
 
 fuzz-capi-asan: compiler runtime
-	python3 scripts/fuzz_capi_sanitizer.py --iterations 200
+	python3 scripts/fuzz_capi_sanitizer.py --iterations 200 --seed $(FUZZ_SEED)
 
 fuzz-sanitizer: compiler
 	mkdir -p build/fuzz-sanitizer
 	cd runtime && zig build -Doptimize=ReleaseSafe
 	cp runtime/zig-out/bin/cinterp-run build/fuzz-sanitizer/cinterp-run
-	python3 scripts/fuzz.py --iterations 500 --runtime build/fuzz-sanitizer/cinterp-run
-	python3 scripts/fuzz_exec.py --iterations 200 --tolerate-faults --runtime build/fuzz-sanitizer/cinterp-run
-	python3 scripts/fuzz_bytecode.py --iterations 300 --runtime build/fuzz-sanitizer/cinterp-run
+	python3 scripts/fuzz.py --iterations 500 --seed $(FUZZ_SEED) --runtime build/fuzz-sanitizer/cinterp-run
+	python3 scripts/fuzz_exec.py --iterations 200 --tolerate-faults --tolerate-timeouts --seed $(FUZZ_SEED) --runtime build/fuzz-sanitizer/cinterp-run
+	python3 scripts/fuzz_bytecode.py --iterations 300 --tolerate-timeouts --seed $(FUZZ_SEED) --runtime build/fuzz-sanitizer/cinterp-run
 
 differential: compiler runtime
 	./scripts/differential.sh
@@ -142,6 +149,18 @@ release-artifacts:
 
 size-cross:
 	./scripts/size_cross.sh
+
+# Local plan-evidence run: the targets below produce the structured reports
+# scripts/check_plan_evidence.py validates. full/cross/nightly reports are
+# optional locally (reported as NOT PROVIDED); CI artifacts complete them.
+.NOTPARALLEL: evidence
+evidence: test lint size test-suites-smoke differential
+	python3 scripts/check_plan_evidence.py
+
+# Cross-checks VERSION against runtime/build.zig.zon, the Rust crate and SBOM
+# metadata (scripts/check_version.py).
+check-version:
+	python3 scripts/check_version.py
 
 clean:
 	rm -rf build

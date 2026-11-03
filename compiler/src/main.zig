@@ -38,6 +38,113 @@ fn findTarget(name: []const u8) ?Target {
     return null;
 }
 
+/// Upper bounds the runtime loaders enforce. The compiler cannot import
+/// `runtime/`, so these mirror the constants there:
+///   * `runtime/src/vm.zig`             MAX_FUNCS=512, MAX_NAME=128, MAX_MODULE=2 MiB
+///   * `runtime/src/ffi/plan_loader.zig` MAX_PLANS=1024, MAX_ARGS=64, MAX_LOCS=8, MAX_NAME=128
+///   * `runtime/src/ffi/link_loader.zig` MAX_IMPORTS=512, MAX_PROVIDERS=8,
+///                                        MAX_IMPORT_NAME/MAX_PROVIDER_NAME/MAX_SYMBOL=64,
+///                                        MAX_VERSION=32
+/// A package that exceeds one of them is rejected (or silently truncated) by
+/// the loader, so `validateLimits` fails it at compile time with a
+/// `compiler limit: ...` message instead.
+pub const Limits = struct {
+    pub const functions: usize = 512;
+    pub const plans: usize = 1024;
+    pub const args_per_plan: usize = 64;
+    pub const locs_per_plan: usize = 8;
+    pub const name: usize = 128;
+    pub const imports: usize = 512;
+    pub const providers_per_import: usize = 8;
+    pub const import_name: usize = 64;
+    pub const provider_name: usize = 64;
+    pub const provider_symbol: usize = 64;
+    pub const provider_version: usize = 32;
+    pub const module_bytes: usize = 2 * 1024 * 1024;
+};
+
+pub const LimitError = error{
+    TooManyFunctions,
+    TooManyPlans,
+    TooManyArgs,
+    TooManyLocs,
+    FunctionNameTooLong,
+    PlanNameTooLong,
+    FunctionCodeTooLarge,
+    ModuleTooLarge,
+    TooManyImports,
+    ImportNameTooLong,
+    TooManyProviders,
+    ProviderNameTooLong,
+    ProviderSymbolTooLong,
+    ProviderVersionTooLong,
+};
+
+fn limitMessage(err: LimitError) []const u8 {
+    return switch (err) {
+        error.TooManyFunctions => "more than 512 functions in the CIVM module",
+        error.TooManyPlans => "more than 1024 call plans in the CIPL table",
+        error.TooManyArgs => "more than 64 arguments in one call plan",
+        error.TooManyLocs => "more than 8 locations for one argument or return",
+        error.FunctionNameTooLong => "function name longer than 128 bytes",
+        error.PlanNameTooLong => "call plan name longer than 128 bytes",
+        error.FunctionCodeTooLarge => "function bytecode larger than 4 GiB",
+        error.ModuleTooLarge => "CIVM module larger than 2 MiB",
+        error.TooManyImports => "more than 512 entries in the CIPI import table",
+        error.ImportNameTooLong => "import name longer than 64 bytes",
+        error.TooManyProviders => "more than 8 providers for one import",
+        error.ProviderNameTooLong => "provider library name longer than 64 bytes",
+        error.ProviderSymbolTooLong => "provider symbol longer than 64 bytes",
+        error.ProviderVersionTooLong => "provider version string longer than 32 bytes",
+    };
+}
+
+/// Exact CIVM length `moduleSerialize` will produce, without building it.
+/// Header: magic(4) + version(1) + flags(1) + count(2) + reserved(2) = 10.
+fn moduleByteLen(functions: []const abi.Function) usize {
+    var total: usize = 10;
+    for (functions) |func| {
+        total += 1 + func.name.len + 2 + 2 + 4 + func.code.items.len;
+    }
+    return total;
+}
+
+/// Check every record against the runtime caps before anything is serialized.
+/// `module_bytes` is `moduleByteLen(result.functions)`; keeping it a parameter
+/// lets the oversized-module path be unit-tested without allocating 2 MiB.
+pub fn validateLimits(result: abi.CompileResult, module_bytes: usize, table: *const imports.Table) LimitError!void {
+    if (result.functions.len > Limits.functions) return error.TooManyFunctions;
+    if (result.plans.len > Limits.plans) return error.TooManyPlans;
+
+    for (result.functions) |func| {
+        if (func.name.len > Limits.name) return error.FunctionNameTooLong;
+        // moduleSerialize stores the CIVM code length as u32.
+        if (func.code.items.len > std.math.maxInt(u32)) return error.FunctionCodeTooLarge;
+    }
+
+    for (result.plans) |plan| {
+        if (plan.name.len > Limits.name) return error.PlanNameTooLong;
+        if (plan.args.len > Limits.args_per_plan) return error.TooManyArgs;
+        if (plan.ret_locs.len > Limits.locs_per_plan) return error.TooManyLocs;
+        for (plan.args) |arg| {
+            if (arg.locs.len > Limits.locs_per_plan) return error.TooManyLocs;
+        }
+    }
+
+    if (module_bytes > Limits.module_bytes) return error.ModuleTooLarge;
+
+    if (table.entries.items.len > Limits.imports) return error.TooManyImports;
+    for (table.entries.items) |entry| {
+        if (entry.name.len > Limits.import_name) return error.ImportNameTooLong;
+        if (entry.providers.len > Limits.providers_per_import) return error.TooManyProviders;
+        for (entry.providers) |provider| {
+            if (provider.lib.len > Limits.provider_name) return error.ProviderNameTooLong;
+            if (provider.symbol.len > Limits.provider_symbol) return error.ProviderSymbolTooLong;
+            if (provider.version.len > Limits.provider_version) return error.ProviderVersionTooLong;
+        }
+    }
+}
+
 const Options = struct {
     source: []const u8,
     output: []const u8,
@@ -81,6 +188,9 @@ fn archMask(arch: u8) u8 {
 fn targetSerialize(allocator: Allocator, target: Target) ![]u8 {
     const producer = try std.fmt.allocPrint(allocator, "cinterp {s}", .{build_options.version});
     const link_db = target.link_db;
+    // CIPM stores the lengths as u16 and the runtime copies into fixed
+    // 96/128/64-byte fields, so reject before narrowing.
+    if (target.triple.len > 96 or link_db.len > 128 or producer.len > 64) return error.NameTooLong;
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPM");
     try out.append(1);
@@ -103,6 +213,10 @@ fn targetSerialize(allocator: Allocator, target: Target) ![]u8 {
 }
 
 fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]u8 {
+    // CIPL counts are u16 and each length is u8; `validateLimits` already
+    // enforces the runtime caps, these checks keep the serializer safe on its
+    // own (e.g. when called directly from a test).
+    if (plans.len > std.math.maxInt(u16)) return error.TooManyPlans;
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPL");
     try out.append(3);
@@ -110,6 +224,8 @@ fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]
     try writeU16(&out, @intCast(plans.len));
     try writeU16(&out, 0);
     for (plans) |plan| {
+        if (plan.name.len > std.math.maxInt(u8)) return error.NameTooLong;
+        if (plan.args.len > std.math.maxInt(u16) or plan.ret_locs.len > std.math.maxInt(u16)) return error.TooManyLocs;
         try out.append(@intCast(plan.name.len));
         try out.appendSlice(plan.name);
         try writeU16(&out, @intCast(plan.args.len));
@@ -120,6 +236,7 @@ fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]
         try out.append(plan.conv);
         try writeU16(&out, plan.ret_size);
         for (plan.args) |arg| {
+            if (arg.locs.len > std.math.maxInt(u8)) return error.TooManyLocs;
             try out.append(@intCast(arg.locs.len));
             try writeU16(&out, arg.size);
             try writeU16(&out, arg.alignment);
@@ -266,6 +383,7 @@ fn dumpImports(writer: anytype, table: *const imports.Table) !void {
 }
 
 fn moduleSerialize(allocator: Allocator, functions: []const abi.Function) ![]u8 {
+    if (functions.len > std.math.maxInt(u16)) return error.TooManyFunctions;
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIVM");
     try out.append(1);
@@ -273,7 +391,8 @@ fn moduleSerialize(allocator: Allocator, functions: []const abi.Function) ![]u8 
     try writeU16(&out, @intCast(functions.len));
     try writeU16(&out, 0);
     for (functions) |func| {
-        if (func.name.len > 255) return error.NameTooLong;
+        if (func.name.len > std.math.maxInt(u8)) return error.NameTooLong;
+        if (func.code.items.len > std.math.maxInt(u32)) return error.FunctionCodeTooLarge;
         try out.append(@intCast(func.name.len));
         try out.appendSlice(func.name);
         try writeU16(&out, func.param_count);
@@ -292,6 +411,10 @@ fn packageSerialize(
     import_bytes: []const u8,
     cib_version: u8,
 ) ![]u8 {
+    // CIPKG lengths are u32; every section is bounded by validateLimits, but
+    // guard the narrowing casts locally as well.
+    if (module.len > std.math.maxInt(u32) or plans.len > std.math.maxInt(u32) or
+        meta.len > std.math.maxInt(u32) or import_bytes.len > std.math.maxInt(u32)) return error.PackageTooLarge;
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPKG");
     if (cib_version == 1) {
@@ -546,6 +669,15 @@ pub fn main() !void {
         target.link_db = if (target.os == 2) win_defs.source_id else libc_defs.source_id;
     }
 
+    // Fail before writing a package the runtime loaders would reject or
+    // truncate. `moduleByteLen` is the exact CIVM size; `serializePlans` and
+    // friends re-check their own narrowing casts.
+    const module_bytes = moduleByteLen(result.functions);
+    validateLimits(result, module_bytes, &import_table) catch |err| {
+        std.debug.print("compiler limit: {s}\n", .{limitMessage(err)});
+        return err;
+    };
+
     const module = try moduleSerialize(allocator, result.functions);
     const plans = try serializePlans(allocator, result.plans, target.abi);
     const meta = try targetSerialize(allocator, target);
@@ -567,8 +699,8 @@ pub fn main() !void {
             });
         }
         for (result.plans, 0..) |plan, index| {
-            try stdout.print("  plan[{d}] {s}: args={d} ret={d} stack={d}\n", .{
-                index, plan.name, plan.args.len, plan.ret_locs.len, plan.stack_size,
+            try stdout.print("  plan[{d}] {s}: args={d} ret={d} stack={d} conv={d}\n", .{
+                index, plan.name, plan.args.len, plan.ret_locs.len, plan.stack_size, plan.conv,
             });
         }
     }
@@ -625,4 +757,154 @@ test "lowerModule parses and lowers IR through the AST frontend" {
     try std.testing.expectEqual(@as(u8, op.OP_LOAD_CONST_I64), code[0]);
     try std.testing.expectEqual(@as(i64, 42), std.mem.readInt(i64, code[1..9], .little));
     try std.testing.expectEqual(@as(u8, op.OP_RET), code[code.len - 1]);
+}
+
+// ---------------------------------------------------------------- limits tests
+
+fn sampleFunction(name: []const u8) abi.Function {
+    return .{
+        .name = name,
+        .ret = "i32",
+        .param_count = 0,
+        .param_names = &.{},
+        .param_types = &.{},
+        .param_attrs = &.{},
+        .local_count = 0,
+        .code = std.ArrayList(u8).init(std.testing.allocator),
+    };
+}
+
+fn emptyResult() abi.CompileResult {
+    return .{ .functions = &.{}, .plans = &.{}, .external_data = &.{} };
+}
+
+test "moduleByteLen matches moduleSerialize and a small package validates" {
+    var table = imports.Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    var funcs = [_]abi.Function{sampleFunction("main")};
+    defer funcs[0].code.deinit();
+    const result = abi.CompileResult{ .functions = &funcs, .plans = &.{}, .external_data = &.{} };
+
+    // 10-byte CIVM header + u8 len + "main" + 2+2 counts + u32 code len.
+    const expected = moduleByteLen(result.functions);
+    try std.testing.expectEqual(@as(usize, 23), expected);
+    const bytes = try moduleSerialize(std.testing.allocator, result.functions);
+    defer std.testing.allocator.free(bytes);
+    try std.testing.expectEqual(expected, bytes.len);
+
+    try validateLimits(result, expected, &table);
+}
+
+test "validateLimits rejects over-long function and plan names" {
+    var table = imports.Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    var funcs = [_]abi.Function{sampleFunction("f" ** (Limits.name + 1))};
+    defer funcs[0].code.deinit();
+    var result = abi.CompileResult{ .functions = &funcs, .plans = &.{}, .external_data = &.{} };
+    try std.testing.expectError(error.FunctionNameTooLong, validateLimits(result, 10, &table));
+
+    // 128 bytes is still accepted (runtime MAX_NAME == 128).
+    funcs[0].name = "f" ** Limits.name;
+    result.functions = &funcs;
+    try validateLimits(result, 10, &table);
+
+    const long_plan = "p" ** (Limits.name + 1);
+    var plans = [_]abi.Plan{.{ .name = long_plan, .args = &.{}, .ret_locs = &.{} }};
+    result = .{ .functions = &.{}, .plans = &plans, .external_data = &.{} };
+    try std.testing.expectError(error.PlanNameTooLong, validateLimits(result, 10, &table));
+}
+
+test "validateLimits rejects more than 64 plan arguments" {
+    var table = imports.Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    var locs = [_]abi.Loc{.{ .kind = 0, .index = 0, .size = 8, .offset = 0 }};
+    var args: [Limits.args_per_plan + 1]abi.ArgPlan = undefined;
+    for (&args) |*arg| arg.* = .{ .locs = &locs, .size = 8 };
+
+    var plans = [_]abi.Plan{.{ .name = "printf", .args = &args, .ret_locs = &.{} }};
+    const result = abi.CompileResult{ .functions = &.{}, .plans = &plans, .external_data = &.{} };
+    try std.testing.expectError(error.TooManyArgs, validateLimits(result, 10, &table));
+
+    // 64 arguments are still accepted.
+    plans[0].args = args[0..Limits.args_per_plan];
+    try validateLimits(result, 10, &table);
+}
+
+test "validateLimits rejects more than 8 argument/return locations" {
+    var table = imports.Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    var nine_locs = [_]abi.Loc{.{ .kind = 0, .index = 0, .size = 1, .offset = 0 }} ** (Limits.locs_per_plan + 1);
+    var one_arg = [_]abi.ArgPlan{.{ .locs = &nine_locs, .size = 9 }};
+    var plans = [_]abi.Plan{.{ .name = "wide", .args = &one_arg, .ret_locs = &.{} }};
+    var result = abi.CompileResult{ .functions = &.{}, .plans = &plans, .external_data = &.{} };
+    try std.testing.expectError(error.TooManyLocs, validateLimits(result, 10, &table));
+
+    var ret_plan = [_]abi.Plan{.{ .name = "wide_ret", .args = &.{}, .ret_locs = &nine_locs }};
+    result = .{ .functions = &.{}, .plans = &ret_plan, .external_data = &.{} };
+    try std.testing.expectError(error.TooManyLocs, validateLimits(result, 10, &table));
+}
+
+test "validateLimits rejects function/plan counts and oversized modules" {
+    var table = imports.Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    var many_funcs: [Limits.functions + 1]abi.Function = undefined;
+    for (&many_funcs) |*func| func.* = sampleFunction("f");
+    defer for (&many_funcs) |*func| func.code.deinit();
+    var result = abi.CompileResult{ .functions = &many_funcs, .plans = &.{}, .external_data = &.{} };
+    try std.testing.expectError(error.TooManyFunctions, validateLimits(result, 10, &table));
+
+    var many_plans: [Limits.plans + 1]abi.Plan = undefined;
+    for (&many_plans) |*plan| plan.* = .{ .name = "f", .args = &.{}, .ret_locs = &.{} };
+    result = .{ .functions = &.{}, .plans = &many_plans, .external_data = &.{} };
+    try std.testing.expectError(error.TooManyPlans, validateLimits(result, 10, &table));
+
+    try std.testing.expectError(error.ModuleTooLarge, validateLimits(emptyResult(), Limits.module_bytes + 1, &table));
+    try validateLimits(emptyResult(), Limits.module_bytes, &table);
+}
+
+test "validateLimits enforces CIPI import caps" {
+    const no_providers: [0]imports.Provider = .{};
+    const empty = emptyResult();
+
+    var table = imports.Table.init(std.testing.allocator);
+    defer table.deinit();
+    var i: usize = 0;
+    while (i <= Limits.imports) : (i += 1) {
+        try table.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&no_providers) });
+    }
+    try std.testing.expectError(error.TooManyImports, validateLimits(empty, 10, &table));
+
+    var long_name = imports.Table.init(std.testing.allocator);
+    defer long_name.deinit();
+    try long_name.add(.{ .plan_index = 0, .name = "i" ** (Limits.import_name + 1), .providers = @constCast(&no_providers) });
+    try std.testing.expectError(error.ImportNameTooLong, validateLimits(empty, 10, &long_name));
+
+    var many_providers = imports.Table.init(std.testing.allocator);
+    defer many_providers.deinit();
+    const nine = [_]imports.Provider{.{ .lib = "libc.so.6", .symbol = "puts" }} ** (Limits.providers_per_import + 1);
+    try many_providers.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&nine) });
+    try std.testing.expectError(error.TooManyProviders, validateLimits(empty, 10, &many_providers));
+
+    var long_lib = imports.Table.init(std.testing.allocator);
+    defer long_lib.deinit();
+    const bad_lib = [_]imports.Provider{.{ .lib = "l" ** (Limits.provider_name + 1), .symbol = "puts" }};
+    try long_lib.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&bad_lib) });
+    try std.testing.expectError(error.ProviderNameTooLong, validateLimits(empty, 10, &long_lib));
+
+    var long_symbol = imports.Table.init(std.testing.allocator);
+    defer long_symbol.deinit();
+    const bad_symbol = [_]imports.Provider{.{ .lib = "libc.so.6", .symbol = "s" ** (Limits.provider_symbol + 1) }};
+    try long_symbol.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&bad_symbol) });
+    try std.testing.expectError(error.ProviderSymbolTooLong, validateLimits(empty, 10, &long_symbol));
+
+    var long_version = imports.Table.init(std.testing.allocator);
+    defer long_version.deinit();
+    const bad_version = [_]imports.Provider{.{ .lib = "libc.so.6", .symbol = "puts", .version = "v" ** (Limits.provider_version + 1) }};
+    try long_version.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&bad_version) });
+    try std.testing.expectError(error.ProviderVersionTooLong, validateLimits(empty, 10, &long_version));
 }

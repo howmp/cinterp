@@ -6,6 +6,7 @@
 .equ CB_EDX, 12
 .equ CB_ST0, 16
 .equ CB_X87, 24
+.equ CB_CLEANUP, 28
 .equ CB_ST0_F80, 32
 
 .text
@@ -48,13 +49,23 @@ ci_cb_win32_entry:
 .Lcb_x87_f80:
     fld tbyte ptr [ebx + CB_ST0_F80]
 .Lcb_no_x87:
+    /* `ci_callback_dispatch` set CB_CLEANUP to the argument bytes an i686
+       `__stdcall` callee must pop (0 for `__cdecl`, where the caller pops).
+       Keep the return address in ECX (EAX/EDX hold integer/aggregate returns),
+       replace the dead return-address stack slot with the cleanup dword, then
+       skip the return address plus the callee-pops bytes and jump back. Using
+       `ret` here would pop one of the arguments as the return address. */
+    mov ecx, [ebx + CB_CLEANUP]
     lea esp, [ebp - 12]
     pop edi
     pop esi
     pop ebx
     leave
     add esp, 4
-    ret
+    xchg ecx, [esp]
+    add esp, 4
+    add esp, [esp - 4]
+    jmp ecx
 
 .p2align 4
 .globl ci_cb_win32_0

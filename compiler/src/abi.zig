@@ -197,7 +197,7 @@ fn planReturnWin64(allocator: Allocator, ret_ty: []const u8) !RetInfo {
     return .{ .locs = try allocator.dupe(Loc, &.{.{ .kind = kind, .index = 0, .size = info.size, .offset = 0 }}), .size = info.size };
 }
 
-fn buildWin64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16, ptr_size: u32) !Plan {
+fn buildWin64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, is_varargs: bool, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16, ptr_size: u32) !Plan {
     _ = ptr_size;
     // The MS x64 ABI assigns registers by *argument slot*, not by counting
     // preceding arguments of the same class: slot `n` uses GPR[n] for
@@ -206,6 +206,12 @@ fn buildWin64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, ar
     // pointer consumes slot 0, shifting both files. Arguments past slot 3 go
     // to the stack, and a value moves to the stack only when its own slot is
     // out of range.
+    //
+    // Variadic calls (`printf`) additionally duplicate every floating-point
+    // argument in the integer register for the same slot: the callee's
+    // `va_arg` reads the GP home area for `int`/`double` alike (MS x64
+    // variable-argument convention). Stack-passed values are not duplicated;
+    // `va_arg` reads those from the single stack slot.
     var slot: u16 = 0;
     var stack_size: u16 = 0;
     var arg_offset: u16 = 0;
@@ -228,7 +234,15 @@ fn buildWin64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, ar
         if (slot < 4) {
             const kind: u8 = if (info.class == .sse) 1 else 0;
             if (kind == 1) sse_count += 1;
-            try args.append(.{ .locs = try allocator.dupe(Loc, &.{.{ .kind = kind, .index = slot, .size = info.size, .offset = arg_offset }}), .size = info.size, .alignment = @max(1, info.size) });
+            if (kind == 1 and is_varargs) {
+                // Keep the XMM home and add the integer-register duplicate.
+                const locs = try allocator.alloc(Loc, 2);
+                locs[0] = .{ .kind = 1, .index = slot, .size = info.size, .offset = arg_offset };
+                locs[1] = .{ .kind = 0, .index = slot, .size = info.size, .offset = arg_offset };
+                try args.append(.{ .locs = locs, .size = info.size, .alignment = @max(1, info.size) });
+            } else {
+                try args.append(.{ .locs = try allocator.dupe(Loc, &.{.{ .kind = kind, .index = slot, .size = info.size, .offset = arg_offset }}), .size = info.size, .alignment = @max(1, info.size) });
+            }
         } else {
             stack_size = std.mem.alignForward(u16, stack_size, 8);
             try args.append(.{ .locs = try allocator.dupe(Loc, &.{.{ .kind = 2, .index = stack_size, .size = info.size, .offset = arg_offset }}), .size = info.size, .alignment = 8 });
@@ -242,7 +256,11 @@ fn buildWin64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, ar
     return .{ .name = name, .args = try args.toOwnedSlice(), .ret_locs = r.locs, .stack_size = std.mem.alignForward(u16, stack_size, 8), .sret = sret_idx != null, .sse_count = sse_count, .ret_size = r.size };
 }
 
-fn buildWin32Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16) !Plan {
+fn buildWin32Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, is_varargs: bool, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16) !Plan {
+    // i686 passes every argument on the stack for cdecl as well as for
+    // variadic calls, so `is_varargs` does not change the layout. (Variadic
+    // `__stdcall` is not a valid C combination.)
+    _ = is_varargs;
     var stack_size: u16 = 0;
     var arg_offset: u16 = 0;
     var args = std.ArrayList(ArgPlan).init(allocator);
@@ -522,7 +540,12 @@ fn appendAapcs64Stack(allocator: Allocator, args: *std.ArrayList(ArgPlan), stack
     stack_size.* += std.mem.alignForward(u16, info.size, 8);
 }
 
-fn buildAapcs64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16) !Plan {
+fn buildAapcs64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, is_varargs: bool, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16) !Plan {
+    // The base AAPCS64 (aarch64-linux, unlike Apple's ARM64 variant) passes
+    // variadic arguments in the same registers/stack slots as named ones; the
+    // callee's va_start homes x0-x7/v0-v7 itself. Placement therefore does not
+    // depend on `is_varargs`.
+    _ = is_varargs;
     // x0-x7 carry integer, pointer and composite arguments; v0-v7 carry
     // scalars and HFAs. There is no shared numbering: an `f(int, double)` uses
     // x0 and v0, and running out of one file only pushes that kind of argument
@@ -655,15 +678,37 @@ fn buildAapcs64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, 
 /// calls this so the `Loc` kinds, plan ordering and every size/offset in a CIPL
 /// record come from one place. Keep the behaviour unchanged.
 ///
+/// `is_varargs` only changes the layout where the target ABI does: Win64
+/// duplicates floating-point register arguments into the integer file. SysV,
+/// Win32 (all-stack) and AAPCS64 (register files are homed by the callee)
+/// ignore it.
+///
 /// `abi`: 1 = SysV x86-64, 2 = Win64, 3 = Win32, 4 = AArch64 AAPCS64.
 pub fn buildPlanForAbi(allocator: Allocator, abi: u8, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, is_varargs: bool, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16, ptr_size: u32) !Plan {
     return switch (abi) {
         1 => buildSysvPlan(allocator, name, ret_ty, arg_types, is_varargs, sret_idx, sret_size, byval_sizes, ptr_size),
-        2 => buildWin64Plan(allocator, name, ret_ty, arg_types, sret_idx, sret_size, byval_sizes, ptr_size),
-        3 => buildWin32Plan(allocator, name, ret_ty, arg_types, sret_idx, sret_size, byval_sizes),
-        4 => buildAapcs64Plan(allocator, name, ret_ty, arg_types, sret_idx, sret_size, byval_sizes),
+        2 => buildWin64Plan(allocator, name, ret_ty, arg_types, is_varargs, sret_idx, sret_size, byval_sizes, ptr_size),
+        3 => buildWin32Plan(allocator, name, ret_ty, arg_types, is_varargs, sret_idx, sret_size, byval_sizes),
+        4 => buildAapcs64Plan(allocator, name, ret_ty, arg_types, is_varargs, sret_idx, sret_size, byval_sizes),
         else => error.UnsupportedFfi,
     };
+}
+
+/// Map an LLVM calling-convention keyword onto the CIPL `conv` byte:
+///
+///   0 = the target's default C convention (cdecl / SysV / AAPCS64),
+///   1 = `x86_stdcallcc`,
+///   2 = `x86_fastcallcc`.
+///
+/// Every other LLVM convention (`fastcc`, `coldcc`, `zeroext`, `thiscall`-like
+/// extensions, ...) has no runtime model and maps to 0. `null` (no keyword on
+/// the call/signature) is also 0. `main.zig` may overwrite the result with the
+/// WinAPI table for known Windows exports.
+pub fn convFromName(cc: ?[]const u8) u8 {
+    const name = cc orelse return 0;
+    if (std.mem.eql(u8, name, "x86_stdcallcc")) return 1;
+    if (std.mem.eql(u8, name, "x86_fastcallcc")) return 2;
+    return 0;
 }
 
 fn returnLocs(allocator: Allocator, ret_ty: []const u8, ptr_size: u32) !struct { locs: []Loc, size: u16 } {
@@ -1170,4 +1215,107 @@ test "AAPCS64 sret uses x8 and does not consume an argument GPR" {
     // Wide composites that would need more than two GPRs are memory class on
     // the return side too (the IR supplies sret before this is reached).
     try std.testing.expectError(error.UnsupportedFfi, buildPlanForAbi(allocator, 4, "f", "{ i64, i64, double }", &.{}, false, null, 0, &.{}, 8));
+}
+
+test "convFromName maps stdcall/fastcall and defaults everything else" {
+    try std.testing.expectEqual(@as(u8, 0), convFromName(null));
+    try std.testing.expectEqual(@as(u8, 1), convFromName("x86_stdcallcc"));
+    try std.testing.expectEqual(@as(u8, 2), convFromName("x86_fastcallcc"));
+    try std.testing.expectEqual(@as(u8, 0), convFromName("ccc"));
+    try std.testing.expectEqual(@as(u8, 0), convFromName("fastcc"));
+    try std.testing.expectEqual(@as(u8, 0), convFromName("coldcc"));
+    try std.testing.expectEqual(@as(u8, 0), convFromName(""));
+}
+
+test "Win64 variadic plan duplicates FP register arguments into GPRs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // printf("%f %f %f %f %f") with the format pointer: slots 0..5.
+    // Slots 1-3 are in XMM1-3 and must also be homed in RDX/R8/R9; slots 4-5
+    // are stack-only.
+    const args = [_][]const u8{ "ptr", "double", "double", "double", "double", "double" };
+    const zeros = [_]u16{0} ** 6;
+    const varargs = try buildPlanForAbi(allocator, 2, "printf", "i32", &args, true, null, 0, &zeros, 8);
+
+    try std.testing.expectEqual(@as(usize, 1), varargs.args[0].locs.len);
+    try std.testing.expectEqual(@as(u8, 0), varargs.args[0].locs[0].kind);
+    try std.testing.expectEqual(@as(u16, 0), varargs.args[0].locs[0].index);
+    for (1..4) |i| {
+        const locs = varargs.args[i].locs;
+        try std.testing.expectEqual(@as(usize, 2), locs.len);
+        try std.testing.expectEqual(@as(u8, 1), locs[0].kind); // XMM
+        try std.testing.expectEqual(@as(u8, 0), locs[1].kind); // GPR duplicate
+        try std.testing.expectEqual(@as(u16, @intCast(i)), locs[0].index);
+        try std.testing.expectEqual(@as(u16, @intCast(i)), locs[1].index);
+        try std.testing.expectEqual(@as(u16, @intCast(i * 8)), locs[0].offset);
+        try std.testing.expectEqual(locs[0].offset, locs[1].offset);
+    }
+    for (4..6) |i| {
+        try std.testing.expectEqual(@as(usize, 1), varargs.args[i].locs.len);
+        try std.testing.expectEqual(@as(u8, 2), varargs.args[i].locs[0].kind);
+        try std.testing.expectEqual(@as(u16, @intCast((i - 4) * 8)), varargs.args[i].locs[0].index);
+    }
+    try std.testing.expectEqual(@as(u16, 16), varargs.stack_size);
+    try std.testing.expectEqual(@as(u8, 3), varargs.sse_count);
+
+    // The same signature without varargs keeps one loc per argument.
+    const fixed = try buildPlanForAbi(allocator, 2, "f", "i32", &args, false, null, 0, &zeros, 8);
+    for (fixed.args) |arg| try std.testing.expectEqual(@as(usize, 1), arg.locs.len);
+    try std.testing.expectEqual(@as(u16, 16), fixed.stack_size);
+}
+
+test "Win32 variadic plan stays all-stack with cdecl packing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // printf("%f %d %f"): the pointer is 4 bytes, doubles are packed at a
+    // 4-byte boundary (no 8-byte padding), matching clang i686 output.
+    const args = [_][]const u8{ "ptr", "double", "i32", "double" };
+    const plan = try buildPlanForAbi(allocator, 3, "printf", "i32", &args, true, null, 0, &[_]u16{0} ** 4, 4);
+    const expect_index = [_]u16{ 0, 4, 12, 16 };
+    const expect_size = [_]u16{ 4, 8, 4, 8 };
+    for (plan.args, 0..) |arg, i| {
+        try std.testing.expectEqual(@as(usize, 1), arg.locs.len);
+        try std.testing.expectEqual(@as(u8, 2), arg.locs[0].kind);
+        try std.testing.expectEqual(expect_index[i], arg.locs[0].index);
+        try std.testing.expectEqual(expect_size[i], arg.locs[0].size);
+    }
+    try std.testing.expectEqual(@as(u16, 24), plan.stack_size);
+}
+
+test "AAPCS64 variadic plan keeps normal register placement" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Base AAPCS64 (Linux): variadic arguments use x0-x7/v0-v7 like named
+    // ones; the callee homes the registers for va_arg.
+    const args = [_][]const u8{ "ptr", "double", "i64", "double" };
+    const plan = try buildPlanForAbi(allocator, 4, "printf", "i32", &args, true, null, 0, &[_]u16{0} ** 4, 8);
+    try std.testing.expectEqual(@as(u8, 0), plan.args[0].locs[0].kind);
+    try std.testing.expectEqual(@as(u16, 0), plan.args[0].locs[0].index);
+    try std.testing.expectEqual(@as(u8, 1), plan.args[1].locs[0].kind);
+    try std.testing.expectEqual(@as(u16, 0), plan.args[1].locs[0].index);
+    try std.testing.expectEqual(@as(u8, 0), plan.args[2].locs[0].kind);
+    try std.testing.expectEqual(@as(u16, 1), plan.args[2].locs[0].index);
+    try std.testing.expectEqual(@as(u8, 1), plan.args[3].locs[0].kind);
+    try std.testing.expectEqual(@as(u16, 1), plan.args[3].locs[0].index);
+    try std.testing.expectEqual(@as(u16, 0), plan.stack_size);
+
+    // Once v0-v7 are full, further doubles go to the stack; the GPR file is
+    // independent.
+    const ten = [_][]const u8{"double"} ** 10;
+    const spill = try buildPlanForAbi(allocator, 4, "c_va_d10", "double", &ten, true, null, 0, &[_]u16{0} ** 10, 8);
+    for (spill.args[0..8], 0..) |arg, i| {
+        try std.testing.expectEqual(@as(u8, 1), arg.locs[0].kind);
+        try std.testing.expectEqual(@as(u16, @intCast(i)), arg.locs[0].index);
+    }
+    for (spill.args[8..], 0..) |arg, i| {
+        try std.testing.expectEqual(@as(u8, 2), arg.locs[0].kind);
+        try std.testing.expectEqual(@as(u16, @intCast(i * 8)), arg.locs[0].index);
+    }
+    try std.testing.expectEqual(@as(u16, 16), spill.stack_size);
 }

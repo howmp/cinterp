@@ -11,8 +11,19 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-COMPILER = ROOT / "build/cinterp-cc"
 SEEDS = ["hello", "arrays", "ffi_structs"]
+
+
+def resolve_compiler() -> Path | None:
+    """Prefer build/cinterp-cc.exe (Git Bash/MSYS builds) over the Unix name."""
+    override = os.environ.get("CINTERP_COMPILER")
+    if override:
+        return Path(override)
+    for candidate in (ROOT / "build/cinterp-cc.exe", ROOT / "build/cinterp-cc"):
+        if candidate.is_file():
+            return candidate
+    return None
+
 
 TARGETS = {
     "aarch64-linux": {
@@ -55,10 +66,10 @@ def mutate(data: bytes, rng: random.Random) -> bytes:
     return data + bytes(rng.randrange(256) for _ in range(rng.randrange(1, 32)))
 
 
-def compile_seed(name: str, target: str, out: Path) -> Path:
+def compile_seed(name: str, target: str, out: Path, compiler: Path) -> Path:
     package = out / f"{name}-{target}.cib"
     subprocess.run(
-        [str(COMPILER), "compile",
+        [str(compiler), "compile",
          str(ROOT / "examples" / f"{name}.c"), "--target", target, "-o", str(package)],
         check=True, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
@@ -119,6 +130,17 @@ def main() -> int:
     if unknown:
         print(f"unknown targets: {','.join(unknown)}", file=sys.stderr)
         return 2
+    compiler = resolve_compiler()
+    if compiler is None or not compiler.is_file():
+        print(
+            "error: cinterp compiler not found; expected build/cinterp-cc.exe (Windows) "
+            "or build/cinterp-cc.\n"
+            "       run 'make compiler' (or 'cd compiler && zig build' and copy the "
+            "binary to build/), or set CINTERP_COMPILER",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"compiler: {compiler}", file=sys.stderr)
 
     rng = random.Random(args.seed)
     crashes = timeouts = runs = 0
@@ -129,7 +151,7 @@ def main() -> int:
             runtime = build_runtime(name, info)
             command = runner_for(name, info, runtime)
             env = env_for(name, info)
-            seeds = [compile_seed(seed, info["cib"], tmp) for seed in SEEDS]
+            seeds = [compile_seed(seed, info["cib"], tmp, compiler) for seed in SEEDS]
             for _ in range(args.iterations):
                 data = rng.choice(seeds).read_bytes()
                 candidate = tmp / "candidate.cib"

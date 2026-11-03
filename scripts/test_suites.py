@@ -16,7 +16,6 @@ import sys
 
 import re
 import subprocess
-import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,11 +24,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_COMPILER = ROOT / "build/cinterp-cc"
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
-RUNTIME_TARGETS = {
-    "x86_64-windows": ROOT / "build/cross/cinterp-run64.exe",
-    "i686-windows": ROOT / "build/cross/cinterp-run32.exe",
-    "aarch64-linux": ROOT / "build/cross/cinterp-run-arm64",
-}
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)
 EXPECT_RE = re.compile(rb"^// expect: *(-?\d+)\s*$", re.MULTILINE)
 TIERS = ["smoke", "standard", "full", "nightly"]
@@ -124,7 +118,8 @@ def load_skip(manifest: dict, root: Path) -> tuple[dict, set[str]]:
     return skip, excluded
 
 
-def discover_cases(manifest: dict, root: Path, include_excluded: bool = False) -> list[dict]:
+def discover_cases(manifest: dict, root: Path, include_excluded: bool = False,
+                   allow_duplicate_ids: bool = False) -> list[dict]:
     skip, excluded = load_skip(manifest, root)
     explicit = manifest.get("cases")
     if explicit:
@@ -139,7 +134,7 @@ def discover_cases(manifest: dict, root: Path, include_excluded: bool = False) -
             if manifest.get("case_args", {}).get(case["id"]):
                 case["args"] = list(manifest["case_args"][case["id"]])
             cases.append(case)
-        return cases
+        return reject_duplicate_ids(cases, manifest, allow_duplicate_ids)
     pattern = manifest.get("source_glob", "*.c")
     expected_ext = manifest.get("expected_ext", ".expected")
     expected_dir = resolve_path(root, manifest.get("expected_dir"))
@@ -173,7 +168,41 @@ def discover_cases(manifest: dict, root: Path, include_excluded: bool = False) -
             if m:
                 case["expected_result"] = int(m.group(1))
         cases.append(case)
-    return cases
+    return reject_duplicate_ids(cases, manifest, allow_duplicate_ids)
+
+
+def reject_duplicate_ids(cases: list[dict], manifest: dict, allow_duplicate_ids: bool) -> list[dict]:
+    """Reject duplicate case IDs; they silently double-run and corrupt reports.
+
+    ``--allow-duplicate-ids`` downgrades the hard error to a warning and keeps
+    the first occurrence, for local triage of an unedited manifest.
+    """
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    unique: list[dict] = []
+    for case in cases:
+        cid = case["id"]
+        if cid in seen:
+            duplicates.append(cid)
+            continue
+        seen.add(cid)
+        unique.append(case)
+    if not duplicates:
+        return cases
+    label = manifest.get("suite", "?")
+    listed = ", ".join(sorted(set(duplicates)))
+    if not allow_duplicate_ids:
+        raise ValueError(
+            f"{label}: duplicate case ID(s) in {manifest.get('_path', 'manifest')}: {listed}\n"
+            "  fix the manifest (give each case a unique id), or pass "
+            "--allow-duplicate-ids to keep the first occurrence"
+        )
+    print(
+        f"warning: {label}: duplicate case ID(s) {listed}; keeping the first occurrence "
+        "(pass without --allow-duplicate-ids to make this an error)",
+        file=sys.stderr,
+    )
+    return unique
 
 
 def case_skip(case: dict, target: str) -> str | None:
@@ -291,8 +320,19 @@ def run_on_target(
         cmdline = f'cmd /c "{remote_runtime}"{remote_lib} "{remote_cib}"'
         if case.get("entry"):
             cmdline += f' "{case["entry"]}"'
+        if case.get("args"):
+            # Drop nothing here: the native path forwards program arguments
+            # after `--`, and the Windows path must behave the same.
+            cmdline += " -- " + " ".join(win_quote(str(a)) for a in case["args"])
         return subprocess.run(["ssh", host, cmdline], capture_output=True, timeout=timeout)
     raise RuntimeError(f"unsupported target {target}")
+
+
+def win_quote(value: str) -> str:
+    """Quote one argument for the remote cmd.exe command line."""
+    if not value or any(ch in value for ch in ' \t"&|<>^'):
+        return '"' + value.replace('"', '\\"') + '"'
+    return value
 
 
 def compiler_fingerprint(compiler_path: Path) -> str:
@@ -472,6 +512,9 @@ def main() -> int:
     ap.add_argument("--compiler-path", default=str(DEFAULT_COMPILER),
                     help="path to the cinterp-cc executable")
     ap.add_argument("--include-excluded", action="store_true", help="include .excluded cases for re-triage")
+    ap.add_argument("--allow-duplicate-ids", action="store_true",
+                    help="warn about duplicate manifest case IDs and keep the first occurrence "
+                         "instead of failing (local triage only)")
     ap.add_argument("--only", action="append", default=[], help="only run IDs (comma-separated, repeatable)")
     ap.add_argument("--emit-reasons", default="", help="write auditable ID<TAB>status: reason for non-ok cases")
     args = ap.parse_args()
@@ -544,7 +587,11 @@ def main() -> int:
         if not root.is_dir():
             print(f"missing suite root for {suite}: {root}", file=sys.stderr)
             return 2
-        cases = discover_cases(manifest, root, args.include_excluded)
+        try:
+            cases = discover_cases(manifest, root, args.include_excluded, args.allow_duplicate_ids)
+        except ValueError as exc:
+            print(f"manifest error: {exc}", file=sys.stderr)
+            return 2
         only = {item.strip() for group in args.only for item in group.split(",") if item.strip()}
         if only:
             cases = [case for case in cases if case["id"] in only]

@@ -1,0 +1,215 @@
+# cinterp @VERSION@ — @TARGET@ release tarball
+
+`cinterp` compiles C ahead of time into a compact stack-bytecode package
+(`.cib`) plus compile-time FFI call plans, then executes it in a small Zig VM
+that calls native C functions directly. There is no libffi, no JIT and no
+executable memory. This tarball is the **@TARGET@** build.
+
+## What is in this tarball
+
+| Path | Contents |
+| --- | --- |
+| `@RUNNER@` | runtime executable: `@RUNNER@ [options] package.cib [entry]` |
+| `include/cinterp.h` | C embedding API (ABI 2) |
+| `lib/` | shared library plus static/import library for @TARGET@ |
+| `pkgconfig/cinterp.pc` | relocatable pkg-config metadata |
+| `cmake/` | `cinterpConfig.cmake` and `cinterpConfigVersion.cmake` |
+| `lib/cmake/cinterp/` | the same CMake package config, in the layout `find_package` searches |
+| `rust/cinterp-sys/` | Rust FFI crate with a safe `Vm` wrapper and a runnable example |
+| `docs/` | CIB format, embedding, ABI compatibility and C/IR subset documentation |
+| `examples/` | C sources used by the release smoke tests |
+| `debug/` | split debug files, when the build produced them |
+| `README.md`, `LICENSE`, `VERSION`, `SBOM.spdx.json` | this file, license, version, SPDX SBOM |
+
+<!-- compiler-only -->
+**This tarball ships the compiler.** In addition to the runtime files above it
+contains:
+
+| Path | Contents |
+| --- | --- |
+| `bin/cinterp-cc` | the C-to-CIB compiler (invokes `zig cc` as its frontend at compile time) |
+| `bin/cinterp` | wrapper script that execs `bin/cinterp-cc` |
+| `THIRD_PARTY_NOTICES.md` | attribution for the derived external-symbol data described below |
+
+Compile and run the bundled example:
+
+```sh
+./bin/cinterp compile examples/hello.c -o hello.cib
+./@RUNNER@ hello.cib
+# result: 42
+```
+
+`cinterp-cc compile app.c -o app.cib --target <target>` selects the package
+ABI: `x86_64-linux` (this tarball), `x86_64-windows`, `i686-windows` or
+`aarch64-linux`. Compile for the target whose runtime you will load the
+package into. `--dump-target` / `--dump-imports` inspect the result, and
+`--cc-path` points the frontend at a specific `zig` binary.
+<!-- /compiler-only -->
+
+<!-- runtime-only -->
+**This is a runtime-only tarball.** It does **not** contain `bin/cinterp-cc`.
+Compile packages with a compiler build for the same target: the Linux x86-64
+release tarball ships one, or build the compiler from the source tree with Zig
+0.13:
+
+```sh
+cd cinterp/compiler && zig build
+./zig-out/bin/cinterp-cc compile --target x86_64-windows app.c -o app.cib
+```
+
+The rest of this file explains how to load a prebuilt `.cib`.
+<!-- /runtime-only -->
+
+## Release tarballs for @VERSION@
+
+| Tarball | Contents |
+| --- | --- |
+| `cinterp-@VERSION@-sysv-x86_64` | **compiler + runtime**, Linux x86-64 (`bin/cinterp-cc`, `bin/cinterp`) |
+| `cinterp-@VERSION@-win64-x86_64` | runtime only, Windows x64 |
+| `cinterp-@VERSION@-win32-x86` | runtime only, Windows x86 |
+| `cinterp-@VERSION@-arm64` | runtime only, Linux AArch64 |
+
+Only the Linux x86-64 tarball contains `bin/cinterp-cc` and
+`THIRD_PARTY_NOTICES.md`; the other three are runtime-only.
+
+## Run a package
+
+```sh
+./@RUNNER@ hello.cib                    # run entry point "main"
+./@RUNNER@ hello.cib main -- a b c      # explicit entry, C argv (argv[0] = "a")
+./@RUNNER@ --lib ./libfoo.@LIB_EXT@ app.cib   # add an explicit native library handle
+./@RUNNER@ --dump-target --dump-imports --load-only app.cib
+./@RUNNER@ --version
+```
+
+`--lib PATH` registers an explicit `dlopen` (Unix) or `LoadLibraryA` (Windows)
+handle before execution. Packages normally name their native providers in the
+CIB link metadata (`CIPI`) and the runtime loads those libraries itself; use
+`--lib` for libraries the metadata does not mention, or to force a different
+build of one it does. Libraries are never unloaded — a handle stays valid
+until the process exits.
+
+Exit status is 0 on success, 1 for a load/run failure and 2 for a usage or I/O
+error. `main`'s return value is printed as `result: N` and is available as the
+VM result; it does not become the process exit code.
+
+## C host through pkg-config
+
+```sh
+export PKG_CONFIG_PATH="$PWD/pkgconfig"
+cc host.c $(pkg-config --cflags --libs cinterp) -o host
+LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ./host app.cib
+```
+
+`cinterp.pc` is relocatable — `prefix` is derived from the location of the
+`.pc` file, so the tarball can be unpacked anywhere. `Libs.private` carries the
+extra system libraries needed for a static link (`-ldl -lpthread -lm` on Unix,
+empty on Windows): use `pkg-config --static --cflags --libs cinterp` when
+linking `libcinterp.a` (on Windows that is `cinterp_static.lib`). On Windows,
+put `lib/` on `PATH` instead of setting `LD_LIBRARY_PATH`.
+
+## CMake consumer
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(host C)
+
+find_package(cinterp 0.1 REQUIRED)
+
+add_executable(host host.c)
+target_link_libraries(host PRIVATE cinterp::cinterp)
+```
+
+Point CMake at the unpacked tarball:
+
+```sh
+cmake -S . -B build -DCMAKE_PREFIX_PATH="$PWD"
+cmake --build build
+LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ./build/host app.cib
+```
+
+The package config is installed both at `cmake/` and at
+`lib/cmake/cinterp/`; `-Dcinterp_DIR="$PWD/cmake"` works too if you prefer to
+name it explicitly. `cinterpConfigVersion.cmake` accepts requests up to
+@VERSION@ within the same major series, so `find_package(cinterp 0.1 REQUIRED)`
+matches this tarball while `find_package(cinterp 1.0)` fails.
+
+## Rust binding
+
+`rust/cinterp-sys` contains the raw `ci_vm_*` bindings plus a small safe `Vm`
+wrapper. It expects the native library in `../../lib` and the header in
+`../../include` relative to the crate directory and links `-lcinterp` itself;
+override those paths with `CINTERP_LIB_DIR` / `CINTERP_INCLUDE_DIR`.
+
+```sh
+cd rust/cinterp-sys
+cargo run --offline --example run_hello -- /path/to/app.cib --expect 42
+# result = 42
+cargo test --offline
+```
+
+The example prints `result = <value>` and, with `--expect N`, exits non-zero
+when the VM result differs. `Error::code` is the category reported by
+`ci_vm_last_error_code()` (a `CI_E_*` value), `Error::status` is the negative
+value the failing call returned, and `Error::message` is `ci_vm_last_error()`.
+To depend on the crate from another project:
+
+```toml
+[dependencies]
+cinterp-sys = { path = "vendor/cinterp-sys" }
+```
+
+One `Vm` is single-threaded. Use separate `Vm` instances for independent
+execution; callback trampolines are process-wide and retired when their owning
+VM is destroyed.
+
+## Documentation
+
+- `docs/cib.md` — CIB package format, link metadata, status codes and tooling
+- `docs/embedding.md` — C embedding API and host integration
+- `docs/compatibility.md` — ABI, SONAME and versioning policy
+- `docs/ir-subset.md`, `docs/ir-parser-differences.md`, `docs/zig-frontend.md` — accepted C/IR subset
+- `rust/cinterp-sys/README.md` — Rust crate
+
+<!-- compiler-only -->
+## License and third-party notices
+
+cinterp is MIT licensed; see `LICENSE`. `cinterp-cc` embeds an external-symbol
+index generated at build time from data bundled with Zig:
+
+- MinGW-w64 `.def` export lists — ZPL-2.1, Copyright (c) 2009-2013 the mingw-w64 project
+- glibc `abilists` symbol/version tables — LGPL-2.1-or-later, Copyright (C) Free Software Foundation, Inc.
+
+Only factual symbol names, library names and calling conventions are
+reproduced; no upstream source code is copied. The full attribution is in
+`THIRD_PARTY_NOTICES.md` and every package above is recorded in
+`SBOM.spdx.json`.
+<!-- /compiler-only -->
+
+<!-- runtime-only -->
+## License
+
+cinterp is MIT licensed; see `LICENSE`. This runtime-only tarball ships no data
+derived from MinGW-w64 or glibc, so it carries no third-party notice file;
+`SBOM.spdx.json` lists the runtime files and the build tools only.
+<!-- /runtime-only -->
+
+## Verifying the download
+
+`SHA256SUMS` sits next to the tarball (it is not inside this archive) and
+covers every `.tar.gz` and `.spdx.json` artifact:
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
+When the release was signed, `SHA256SUMS.asc` and `KEYS.asc` are published as
+well:
+
+```sh
+gpg --import KEYS.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS
+```
+
+If those two files are absent the release is **unsigned**: `SHA256SUMS` still
+detects corruption and tampering in transit, but it provides no provenance.

@@ -22,7 +22,7 @@
 - **C11 范围**：核心 C11 + 结构体 FFI。
 - **FFI**：不链接 libffi，不使用 `@call` 桩矩阵，不申请动态可执行内存；编译期生成 FFI ABI 计划，运行时用固定汇编引擎执行；callback 用静态 trampoline 池 + 反向计划。
 - **ABI 顺序**：Linux x64 → Windows x64 → Windows x86 → Linux ARM64（已完成）。
-- **Callback 池**：固定 256 槽；SysV x86-64、Win64、Win32、AArch64 均已接入并通过交叉测试。
+- **Callback 池**：固定 256 槽，SysV x86-64、Win64、Win32、AArch64 均已接入并通过交叉测试。槽位是**进程级一次性预算**：VM 销毁或 plan 重载后槽位永久退休、不再复用，单进程累计注册超过 256 个 callback 后返回 `TooManyCallbacks`（见 §12.3、§24）。
 - **编译器发布方式**：仅构建期使用；发布物是 Zig 运行时 + 字节码。
 
 ## 3. 核心功能
@@ -74,7 +74,7 @@
 | --- | --- | --- |
 | x86-64 System V | 已实现 | Linux x64；`call_x86_64_sysv.S` |
 | x86-64 Microsoft | 已实现 | Windows x64；`call_x86_64_win64.S` |
-| x86 Microsoft 32-bit | 已实现（cdecl + stdcall） | Windows x86；`call_x86_win32.S`；`CIPL conv` 支持 stdcall |
+| x86 Microsoft 32-bit | 已实现（cdecl + stdcall + fastcall） | Windows x86；`call_x86_win32.S`；`CIPL conv` 0=cdecl / 1=stdcall / 2=fastcall；`thiscall` 不支持 |
 | AArch64 AAPCS64 | 已实现 | Linux ARM64；`call_arm64_aapcs.S`；x0-x7/v0-v7 |
 
 ## 5. 总体架构
@@ -156,13 +156,13 @@ Zig 侧用 `compiler/src/ir/` 的 typed lexer/parser 解析文本 LLVM IR，并�
 - 算术：`add`、`sub`、`mul`、`udiv`、`sdiv`、`urem`、`srem`、`fadd`、`fsub`、`fmul`、`fdiv`、`frem`。
 - 位运算：`shl`、`lshr`、`ashr`、`and`、`or`、`xor`。
 - 比较：`icmp`、`fcmp`（含谓词）。
-- 转换：`trunc`、`zext`、`sext`、`fpext`、`fptrunc`、`fptosi`、`sitofp`；`x86_fp80` 目前按 16B 存储/64-bit 精度处理。
-- 控制流：`ret`、`br`、`switch`。
-- 聚合：`extractvalue`、`select`；`insertvalue` 未支持。
-- 调用：`call`；内部函数调用降为 VM `CALL`，外部声明降为 `CALL_NATIVE`/`CALL_VARARG`。
-- 内建：`llvm.memcpy`、`llvm.memset`、`llvm.lifetime.*`（lifetime 可忽略）。
+- 转换：`trunc`、`zext`、`sext`、`fpext`、`fptrunc`、`fptosi`、`fptoui`、`sitofp`、`uitofp`、`ptrtoint`、`inttoptr`、`bitcast`；`x86_fp80` 为精确 f80（16B 存储），`fp128` 为精确 f128。
+- 控制流：`ret`、`br`、`switch`、`select`、`phi`。
+- 聚合：`extractvalue`；`insertvalue` 未支持。
+- 调用：`call`（直接/间接/tail）；内部函数调用降为 VM `CALL`，外部声明降为 `CALL_NATIVE`/`CALL_VARARG`。
+- 内建：`llvm.memcpy`、`llvm.memset`、`llvm.va_start/va_copy/va_end`、`llvm.stacksave/stackrestore`、`llvm.ptrmask`、`llvm.is.fpclass`、`llvm.fmuladd`、`llvm.fabs`/`sqrt`/`copysign` 等（完整清单见 [`docs/ir-subset.md`](./docs/ir-subset.md)）。
 
-当前明确不支持：`invoke`、`indirectbr`、内联汇编、向量类型、`atomic` 指令、异常/展开、phi/`-O1`、`fptoui`/`uitofp`/`ptrtoint`/`inttoptr`/`bitcast`、`insertvalue`、`va_start`/`va_arg`。
+当前明确不支持（编译期报错）：可执行值中的向量类型、`insertvalue`、`extractelement`/`insertelement`/`shufflevector`、`freeze`、指令级 `va_arg`、atomic/`fence`、`invoke`/`resume`/`landingpad`、`indirectbr`/`callbr`、未知 intrinsic、内联汇编。子集契约以 [`docs/ir-subset.md`](./docs/ir-subset.md) 为准（本节早期版本曾把 phi、varargs、fptoui 等列为不支持，已被 §19.4/§21 的实现取代）。
 
 降级规则：
 
@@ -193,7 +193,7 @@ Zig 侧用 `compiler/src/ir/` 的 typed lexer/parser 解析文本 LLVM IR，并�
 - 操作数使用 LEB128 变长编码；小立即数 1 字节。
 - 所有指针是宿主指针，字符串 NUL 结尾，不做 handle 表或 moving GC。
 
-**opcode 分类**：
+**opcode 分类**（历史设计稿；实现增加了 `OP_CALL_VARIADIC_TYPED`、`OP_ALLOCA_DYN*`、`OP_STACKSAVE/OP_STACKRESTORE`、`OP_SETJMP/OP_LONGJMP`、`OP_VA_START/OP_VA_COPY`、`OP_FPCLASS` 以及 f80/f128 专用算术等。**当前唯一定义是 [`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)**，运行时同序号常量在 `runtime/src/vm.zig`；两者必须同步）：
 
 1. **常量/局部变量**：`LOAD_CONST`、`LOAD_NULL`、`LOAD_LOCAL`、`STORE_LOCAL`、`LOAD_LOCAL_ADDR`、`LOAD_GLOBAL`、`STORE_GLOBAL`、`LOAD_GLOBAL_ADDR`。
 2. **内存**：`LOAD`、`STORE`、`ALLOCA`、`MALLOC`、`FREE`、`REALLOC`、`MEMCPY`、`MEMSET`、`MEMMOVE`。
@@ -250,56 +250,15 @@ Zig 侧用 `compiler/src/ir/` 的 typed lexer/parser 解析文本 LLVM IR，并�
 - 因此前端生成器直接处理 lowered 类型/属性，不需要重新实现完整 C 结构体 ABI 分类；只需分类 clang 生成的 literal aggregate（如 `{ i32, double }`）以及处理 `byval`/`sret`。
 - 这一点已由 `spike/callplan_gen` 端到端验证。
 
-**计划内容**：
+**计划内容**（类型定义**不再复制到本文**，避免再次漂移）：
 
-```zig
-pub const Abi = enum(u8) {
-    sysv64,          // Linux x86-64
-    win64,           // Windows x86-64
-    win32_cdecl,     // Windows x86
-    win32_stdcall,
-    aapcs64,         // Linux ARM64
-};
+- 编译器的计划/ABI 模型：[`compiler/src/abi.zig`](./compiler/src/abi.zig) 的 `Abi`、`Plan`、`ArgPlan`、`Loc`/`LocKind` 与 `buildPlanForAbi`；`plan.conv` 为 0=cdecl、1=stdcall、2=fastcall（仅 i686），`plan.ret_size`/`sse_count`/`sret`/`stack_size` 全量序列化到 CIPL v3。
+- 运行时的解码后视图：[`runtime/src/ffi/abi.zig`](./runtime/src/ffi/abi.zig)；CIPL 解码在 [`runtime/src/ffi/plan_loader.zig`](./runtime/src/ffi/plan_loader.zig)。
+- 二进制布局：[`docs/cib.md`](./docs/cib.md) 的 CIPL 章节。
 
-pub const LocKind = enum(u8) {
-    gpr,       // 通用寄存器，index = 0..N
-    xmm,       // SSE/XMM 寄存器，index = 0..N
-    stack,     // 栈偏移，index = 字节偏移
-    sret,      // 隐藏返回指针
-    rax, rdx, xmm0, xmm1, st0, st1, // 返回值位置
-    void_,
-};
+> 早期草稿把 `Abi` 写成 `win32_cdecl`/`win32_stdcall` 两个枚举值、把 `LocKind` 写成带 `void_` 的枚举，并给 `CallPlan` 加了 `cleanup_bytes`/`is_varargs` 字段。当前实现改为单一 `win32` ABI + `conv` 字节（0/1/2），`LocKind` 为 `{ gpr, xmm, stack, sret, rax, rdx, xmm0, xmm1, xmm2, xmm3, st0 }`，varargs 由 `OP_CALL_VARARG*` 携带实参类型表，stdcall 清理量由 `plan.stack_size` 推导。这些差异以 `compiler/src/abi.zig` 为准。
 
-pub const Loc = struct {
-    kind: LocKind,
-    index: u16,   // 寄存器编号或栈偏移
-    size: u16,    // 拷贝字节数
-    offset: u16,  // 在参数/返回值缓冲区中的偏移
-};
-
-pub const ArgPlan = struct {
-    locs: []const Loc, // 结构体可能有多个 eightbyte 位置
-    size: u16,
-    align: u16,
-    is_struct: bool,
-};
-
-pub const CallPlan = struct {
-    abi: Abi,
-    args: []const ArgPlan,
-    ret_locs: []const Loc,
-    stack_size: u16,
-    stack_align: u16,
-    sret: bool,
-    sse_count: u8,       // SysV varargs 的 %al
-    cleanup_bytes: u16,  // stdcall 被调方清理字节数
-    is_varargs: bool,
-};
-```
-
-> `spike/asm_abi_call` 和 `spike/callplan_gen` 使用的是上面类型的 x86-64 SysV 子集（`alignment` 字段、无 `st0/st1`/`cleanup_bytes` 等）；其他 ABI 实现时再扩展。
-
-- 前端为每个不同的调用签名生成并去重一个 `CallPlan`；`CALL_NATIVE`/`CALL_VARARG` 携带计划 ID。
+- 前端为每个不同的调用签名生成并去重一个 `CallPlan`（`internPlan` 按完整内容去重：name、args/locs、ret_locs、stack/sret/sse/ret_size/conv）；`CALL_NATIVE`/`CALL_VARARG`/`CALL_INDIRECT_NATIVE` 携带计划 ID。
 - 结构体参数按目标 ABI 拆成多个 `Loc`（例如 SysV 两个 eightbyte → 两个 GPR/XMM/栈位置）。
 - 返回值：标量/浮点位置、结构体 multiple locations、sret 隐藏指针。
 - varargs：计划包含实际变长参数的位置（clang IR 已经给出实际类型和默认提升）；SysV 的 `%al`、Win64 的浮点双写、Win32 的栈布局、ARM64 的 v0-v7/栈布局都在计划里。
@@ -313,14 +272,14 @@ pub const CallPlan = struct {
 
 ### 6.4 Callback 反向计划
 
-- 前端为每个 callback 签名生成 `CallbackPlan`：参数从哪些 GPR/XMM/栈位置读取、返回值写回哪些位置、stdcall 清理字节数。
+- 前端为每个 callback 签名生成反向计划（`emitCallback` 复用 `buildPlanForAbi`，`conv` 取被调函数定义的 cc：Win32 `__stdcall` callback → conv=1）。
 - 运行时用固定 256 槽的静态 trampoline 池：
   - 每个 trampoline 把槽位号放进一个非参数寄存器（SysV 用 R11，Win32 用 EAX，ARM64 用 x16/x17），跳到公共入口。
   - 公共入口保存所有参数寄存器、XMM 和栈指针，调用 Zig `ci_callback_dispatch(slot, &frame)`。
-  - dispatcher 按反向计划读取参数，压入 VM 栈，执行 VM 函数，把返回值写回帧的返回寄存器/缓冲区。
-  - 入口恢复返回值寄存器并 `ret`；Windows x86 的 `stdcall` callback 按计划执行 `ret N` 或 `add esp, N`。
+  - dispatcher 按反向计划读取参数（上限 `plan_loader.MAX_ARGS`=64，不再有 8 参数截断），压入 VM 栈，执行 VM 函数，把返回值写回帧的返回寄存器/缓冲区。
+  - 入口恢复返回值寄存器并 `ret`；Windows x86 的 `stdcall` callback 按 `plan.stack_size` 执行 `add esp, N`（`Win32CbFrame.cleanup`）。
 - 纯静态代码；不需要 `ffi_closure`，不需要可执行内存。
-- 槽位表固定 256；descriptor 只读；callback 生命周期文档化。
+- 槽位表固定 256 且**永久退休**：VM 销毁/plan 重载后 `callback_retired[slot]=true`，分配只找未退休的空槽，因此进程累计注册上限是 256，超出返回 `TooManyCallbacks`（不复用槽位，防止宿主保留的旧函数指针跳到新 VM）。
 - v1 单线程：原生线程回调暂不支持；如需多线程，先加锁或每线程一个 VM。
 
 ## 7. 运行时设计
@@ -372,8 +331,8 @@ ci_abi_call_sysv64:
 - 计划解析、结构体分类、varargs 位置已在 Zig/前端完成。
 - 实际引擎符号：SysV `ci_abi_call_sysv64`、Win64 `ci_win64_call`、Win32 `ci_win32_call`（asm 标签 `_ci_win32_call`）、ARM64 `ci_arm64_call`。
 - 二进制 `.cib`（CIPKG/CIVM/CIPL v3）的逐字段布局、opcode 表和示例见 [`docs/cib.md`](./docs/cib.md)。
-- Win32 引擎处理 cdecl 栈参数、调用者清理、`eax/edx/st0` 返回值；stdcall 计划尚未从编译器暴露。
-- ARM64 引擎处理 x0–x7/v0–v7/栈参数，捕获 x0/x1/v0/v1 和 x8 sret；当前只捕获 v0/v1 两个返回向量。
+- Win32 引擎处理 cdecl/stdcall 的栈参数与调用者清理、fastcall 的 ECX/EDX 参数、`eax/edx/st0` 返回值；`conv` 字节由 CIPL v3 携带（0/1/2），编译器已能生成 stdcall 与 fastcall 计划（§8.3、§20.2）。
+- ARM64 引擎处理 x0–x7/v0–v7/栈参数，捕获 x0/x1 和 v0–v3 四个返回向量以及 x8 sret。
 - Win64 引擎处理 32B shadow space、位置相关的 XMM 编号、sret 对 GPR/XMM 的移位和 varargs 浮点副本；保存 RSI/RDI 等 callee-saved 寄存器。
 - 每个 ABI 一段固定代码，不随程序增长。
 
@@ -411,26 +370,26 @@ ci_abi_call_sysv64:
 
 ### 8.3 Windows x86（32 位）
 
-- **当前编译器只生成 cdecl 计划**；引擎保留 `conv` 字段，stdcall 计划/名称修饰是剩余工作。
-- 所有参数在栈上，4 字节对齐；byval 结构体按原始字节复制到栈。
+- **调用约定**：编译器按 `x86_stdcallcc` → `conv=1`、`x86_fastcallcc` → `conv=2` 生成计划（调用点优先，声明为回退；已知 WinAPI 导出仍由 `win_defs` 覆盖），`thiscall` 不支持。2026-10-31 的早期状态是“只生成 cdecl 计划”，已被 §19.3/§20.2 的 stdcall 与 fastcall 实现取代。
+- cdecl/stdcall 的所有参数在栈上，4 字节对齐；fastcall 的前两个 4 字节标量走 ECX/EDX，其余在栈上；byval 结构体按原始字节复制到栈。
 - 返回值：≤4B 用 EAX；i64 合并为一个 8B `rax` loc（EAX:EDX）；float/double 在 ST0（`ret_x87` 标志），float 读取时转 f32；小结构体 EAX:EDX；大结构体 sret 隐藏指针在栈首。
 - 保存 EBX/ESI/EDI/EBP；引擎在恢复前必须丢弃临时 target/conv 槽（已修复一个栈清理 bug）。
-- `fastcall`/`thiscall` 不纳入当前目标。
+- `fastcall` 原生/间接调用已支持（ECX/EDX + 栈，`examples/ffi_fastcall.c`）；`fastcall` callback 与 `thiscall` 不在支持范围（§24）。
 
 ### 8.4 AArch64 AAPCS64（Linux ARM64）
 
 - 整数/指针参数：x0–x7；浮点/向量参数：v0–v7；栈 16 字节对齐。
-- 返回值：x0/x1 或 v0/v1；大结构体 sret 指针在 x8。
+- 返回值：x0/x1 或 v0–v3；大结构体 sret 指针在 x8。
 - HFA（1–4 个同类型 float/double）：参数/返回用连续 v 寄存器；聚合整体存储为 16B 时通过 aggregate store/memcpy 复制。
-- 当前计划限制：HFA 返回最多 2 个向量（v0/v1），3/4 成员、栈上 HFA、大结构体按值仍是剩余工作。
+- 当前状态：HFA 3/4 成员、栈上 HFA、HFA callback 4 向量和 fp128/`long double` callback 已覆盖（§20.5）。早期“HFA 返回最多 2 个向量、3/4 成员与栈上 HFA 未做”的记录已过时。
 
 ## 9. 变长参数
 
 - 前端从 LLVM IR 的 `call` 指令直接获得每个实参的类型（clang 已完成默认实参提升：`float` → `double`，小整数 → `int`）。
 - 前端把实际变长参数也生成 `Loc`：SysV 填 GPR/XMM/栈，并计算 `%al`；Win64 计算浮点的 GPR 副本；Win32 计算栈/ECX/EDX 位置；ARM64 计算 x0–x7/v0–v7/栈位置。
 - 运行时按计划填 `ABIFrame`；没有 8 槽 padding、没有 mask 矩阵、没有 256 个桩。
-- v1 支持 printf/snprintf 以及任意变长函数调用，只要参数类型在支持范围内；变长参数里的 struct/`long double` 先不支持。
-- 定义变长参数函数（`va_start`/`va_arg`/`va_end`）v1 不支持，后续通过 VM va_list 补齐。
+- v1 支持 printf/snprintf 以及任意变长函数调用，只要参数类型在支持范围内；变长参数里的 struct/`long double` 现已支持（`OP_CALL_VARIADIC_TYPED` 携带每个额外参数的 layout code，见 §20.12）。
+- 定义变长参数函数（`va_start`/`va_arg`/`va_end`/`va_copy`）已支持，四个 ABI 均覆盖（VM 内 va_list，见 §20.2/§19.4）。早期“v1 不支持”的记录已过时。
 
 ## 10. 结构体 FFI
 
@@ -443,148 +402,92 @@ ci_abi_call_sysv64:
   - `byval` 直接按栈结构体（pointee size/align）。
   - `sret` 直接按隐藏指针 + 返回缓冲区。
 - Win64/Win32/ARM64 的 clang lowered IR 同样会给出 byval/sret/coerced 形式；生成器按目标 ABI 的 lowered 规则处理。
-- Zig `marshal.zig` 按 `Loc` 拷贝结构体字节到寄存器/栈或从返回值位置拷回；不做类型转换。
+- [`runtime/src/ffi/platform.zig`](./runtime/src/ffi/platform.zig) 的 `marshal` 按 `Loc` 拷贝结构体字节到寄存器/栈或从返回值位置拷回；不做类型转换（原 `marshal.zig` 已合并进该文件）。
 - 仍需用 clang 编译的 C helper 做对照测试，覆盖 literal aggregate、未对齐/packed、栈参数边界。
 - 没有代表类型矩阵；计划里直接是位置和字节数。
 
 ## 11. 目录结构
 
+以下为仓库中**实际存在**的文件（2026-11-03 核对；不再列出已删除的 `c_api.zig`/`value.zig`/`opcodes.zig`(runtime)/`execute.zig`/`loader.zig`/`memory.zig`/`platform/` 子目录，也不再把 `examples/ffi_demo.c`、`qsort_demo.c` 当作现有文件）：
+
 ```text
 cl/
-├── compiler/                      # Zig 编译器（build-time）
-│   ├── build.zig
-│   ├── tools/                         # 构建期链接元数据生成器
-│   │   └── gen_link_index.zig         # MinGW defs -> win_defs / glibc abilists -> libc_defs
-│   └── src/
-│       ├── main.zig                   # CLI、CIPKG/CIPM/CIPI writer
-│       ├── ir/                        # typed LLVM IR lexer/parser/AST/verifier
-│       ├── lower_ast.zig              # AST -> CIVM lowering
-│       ├── abi.zig                    # CallPlan/CallbackPlan
-│       ├── imports.zig                # CIPI 结构与序列化
-│       ├── link_index.zig             # 构建期符号索引的二进制格式
-│       ├── win_defs.zig               # Windows provider（Zig 自带 MinGW .def）
-│       ├── libc_defs.zig              # Linux provider（Zig 自带 glibc abilists）
-│       ├── link_wrappers.zig          # target 级 ABI 别名（snprintf -> _snprintf）
-│       └── data/link_wrappers.json    # 唯一保留的签入链接元数据
+├── compiler/                          # Zig 编译器（build-time）
+│   ├── build.zig                      # 构建期运行 gen_link_index，生成 win_defs/libc_defs
+│   ├── src/
+│   │   ├── main.zig                   # CLI、CIPKG/CIPM/CIPI writer、validateLimits
+│   │   ├── opcodes.zig                # CIVM opcode 的唯一定义
+│   │   ├── abi.zig                    # Plan/ArgPlan/Loc、buildPlanForAbi、convFromName
+│   │   ├── lower_ast.zig              # AST -> CIVM lowering、internPlan 去重、callback 计划
+│   │   ├── imports.zig                # CIPI 结构与序列化
+│   │   ├── link_index.zig             # 构建期符号索引的二进制格式
+│   │   ├── win_defs.zig               # Windows provider（Zig 自带 MinGW .def）
+│   │   ├── libc_defs.zig              # Linux provider（Zig 自带 glibc abilists）
+│   │   ├── link_wrappers.zig          # target 级 ABI 别名（snprintf -> _snprintf）
+│   │   ├── data/link_wrappers.json    # 唯一保留的签入链接元数据
+│   │   ├── ir/                        # lexer.zig、ast.zig、parser.zig、verify.zig、dump.zig、tests.zig
+│   │   └── testdata/lower_ast/        # lowering fixtures + golden/*.golden
+│   └── tools/gen_link_index.zig       # MinGW defs -> win_defs / glibc abilists -> libc_defs
 │
 ├── runtime/                           # Zig 运行时（shipped）
-│   ├── build.zig
+│   ├── build.zig                      # 可执行文件 + static/shared 库 + 头文件安装
 │   ├── build.zig.zon
+│   ├── include/cinterp.h              # 公开 C ABI（ABI 2）
 │   ├── src/
-│   │   ├── main.zig
-│   │   ├── c_api.zig
-│   │   ├── vm.zig
-│   │   ├── value.zig
-│   │   ├── opcodes.zig
-│   │   ├── execute.zig
-│   │   ├── loader.zig
-│   │   ├── memory.zig
-│   │   ├── ffi/
-│   │   │   ├── plan.zig               # 计划解析
-│   │   │   ├── frame.zig              # ABIFrame
-│   │   │   ├── marshal.zig            # VM <-> frame
-│   │   │   ├── callbacks.zig          # slot/dispatcher
-│   │   │   └── asm/
-│   │   │       ├── call_x86_64_sysv.S
-│   │   │       ├── call_x86_64_win64.S
-│   │   │       ├── call_x86_win32.S
-│   │   │       ├── call_arm64_aapcs.S
-│   │   │       ├── callbacks_x86_64_sysv.S
-│   │   │       ├── callbacks_x86_64_win64.S
-│   │   │       ├── callbacks_x86_win32.S
-│   │   │       └── callbacks_arm64_aapcs.S
-│   │   └── platform/
-│   │       ├── platform.zig
-│   │       ├── linux.zig
-│   │       └── windows.zig
-│   └── tests/
+│   │   ├── main.zig                   # cinterp-run CLI
+│   │   ├── vm.zig                     # VM、线性内存、C ABI、callback dispatcher
+│   │   ├── vm_test.zig                # 运行时单测
+│   │   └── ffi/
+│   │       ├── abi.zig                # LocKind/Loc/ArgPlan/CallPlan（loader 与引擎共用）
+│   │       ├── plan_loader.zig        # CIPL 解码与 plan store
+│   │       ├── link_loader.zig        # CIPM/CIPI 解析与目标/import 校验
+│   │       ├── native.zig             # dlopen/LoadLibrary 符号解析
+│   │       ├── platform.zig           # 编译期 ABI 选择、frame、marshal、invoke、validate
+│   │       └── asm/
+│   │           ├── call_x86_64_sysv.S
+│   │           ├── call_x86_64_win64.S
+│   │           ├── call_x86_win32.S           # cdecl/stdcall/fastcall
+│   │           ├── call_arm64_aapcs.S
+│   │           ├── callbacks_x86_64_sysv.S
+│   │           ├── callbacks_x86_64_win64.S
+│   │           ├── callbacks_x86_win32.S
+│   │           └── callbacks_arm64_aapcs.S
+│   └── tests/                         # capi_smoke.c、capi_argv.c、capi_fuzz.c
 │
-├── spike/                             # 可行性验证（非最终产物）
-│   ├── ffi_struct_call/               # 结构体 ABI 参考（7/7 通过）
-│   ├── varargs_call/                  # varargs ABI 参考（5/5 + 矩阵 3/3）
-│   ├── asm_abi_call/                  # 固定汇编 ABI 引擎（5/5；ReleaseSmall 8.7K）
-│   └── callplan_gen/                  # 前端 CallPlan 生成器（4/4；15 计划；8.7K）
-│
-├── examples/
-│   ├── hello.c
-│   ├── ffi_demo.c
-│   └── qsort_demo.c
-│
-└── README.md
+├── examples/                          # hello.c、arrays.c、structs.c、ffi_*.c、bitfields.c、
+│                                      # longdouble.c、math.c ……（无 ffi_demo.c / qsort_demo.c）
+├── docs/                              # cib.md、embedding.md、compatibility.md、ir-subset.md、
+│                                      # ir-parser-differences.md、zig-frontend.md
+├── packaging/                         # cinterp.pc.in、cmake/、rust/cinterp-sys、README.release.md.in
+├── scripts/                           # test/fuzz/differential/release harness（Python）
+├── tests/                             # csuite/（17 例）、manifests/、generator-known-failures.json
+├── spike/                             # 可行性验证（gitignored，非最终产物）
+└── README.md、dev.md、Makefile、VERSION、LICENSE
 ```
 
-> **当前实现（2026-11-03 更新）**：Zig 编译器 `compiler/` 是唯一编译器；Python 编译器已删除。当前编译器/运行时支持 SysV x64、Win64、Win32 与 AArch64 AAPCS64：标量/控制流、线性内存、globals/字符串、float32/double、bitfield、标量/指针/varargs FFI、MEMORY/register/mixed struct、Win64/Win32 sret/byval、AAPCS64 HFA；callback trampoline 覆盖全部四种 ABI。`long double` 使用 x86 f80 / AArch64 f128 精确表示并接入 FFI/printf；c-testsuite 支持集 217/217（3 skip）；fuzz/CI/自动链接已接入。
+> **当前实现（2026-11-03 更新）**：Zig 编译器 `compiler/` 是唯一编译器；Python 编译器已删除。当前编译器/运行时支持 SysV x64、Win64、Win32 与 AArch64 AAPCS64：标量/控制流、线性内存、globals/字符串、float32/double、bitfield、标量/指针/varargs FFI、external data provider、MEMORY/register/mixed/HFA struct、Win64/Win32 sret/byval、Win32 stdcall/fastcall、AArch64 HFA 3/4 与栈 HFA；callback trampoline 覆盖全部四种 ABI（Win32 stdcall 会按 `stack_size` 清理栈，fastcall callback 不支持）。`long double` 使用 x86 f80 / AArch64 f128 精确表示并接入 FFI/printf；上游 c-testsuite 在 manifest 下为 218/2（独立脚本默认 217/3，见 §14）；fuzz/CI/自动链接已接入。
 
 ## 12. 关键代码结构
 
 ### 12.1 值表示与 opcode（Zig）
 
-```zig
-pub const Value = extern union {
-    i: i64,
-    u: u64,
-    f: f32,
-    d: f64,
-    ptr: ?*anyopaque,
-};
+代码不再复制到本文，单一来源如下：
 
-pub const OpCode = enum(u8) {
-    load_const, load_null,
-    load_local, store_local, load_local_addr,
-    load_global, store_global, load_global_addr,
-    load, store, alloca, malloc, free, realloc,
-    memcpy, memset, memmove,
-    add, sub, mul, div_s, div_u, mod_s, mod_u, neg,
-    fadd, fsub, fmul, fdiv, frem, fneg,
-    band, bor, bxor, bnot, shl, shr_u, shr_s,
-    cmp_eq, cmp_ne, cmp_lt, cmp_le, cmp_gt, cmp_ge,
-    ext, trunc, itof, ftoi, f32_to_f64, f64_to_f32,
-    ptr_to_i64, i64_to_ptr,
-    jmp, jz, jnz, switch_, call, call_indirect, ret, ret_void,
-    ptr_add, ptr_diff, get_field_ptr, get_elem_ptr,
-    call_native, call_vararg, dlopen, dlclose, dlsym, create_callback,
-    nop, pop, dup, swap, line_info, breakpoint,
-};
-```
+- 值表示：`runtime/src/vm.zig` 的 `Value`（`extern union { i: i64, u: u64 }`；浮点按位存放在 `u`，f32 只在低 32 位有效，f80/f128 经线性内存按指针传递）。
+- opcode：**唯一**定义是 [`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8` 常量，0x01–0xA2，含 f80/f128 专用算术、`OP_CALL_VARIADIC_TYPED`、`OP_SETJMP/OP_LONGJMP`、`OP_VA_START/OP_VA_COPY`、`OP_ALLOCA_DYN*`、`OP_STACKSAVE/OP_STACKRESTORE`、`OP_FPCLASS` 等）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
+- 早期文档里的 `OpCode` enum 与 `load_const`/`ptr_add` 等命名已不存在（运行时按 LLVM 类型标签 + 具体 opcode 展开），不再保留代码块以避免再次漂移。
 
 ### 12.2 FFI 计划类型（Zig）
 
-```zig
-pub const LocKind = enum(u8) {
-    gpr, xmm, stack, sret,
-    rax, rdx, xmm0, xmm1, st0, st1, void_,
-};
+同样以代码为单一来源：
 
-pub const Loc = struct {
-    kind: LocKind,
-    index: u16,
-    size: u16,
-    offset: u16,
-};
-
-pub const ArgPlan = struct {
-    locs: []const Loc,
-    size: u16,
-    align: u16,
-    is_struct: bool,
-};
-
-pub const CallPlan = struct {
-    abi: Abi,
-    args: []const ArgPlan,
-    ret_locs: []const Loc,
-    stack_size: u16,
-    stack_align: u16,
-    sret: bool,
-    sse_count: u8,
-    cleanup_bytes: u16,
-    is_varargs: bool,
-};
-```
+- 编译器侧：[`compiler/src/abi.zig`](./compiler/src/abi.zig) 的 `Plan`/`ArgPlan`/`Loc`；`Plan` 字段为 `name`、`args`、`ret_locs`、`stack_size`、`sret`、`sse_count`、`ret_size`、`conv`（无 `cleanup_bytes`/`is_varargs`）。
+- 运行时侧：[`runtime/src/ffi/abi.zig`](./runtime/src/ffi/abi.zig) 的 `LocKind = { gpr, xmm, stack, sret, rax, rdx, xmm0, xmm1, st0, xmm2, xmm3 }`、`Loc`、`ArgPlan`、`CallPlan`（字段 `args`、`ret_locs`、`stack_size`、`stack_align`、`sret`、`sse_count`、`ret_size`、`conv`）。
+- stdcall 清理量由 `plan.stack_size` 推导，varargs 由 `OP_CALL_VARARG*` 携带实参类型表；CIPL 二进制布局见 [`docs/cib.md`](./docs/cib.md)，解码在 `runtime/src/ffi/plan_loader.zig`。
 
 ### 12.3 VM C ABI
 
-公开头文件为 `runtime/include/cinterp.h`，`zig build` 同时安装 `libcinterp.a`、`libcinterp.so`（Windows 为 `cinterp_static.lib`/`cinterp.lib`/`cinterp.dll`）和头文件。C ABI 版本为 1。
+公开头文件为 `runtime/include/cinterp.h`，`zig build` 同时安装 `libcinterp.a`、`libcinterp.so`（Windows 为 `cinterp_static.lib`/`cinterp.lib`/`cinterp.dll`）和头文件。C ABI 版本为 **2**（`CI_ABI_VERSION`，运行时可查 `ci_abi_version()`）。
 
 ```c
 ci_vm *ci_vm_create(size_t stack_size);
@@ -599,9 +502,12 @@ int ci_vm_run_args(ci_vm *, const char *entry, int argc, const char *const *argv
 int64_t ci_vm_result(const ci_vm *);
 const char *ci_vm_last_error(const ci_vm *);
 int ci_vm_last_error_code(const ci_vm *);
+int ci_vm_clear_error(ci_vm *vm);
+int ci_abi_version(void);
+const char *ci_version(void);
 ```
 
-`ci_vm_run`/`ci_vm_run_args` 返回状态码而非 C `main` 返回值；返回值通过 `ci_vm_result` 获取。loader 是事务性的，失败不会替换已加载包。callback 注册表按 VM 隔离，进程级 trampoline 槽在 VM 销毁/重载 plan 后退休，避免悬空回调；同一 VM 仍要求单线程调用。
+返回 `int` 的接口成功时返回 `CI_OK`（0），失败时返回负的 `CI_E_*` 类别码（`CI_ERROR`=-1 仅用于无法归类的失败）；同一类别也可用 `ci_vm_last_error_code()` 读取，`ci_vm_last_error()` 返回消息，`ci_vm_clear_error()` 同时清除两者。`ci_vm_run`/`ci_vm_run_args` 返回状态码而非 C `main` 返回值；返回值通过 `ci_vm_result` 获取。loader 是事务性的，失败不会替换已加载包。callback 注册表按 VM 隔离，进程级 trampoline 槽在 VM 销毁/重载 plan 后永久退休（见 §6.4、§24）；同一 VM 仍要求单线程调用。
 
 ### 12.4 固定汇编调用引擎（示意）
 
@@ -673,7 +579,9 @@ ci_cb_sysv_entry:
 
 - 解释循环先用 `switch`；加载时预解码字节码。
 - FFI marshaler 只做字节拷贝/槽位填充，不做运行时类型推断。
-- 全局符号/原生函数指针在加载时解析并缓存。
+- 原生符号按需解析、按 plan 缓存：直接 `CALL_NATIVE`/`CALL_VARARG` 在**首次调用**时解析目标，并把解析结果按 plan index 缓存在 `native_plan_cache`（`runtime/src/vm.zig` 的 `resolvedNative`）；CIPI provider 句柄按 import 槽位缓存（`import_handles`）。
+- 缓存失效规则：plan store 重载/包替换清空 provider 句柄、原生 target 注册和计划目标缓存（`resetResolverCaches`），新增 `--lib` 只清空计划目标缓存（`clearNativeCache`）；显式 `--lib` 句柄本身保存在 `libraries` 中，跨 plan/包重载保留（`loadPackageInPlace` 的注释）。
+- 原生 target 注册表上限 256，超出返回 `TooManyNativeTargets`（不再静默丢弃）。
 - 回调 dispatcher 只做计划驱动的参数搬运。
 - 栈槽固定 8 字节。
 
@@ -689,25 +597,31 @@ ci_cb_sysv_entry:
 当前测试入口：
 
 ```bash
-make test            # runtime 单测 + compiler 单测 + 端到端用例 + 错误路径
-make c-testsuite     # 本地 C 子集（10/10）
-python3 scripts/c_testsuite_upstream.py  # 上游支持集 217/217，3 skip
-make fuzz            # load-only package/plan 变异
-make fuzz-exec       # 字节码执行 fuzz（300 变异 0 crash）
+make test            # runtime 单测（20）+ compiler 单测（98 个 test 块）+ 端到端用例 + 错误路径
+make c-testsuite     # 本地 C 子集（17/17）
+python3 scripts/c_testsuite_upstream.py  # 上游支持集：独立脚本默认 217/217 + 3 skip（manifest 为 218/2，见下）
+make fuzz            # load-only package/plan 变异（1000）
+make fuzz-exec       # 字节码执行 fuzz（500 变异 0 crash）
+make fuzz-bytecode   # 结构化 CIVM 变异（500）
+make lint            # civm_lint.py 校验 CIPKG/CIVM/CIPL 结构
+make evidence        # test/lint/size/test-suites-smoke/differential + check_plan_evidence.py
+make check-version   # VERSION 与 runtime/build.zig.zon、Rust crate、SBOM 一致性
 make differential    # clang 原生 vs cinterp-cc 返回值差分
 make bench           # 每用例平均运行时间
 make size-cross      # 四个目标 ReleaseSmall 体积
 make release-artifacts
-HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
+HOST=user@windows ./scripts/test_cross.sh   # 62 个跨 ABI 用例（Win64 20 / Win32 23 / ARM64 19）
 ```
+
+> `make evidence` 与 `make check-version` 由本轮新增：前者串联 `test lint size test-suites-smoke differential` 后运行 `scripts/check_plan_evidence.py`，后者校验版本一致性。
 
 测试分层：
 
-- 前端单测：`compiler` 的 LLVM IR 解析、AST/verifier、降级、ABI 计划、二进制 round-trip（`cd compiler && zig build test`）。
-- 运行时单测：CIVM、栈/帧、内存/计划校验、错误路径。
+- 前端单测：`compiler` 的 LLVM IR 解析、AST/verifier、降级、ABI 计划、二进制 round-trip（`cd compiler && zig build test`，当前 `compiler/src/**` 共 98 个 `test` 块，分 9 个测试二进制）。
+- 运行时单测：CIVM、栈/帧、内存/计划校验、错误路径、callback 槽退休（`runtime/src/vm_test.zig` 13 个 + `runtime/src/ffi/platform.zig` 7 个 ABI/计划校验单测，共 20）。
 - 端到端：hello/arrays/structs/malloc/puts/printf/snprintf、float/double/long double、struct FFI、HFA、packed、qsort/callback、ABI 边界。
-- 交叉矩阵：Win64 19、Win32 20（含 stdcall）、ARM64 19；真实 Windows SSH + qemu。
-- c-testsuite：本地 10/10；上游 217/217，skip 3（外部数据符号、向量、复杂聚合全局初始化）。
+- 交叉矩阵：`scripts/test_cross.sh` 当前 62 个用例（Win64 20、Win32 23 含 stdcall/fastcall/callback_stdcall/winapi、ARM64 19）；Wine/真实 Windows SSH + qemu。
+- c-testsuite：本地 17/17；上游 manifest（`tests/manifests/c-testsuite.json`）为 218/218 + 2 skip（`00204` 向量、`00216` 复杂聚合全局初始化）；独立脚本 `scripts/c_testsuite_upstream.py` 仍默认旧的 `tests/csuite/cinterp.skip`，多列一个已可运行的 `00189`（外部数据符号），因此报 217/217 + 3 skip。两份 skip 清单尚未统一：manifest 运行报 218/2，独立脚本报 217/3，引用时需注明来源。
 - fuzz：load-only package/plan + bytecode 执行；差分测试覆盖无外部依赖用例。
 
 ## 15. 当前边界与明确不支持
@@ -771,7 +685,7 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 - 目标指针大小贯穿 `type_size_align`、`struct_layout`、globals、GEP、alloca/load/store；Win32 结构体布局按 4B 指针计算。
 - 聚合值表示：>8B 的 load 结果保存“指向源字节的指针”；聚合 store 用 `MEMCPY`；ARM64 `[2 x i64]`/`%struct.D2` 返回值经 `extractvalue`/指针读取。
 - 新增 `select` 降级为分支；bitfield 依赖 clang 的 shift/mask lowering；`long double` 走 16B 存储/64-bit 精度路径。
-- `CallbackTable` 也会为目标 ABI 生成 callback 计划，但运行时目前只支持 SysV callback。
+- `CallbackTable` 也会为目标 ABI 生成 callback 计划。当天（2026-10-31）运行时只支持 SysV callback；**现已覆盖全部四个 ABI**（SysV x64、Win64、Win32 cdecl/stdcall、AArch64），Win32 `__fastcall` callback 在注册/调用前返回 `UnsupportedCallback`（`runtime/src/ffi/platform.zig` 的 `win32CallbackSupported`，见 §6.4、§24）。
 
 ### 19.2 运行时
 
@@ -793,10 +707,10 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
   - 所有参数在栈上，4B 对齐；byval 结构体复制原始字节；sret 隐藏指针在栈首。
   - i64 返回值合并为单个 8B `rax` ret loc（EAX:EDX）；否则 VM 会把 ret_locs>1 误判为聚合指针。
   - float 从 ST0 读取后转换为 f32；double 直接读 8B；`ret_x87` 由计划自动设置。
-  - 编译器可按 `CIPL conv` 生成 cdecl 或 stdcall 计划；stdcall 已通过真实 Win32 测试。
+  - （历史，2026-10-31）当时编译器可按 `CIPL conv` 生成 cdecl 或 stdcall 计划，stdcall 已通过真实 Win32 测试。`conv=2`（`x86_fastcallcc`）已随后接入直接调用、间接调用和 callback 计划（`convFromName`/`plan.conv`，见 §8.3、§20.2）。
   - 修复引擎恢复前未丢弃 target/conv 两个临时栈槽的问题；该 bug 在优化构建中破坏 EBX/ESI/EDI。
 - **AAPCS64**
-  - HFA 参数/≤2 向量返回走 v0/v1；`[2 x double]` 参数、`%struct.D2` 返回、16B 聚合 store 已覆盖。
+  - （历史，2026-10-31）当时 HFA 参数/≤2 向量返回走 v0/v1；`[2 x double]` 参数、`%struct.D2` 返回、16B 聚合 store 已覆盖。HFA 3/4 成员、栈上 HFA 与 4 个返回向量已在后续补齐，见 §20.5；当前边界见 §8.4/§15。
   - 大结构体通过指针/sret；x8 保存 sret；栈 16B 对齐。
 - **SysV**
   - 既有 SysV 行为保持；callback trampoline 覆盖 SysV/Win64/Win32/AArch64。
@@ -809,9 +723,12 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 - float32/double：`fadd/fsub/fmul/fdiv`、`fcmp`、`fpext/fptrunc`、`sitofp/fptosi`，含 FFI float 参数/返回。
 - long double：x86 `f80`/AArch64 `f128` 指针值表示，VM 精确算术/比较/转换；`st0` loc、SysV/Win32 x87 捕获；FFI/varargs printf 已接入。
 - bitfield、`select`、phi、VLA、内部函数指针/间接调用、packed struct、global pointer/function reloc 已接入。
-- 本地 c-testsuite 10/10；上游支持集 217/217，3 skip。
+- 本地 c-testsuite **17/17**；上游支持集在 manifest 下为 **218/218 + 2 skip**，独立脚本 `scripts/c_testsuite_upstream.py` 仍默认旧的 `tests/csuite/cinterp.skip`，报 **217/217 + 3 skip**（差异见 §14）。
 
 ### 19.5 验证矩阵与命令
+
+> **历史证据（2026-10-31 当时状态）**：下表与随后的命令是当天的记录，数字保留原样，**不代表当前基线**（单测数、cross 用例数、c-testsuite 数量和小体积数字此后均已变化）。
+> 当前数字见 §20.24、§21.3 与 §14：full 4319/4521（202 skip）、standard 396/495（99 skip）、本地 c-testsuite 17/17、cross suite 62 例（Win64 20 / Win32 23 / ARM64 19）、runtime/compiler 单测 20/98。
 
 | 目标 | 运行环境 | 用例数 | 结果 |
 | --- | --- | --- | --- |
@@ -863,7 +780,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **明确范围外**：向量类型/vector ABI、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV `i128`/向量参数；Win32 fastcall 已单独支持。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
 - **信任模型**：运行时只执行可信 CIB；不提供 Safe 模式或进程内沙箱，不可信输入由宿主自行隔离。
-- 交付物与验证数字见 19.5；旧 CIB 目标/自动链接设计已合并到 §19.8。
+- 交付物与验证数字见 19.5（历史）；当前基线见 §20.24/§21.3 与 §14；旧 CIB 目标/自动链接设计已合并到 §19.8。
 
 ### 19.8 目标声明与外部符号自动链接（2026-10-31，**历史**：链接元数据部分已被 §23 取代）
 
@@ -894,7 +811,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **固定上游**：`scripts/fetch_suites.py` 按 commit 拉取 c-testsuite、TCC tests2、chibicc、musl libc-test、GCC torture、CompCert small-tests、LLVM SingleSource、YARPGen/Csmith；源码不 vendor，放在 `build/suites/`。
 - **测试集**：csuite 17、c-testsuite 218+2 skip、TCC 97+45 skip、chibicc 15+26 skip、libc-test 47+28 skip、GCC execute 1258+46 skip、GCC compile 1411+0 skip、CompCert regression 55+20 skip、CompCert c 12+12 skip、CompCert compile 30+4 skip、LLVM UnitTests 85+8 skip、LLVM Regression/C 935+0（支持子集）、libc regression 48+21 skip、GCC ieee 64+15 skip。总计 4292 通过 / 227 显式 skip；另有 1036 个明确排除的非目标用例。
 - **跨 ABI**：`make test-suites-cross` 每目标约 145 个：csuite 17/17，c-testsuite-smoke 40、GCC-smoke 40、CompCert-smoke 24、TCC-smoke 24；Windows/ARM 平台差异有显式 per-target skip。Windows 用 SSH + Zig MinGW 头文件，ARM64 用 qemu。
-- **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；20-seed smoke 通过 16、skip 4；100-seed nightly 通过 77、skip 23。`tests/generator-known-failures.json` 明确记录已知 StackOverflow、checksum mismatch、TooManyFunctions、模块/文件上限和 native 拒绝，不静默略过。
+- **生成式差分**：`scripts/generate_diff.py` 支持 YARPGen/Csmith；当前 20-seed smoke 通过 19、skip 1；100-seed nightly 通过 93、skip 7（native 拒绝/超时/显式 `compiler limit:` 引擎上限），0 failure。`tests/generator-known-failures.json` 的 yarpgen whitelist 已清空（csmith 仍有 3 条）；stale 检测会拒绝已过期的 known-failure 条目，不静默略过。
 - **CI**：`.github/workflows/test-suites.yml` 分为 standard（PR）与 schedule nightly；artifact 保存 `build/test-suites*.json` 和生成式差分报告。
 - **策略**：不自动更新 expected/skip；新增失败必须先分类（compile/runtime/mismatch/timeout/harness），再修复或写入显式 skip；`build/suites` 不进入版本库。TCC harness 对 `__FILE__` 绝对路径、行尾空白和 TCC 编译器警告做语义归一化；已恢复 4 个误判用例。
 
@@ -902,7 +819,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - `make debug-runtime` / `zig build -Doptimize=Debug`：保留 unwind tables、frame pointer、error tracing 和 panic 栈回溯；约 8.8 MiB（含调试符号）。
 - `make runtime`：ReleaseSmall 关闭 unwind tables、frame pointer、error tracing，strip 符号，并对 ELF 额外移除 `.eh_frame`/`.eh_frame_hdr`；保留必要的 CLI/VM 错误码和简短错误信息，移除崩溃栈回溯和详细运行时诊断。
-- 当前 ReleaseSmall：native dynamic Linux x64 95,920B（裁 `.eh_frame` 后）；size-cross static sysv 77,544B；Win64 85,504B；Win32 101,888B；ARM64 88,824B。
+- 当前 ReleaseSmall：native dynamic Linux x64 102,336B（裁 `.eh_frame` 后）；size-cross static sysv 41,328B；Win64 100,352B；Win32 116,224B；ARM64 101,968B（2026-11-03 实测，均 <128K）。
 - 发布产物使用 ReleaseSmall；调试/定位崩溃使用 Debug 或 ReleaseSafe。`--dump-target`/`--dump-imports` 等包检查命令仍保留，便于诊断 CIB 内容。
 
 ### 20.2 测试重构完成状态与边界（2026-10-31）
@@ -1115,7 +1032,7 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 20.24 当前计划收敛状态（2026-11-02）
 
 - **已完成**：P0 1–3、Safe 模式移除、整数宽度/GEP/嵌套 aggregate initializer/f80 返回修复、alloca 零大小与大对象支持、packed struct 字段偏移修复、§20.26 的发布/版本/绑定/内存/musl/OS 校验/fuzz/cross-ABI CI/文档收口。
-- **当前基线**：full 4323/4521（198 skip），standard 396/495（99 skip）；GCC execute 累计回收 27 个 skip，另回收 2 个 excluded 用例；TCC `119_random_stuff` 回收；4 ABI cross suites 通过。
+- **当前基线**：full 4319/4521（202 skip），standard 396/495（99 skip）；四个 compile-only 压力用例（`limits-externdecl`、`pr37669-2`、`stuct`、`pr60822`）因超过运行时 512 imports / 64 args / 2 MiB module 上限而显式 skip（`compiler limit:` 原因）；GCC execute 累计回收 27 个 skip，另回收 2 个 excluded 用例；TCC `119_random_stuff` 回收；4 ABI cross suites 通过。
 - **保留的 dialect skip**：`bitfld-3`/`pr32244-1`/`pr34971`（GCC 期望与 Clang IR 的 bitfield 表达式宽度差异）、TCC `95_bitfields_ms`（Clang `ms_struct` 布局与 TCC 不同，native Clang 输出与 cinterp 一致）。这些不是 cinterp 运行时缺陷。
 - **P0/P1 剩余**：无；外部 inline/weak、GCC builtins、线程/atomics 等仍为明确 non-goal。
 - **明确边界**：单线程、单 VM、可信 CIB；Linux x86_64/aarch64(glibc) 或 Windows x64/x86；无进程内沙箱，不可信输入由宿主隔离；musl/macOS/未知 OS 在 load 阶段显式拒绝。
@@ -1142,7 +1059,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **文档**：`docs/cib.md` 容量/错误码与代码对齐（MAX_FUNCS 512、MAX_NAME 128、模块 2 MiB、槽栈 8192、帧 512、CIPL 1024、CIPI 512、错误码表含 `CI_E_DESTROYED`/`UnsupportedOs`/`UnsupportedLibc`）；新增英文 `docs/embedding.md`。
 - **TCC 分诊**：`119_random_stuff` 回收；`95_bitfields_ms` 的 imports 上限问题解决（256→512），剩余输出差异经 native Clang 对照确认为 `ms_struct` 方言差异，保留 skip 并更新原因。
 - **性能回归修复**：Win32 stdcall 装饰名回退最初写成 `plan_store` 查询 + `std.fmt.bufPrint` 大段逻辑，被 LLVM 内联进 `executeLoop`，ReleaseSmall 下 mandelbrot 从 85s 退化到 154s。Clang 已在 IR 中给出 `@12` 装饰，实际只需去掉前导下划线的短回退；移除大段逻辑后恢复 ~86s（基准 85s）。`validMemoryRange` 和 native-target 注册保留并强制内联/放在非热路径。
-- **验证**：`make test`、`make c-testsuite`、`make differential`、standard 396/495（99 skip）、full 4323/4521（198 skip）、全部 fuzz 目标、三目标 cross suite（61 项）、release tarball smoke、pkg-config/CMake/Rust smoke 均通过。
+- **验证**：`make test`、`make c-testsuite`、`make differential`、standard 396/495（99 skip）、full 4319/4521（202 skip）、全部 fuzz 目标、三目标 cross suite（2026-11-02 当天 61 项；`ffi_callback_stdcall` 加入后当前脚本为 62 项，见 §14）、release tarball smoke、pkg-config/CMake/Rust smoke 均通过。
 
 ## 21. 2026-11-02 Zig 编译器成为默认路径
 
@@ -1184,7 +1101,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **P0/P1**：Python 编译器 `--cc zig` 验证、`compiler/` 骨架与完整 lowerer；
   examples/FFI/HFA/callback/long double/sret 全部通过。
-- **P2**：standard **396/495（99 skip）**、full **4323/4521（198 skip）**，
+- **P2**：standard **396/495（99 skip）**、full **4319/4521（202 skip）**，
   与 Python+clang 基线一致。
 - **P3**：四目标 csuite 均 **17/17**（x86_64-linux、aarch64-linux、
   x86_64-windows、i686-windows）；Win64/Win32 使用
@@ -1217,12 +1134,23 @@ make release-artifacts
 - `scripts/civm_lint.py` 校验 CIPKG 长度、CIVM 函数表/代码边界、local≥param、
   CIPL plan/arg/loc 计数、CIPM ABI 一致性，并对本机目标执行 runtime
   `--load-only`；`make lint` 为 0 findings。
-- `scripts/check_plan_evidence.py` 解析 `build/evidence-*.txt` 和
-  `build/plan-verification.json`，当前 **35/35 PASS**。
+- `scripts/check_plan_evidence.py` 读取构建真正写出的结构化产物，而不是早已不存在的
+  `build/evidence-*.txt`：`build/test-suites-smoke.json`（17 通过）、
+  `build/test-suites.json`（396/99）、`build/test-suites-full.json`（4319/202）、
+  `build/test-suites-nightly.json`（只做一致性检查）、
+  `build/generate-diff-nightly.json`（0 failure）和 `build/release/cinterp-*.tar.gz`
+  （4 个 tarball + `SHA256SUMS`，Linux tarball 内含 `bin/cinterp-cc`），并检查
+  `build/cross/cinterp-run{64,32,-arm64}` 这些 cross runtime。
+- 缺失的 full/cross/nightly/release 报告只列为 `NOT PROVIDED`，不会失败；只有
+  `--require-full|--require-cross|--require-nightly|--require-release|--require-smoke|--require-standard|--require-all`
+  才把它们变成致命项。`make evidence` 先跑 `test lint size test-suites-smoke differential`
+  再执行 checker；CI nightly 以 `--require-nightly` 运行
+  （`.github/workflows/test-suites.yml`），本地不强制 full/cross。checker 自身把结果写到
+  `build/plan-verification.json`。
 - full 的 benchmark 在 8 并发下会因 120s wall-clock 超时；默认
-  `make test-suites-full` 单并发为 **4323/4521（198 skip）**，与 Python 基线一致。
+  `make test-suites-full` 单并发为 **4319/4521（202 skip）**；其中 4 个 compile-only 压力用例因运行时上限显式 skip，可执行用例基线仍为 1862。
 
-### 21.6 IR 解析器重构与旧解析器删除（2026-11-03）
+### 21.5 IR 解析器重构与旧解析器删除（2026-11-03）
 
 - **唯一前端**：`compiler/src/ir/{lexer,ast,parser,verify,tests}.zig` 提供 no-copy
   token、typed `Module/Function/Instruction/Type/Value/Attr` AST、多行 switch、
@@ -1233,7 +1161,7 @@ make release-artifacts
   `buildPlanForAbi`（SysV/Win64/Win32/AAPCS64、byval/sret、返回 Loc 分类）
   原样迁入 `src/abi.zig`；`main.zig` 与 `lower_ast.zig` 只依赖该模块，
   CIVM/CIPL/CIPM/CIPI 字节与 plan 顺序不变。
-- **验证**：AST full **4323/4521（198 skip）**、standard **396/495（99 skip）**、
+- **验证**：AST full（迁移当时 4323/198；当前 4319/202，见 §14）、standard **396/495（99 skip）**、
   smoke 17/17、四目标 csuite 17/17；示例 fixtures 与 17 个 lowering 用例的
   golden（`src/testdata/lower_ast/golden/`）在删除前后逐字节一致；
   parser/AST/verifier/abi/imports 单测通过（当时另有 `winmd.zig` 单测，已随 §23 删除，改为 `link_index`/`link_wrappers`/`win_defs`/`libc_defs` 单测）；前端使用 `-g0`，debug info 本来就不进入 CIB。
@@ -1246,7 +1174,9 @@ make release-artifacts
   以 `null` 结尾的 callee 丢调用）。现在保留为 AST 正确性单测与 golden 期望，
   详见 `docs/ir-parser-differences.md`；不得为对齐旧行为而复制这些 bug。
 
-### 21.5 已知限制
+### 21.6 已知限制
+
+> 本节是 2026-11-02/03 迁移阶段的限制记录；当前完整的已知限制清单见 §24。
 
 - 运行时 plan 参数上限 64；compile-only 压力用例
   `__snprintf_chk` 1005 args 会生成不可加载包，但 full 编译测试通过，属于
@@ -1347,3 +1277,14 @@ make test-suites-full
 ```
 
 `--dump-imports` 预期：Linux `printf -> libc.so.6`、`sin -> libm.so.6`；Windows x64 `GetTickCount64 -> kernel32.dll`、`GetSystemMetrics -> user32.dll`；x86 `MessageBoxA@16` 使用 `MessageBoxA` 导出符号且 `conv=1`，`wsprintfA` 为 `conv=0`。
+
+## 24. 当前已知限制（2026-11-03）
+
+本轮（Wave 1/2）修复后仍然存在、并已明确记录的限制。它们是有意保留的边界，不是未归档的缺陷；每条都指向代码或文档，后续实现时以那里为准。
+
+- **聚合返回值共享 `ret_buf`（别名）**：VM 只有一个 4 KiB 的 `ret_buf`（`runtime/src/vm.zig`），`invokeFfi` 把多 loc 聚合返回值拷到同一缓冲区并返回指针；两个聚合返回值同时存活时会互相覆盖。修复需要结果所有权/生命周期重构，本轮不做；宿主在跨调用保存聚合指针时应自行复制。
+- **生成式差分 whitelist**：`tests/generator-known-failures.json` 的 yarpgen 条目已清空；100-seed nightly 的 7 个 skip 均为 native 拒绝/超时或显式 `compiler limit:` 引擎上限，不是静默略过。csmith 仍有 3 条 known failure。`scripts/generate_diff.py` 保留 stale 检测（known failure 现在通过会报错）并保证失败可见。
+- **Win32 `__fastcall` callback 不支持**：`runtime/src/ffi/platform.zig` 的 `win32CallbackSupported` 对 `conv == 2` 返回 false，VM 在注册/调用前返回 `UnsupportedCallback`（trampoline 只保存出参栈区，ECX/EDX 参数会丢）。原生/间接 `__fastcall` 调用本身已支持（§8.3）。
+- **原生库句柄从不卸载**：`--lib` 与 CIPI provider 的 `LoadLibrary`/`dlopen` 句柄保存在 `libraries`/`import_handles` 中，随 VM 生命周期保留，没有 `dlclose`/`FreeLibrary`。长期多包复用的宿主进程需自建进程边界。
+- **可信 CIB 模型**：运行时只执行可信构建产物，不提供进程内沙箱、Safe 模式或指针隔离；VM 指针就是宿主指针。不可信输入由宿主隔离（`docs/embedding.md`、§20.21）。
+- **callback 槽位是 256 次一次性预算**：静态 trampoline 池固定 256 槽且**永久退休**（`runtime/src/vm.zig` 的 `callback_retired`/`callback_owners`）；VM 销毁或 plan 重载后槽位不复用，单进程累计注册超过 256 个 callback 后返回 `TooManyCallbacks`（§2、§6.4、§12.3）。

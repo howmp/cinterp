@@ -23,14 +23,33 @@ jobs:
       - name: install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang python3 make binutils gcc-aarch64-linux-gnu pkg-config cmake
-
-      - name: verify VERSION matches tag
-        if: startsWith(github.ref, 'refs/tags/')
-        run: test "v$(tr -d '[:space:]' < VERSION)" = "${GITHUB_REF_NAME}"
+          sudo apt-get install -y clang python3 make binutils gcc g++ \
+            gcc-aarch64-linux-gnu pkg-config cmake
+          cargo --version
+          rustc --version
 
       - name: integration tests
         run: make test
+
+      - name: version consistency (VERSION, build.zig.zon, Cargo.toml.in, tag)
+        run: python3 scripts/check_version.py
+
+      - name: lint bytecode packages
+        run: make lint
+
+      - name: size budget
+        run: make size
+
+      - name: cross-target size budget
+        run: make size-cross
+
+      - name: fetch smoke suites
+        run: |
+          python3 scripts/fetch_suites.py \
+            --suite c-testsuite --suite tcc --suite CompCert --suite gcc-torture
+
+      - name: smoke test suites
+        run: make test-suites-smoke
 
       - name: local C testsuite
         run: make c-testsuite
@@ -38,58 +57,266 @@ jobs:
       - name: differential check
         run: make differential
 
-      - name: build release artifacts (tarballs, SBOM, checksums)
+      - name: build release artifacts (tarballs, SBOM, notices, checksums)
         run: make release-artifacts
 
-      - name: pkg-config / CMake / tarball smoke
+      - name: verify release artifacts
         run: |
           set -euo pipefail
-          mkdir -p /tmp/release-smoke
-          tar -xzf build/release/cinterp-*.tar.gz -C /tmp/release-smoke
-          D="$(echo /tmp/release-smoke/cinterp-*-sysv-x86_64)"
-          "$D/bin/cinterp" compile "$D/examples/hello.c" -o /tmp/release-smoke/hello.cib >/dev/null
-          "$D/cinterp-run" /tmp/release-smoke/hello.cib | grep -q "result: 42"
+          python3 scripts/check_version.py --sbom 'build/release/*.spdx.json'
+          test -s build/release/SHA256SUMS
+          (cd build/release && sha256sum -c SHA256SUMS)
+
+      - name: tarball smoke (compiler, runner, --lib, pkg-config, CMake)
+        run: |
+          set -euo pipefail
+          WORK=/tmp/release-smoke
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          tar -xzf build/release/cinterp-*-sysv-x86_64.tar.gz -C "$WORK"
+          D="$(echo "$WORK"/cinterp-*-sysv-x86_64)"
+          test -d "$D"
+          echo "$D" > "$WORK/tarball-dir"
+          VERSION="$(cat VERSION)"
+          echo "tarball: $D"
+
+          # The tarball README is the generated release README, not the repo one.
+          grep -q 'bin/cinterp-cc' "$D/README.md"
+          grep -q 'ships the compiler' "$D/README.md"
+          ! grep -q 'This is a runtime-only tarball' "$D/README.md"
+          test -x "$D/bin/cinterp-cc"
+          test -s "$D/THIRD_PARTY_NOTICES.md"
+          test -s "$D/cmake/cinterpConfigVersion.cmake"
+          test -s "$D/lib/cmake/cinterp/cinterpConfig.cmake"
+          python3 - "$D/SBOM.spdx.json" <<'PY'
+          import json
+          import sys
+          doc = json.load(open(sys.argv[1], encoding="utf-8"))
+          packages = {p["name"] for p in doc["packages"]}
+          files = {f["fileName"] for f in doc["files"]}
+          assert {"mingw-w64-defs", "glibc-abilists"} <= packages, sorted(packages)
+          assert "./THIRD_PARTY_NOTICES.md" in files, sorted(files)
+          PY
+
+          # Compiler + runner + --lib smoke through the extracted tarball.
+          "$D/bin/cinterp" compile "$D/examples/hello.c" -o "$WORK/hello.cib"
+          "$D/cinterp-run" "$WORK/hello.cib" 2>&1 | grep -q 'result: 42'
+          "$D/cinterp-run" --dump-target --load-only "$WORK/hello.cib" 2>&1 \
+            | grep -q 'target:'
+          cc -shared -fPIC -O0 "$D/examples/ffi_structs_helper.c" \
+            -o "$WORK/libstruct_helpers.so"
+          "$D/bin/cinterp" compile "$D/examples/ffi_structs.c" \
+            -o "$WORK/ffi_structs.cib"
+          "$D/cinterp-run" --lib "$WORK/libstruct_helpers.so" "$WORK/ffi_structs.cib" \
+            2>&1 | grep -q 'result: 28'
+
+          # pkg-config metadata: relocatable, versioned, static libs declared.
           export PKG_CONFIG_PATH="$D/pkgconfig"
-          pkg-config --cflags --libs cinterp >/dev/null
+          pkg-config --modversion cinterp | grep -qx "$VERSION"
+          pkg-config --cflags --libs cinterp
+          pkg-config --static --libs cinterp | grep -q -- '-ldl'
+          pkg-config --static --libs cinterp | grep -q -- '-lpthread'
+          pkg-config --static --libs cinterp | grep -q -- '-lm'
 
-      - name: Rust binding check
+          cat > "$WORK/host.c" <<'EOF'
+          #include "cinterp.h"
+
+          #include <stdio.h>
+          #include <stdlib.h>
+
+          static unsigned char *read_file(const char *path, size_t *size) {
+              FILE *f = fopen(path, "rb");
+              if (!f) return NULL;
+              if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+              long n = ftell(f);
+              if (n < 0) { fclose(f); return NULL; }
+              rewind(f);
+              unsigned char *buf = malloc((size_t)n);
+              if (!buf) { fclose(f); return NULL; }
+              if (fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); fclose(f); return NULL; }
+              fclose(f);
+              *size = (size_t)n;
+              return buf;
+          }
+
+          int main(int argc, char **argv) {
+              if (argc != 2) {
+                  fprintf(stderr, "usage: %s package.cib\n", argv[0]);
+                  return 2;
+              }
+              size_t size = 0;
+              unsigned char *data = read_file(argv[1], &size);
+              if (!data) return 3;
+              ci_vm *vm = ci_vm_create(0);
+              if (!vm) return 4;
+              int rc = ci_vm_load_package(vm, data, size);
+              if (rc != CI_OK) {
+                  fprintf(stderr, "load: %d %s\n", rc, ci_vm_last_error(vm));
+                  return 5;
+              }
+              rc = ci_vm_run(vm, "main");
+              if (rc != CI_OK) {
+                  fprintf(stderr, "run: %d %s\n", rc, ci_vm_last_error(vm));
+                  return 6;
+              }
+              printf("result = %lld\n", (long long)ci_vm_result(vm));
+              ci_vm_destroy(vm);
+              free(data);
+              return 0;
+          }
+          EOF
+
+          # C host built only from `pkg-config --cflags --libs cinterp`.
+          cc "$WORK/host.c" $(pkg-config --cflags --libs cinterp) \
+            -o "$WORK/host-pkgconfig"
+          LD_LIBRARY_PATH="$D/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            "$WORK/host-pkgconfig" "$WORK/hello.cib" | grep -qx 'result = 42'
+
+          # Static consumer: force libcinterp.a plus the declared private libs.
+          mkdir -p "$WORK/static-lib"
+          cp "$D/lib/libcinterp.a" "$WORK/static-lib/"
+          cc "$WORK/host.c" -I"$D/include" -L"$WORK/static-lib" \
+            -Wl,-Bstatic -lcinterp -Wl,-Bdynamic -ldl -lpthread -lm \
+            -o "$WORK/host-static"
+          "$WORK/host-static" "$WORK/hello.cib" | grep -qx 'result = 42'
+
+          # CMake consumer: find_package(cinterp 0.1 REQUIRED).
+          mkdir -p "$WORK/cmake-consumer"
+          cp "$WORK/host.c" "$WORK/cmake-consumer/host.c"
+          cat > "$WORK/cmake-consumer/CMakeLists.txt" <<'EOF'
+          cmake_minimum_required(VERSION 3.16)
+          project(cinterp_consumer C)
+
+          find_package(cinterp 0.1 REQUIRED)
+
+          add_executable(host host.c)
+          target_link_libraries(host PRIVATE cinterp::cinterp)
+          EOF
+          cmake -S "$WORK/cmake-consumer" -B "$WORK/cmake-consumer/build" \
+            -DCMAKE_PREFIX_PATH="$D" >/dev/null
+          cmake --build "$WORK/cmake-consumer/build" >/dev/null
+          LD_LIBRARY_PATH="$D/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            "$WORK/cmake-consumer/build/host" "$WORK/hello.cib" | grep -qx 'result = 42'
+
+          # The package version file must reject a different major series.
+          mkdir -p "$WORK/cmake-version-negative"
+          cat > "$WORK/cmake-version-negative/CMakeLists.txt" <<'EOF'
+          cmake_minimum_required(VERSION 3.16)
+          project(cinterp_negative C)
+
+          find_package(cinterp 1.0 REQUIRED)
+          EOF
+          if cmake -S "$WORK/cmake-version-negative" \
+              -B "$WORK/cmake-version-negative/build" \
+              -DCMAKE_PREFIX_PATH="$D" >/dev/null 2>&1; then
+            echo "error: find_package(cinterp 1.0) unexpectedly succeeded" >&2
+            exit 1
+          fi
+          echo "cmake version gate: find_package(cinterp 1.0) rejected as expected"
+
+      - name: Rust binding smoke (cargo run --offline, result = 42)
         run: |
           set -euo pipefail
-          D="$(echo /tmp/release-smoke/cinterp-*-sysv-x86_64)"
-          cargo check --manifest-path "$D/rust/cinterp-sys/Cargo.toml" --offline
+          D="$(cat /tmp/release-smoke/tarball-dir)"
+          MANIFEST="$D/rust/cinterp-sys/Cargo.toml"
+          export LD_LIBRARY_PATH="$D/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          cargo run --offline --manifest-path "$MANIFEST" \
+            --example run_hello -- /tmp/release-smoke/hello.cib --expect 42 \
+            | grep -qx 'result = 42'
+          cargo test --offline --manifest-path "$MANIFEST"
 
-      - name: import signing key
-        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+      - name: sign checksums (optional)
+        id: signing
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-
-      - name: sign checksums
-        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
         working-directory: build/release
         run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::release artifacts are unsigned: secrets.GPG_PRIVATE_KEY is not set"
+            {
+              echo "### Release signing"
+              echo
+              echo "**Unsigned release.** No GPG key is configured for this"
+              echo "repository, so \`SHA256SUMS.asc\` and \`KEYS.asc\` are not"
+              echo "produced. Verify downloads with \`sha256sum -c SHA256SUMS\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           KEY="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')"
           test -n "$KEY"
           gpg --batch --yes --armor --local-user "$KEY" --detach-sign SHA256SUMS
           gpg --armor --export "$KEY" > KEYS.asc
+          test -s SHA256SUMS.asc
+          test -s KEYS.asc
+          gpg --batch --verify SHA256SUMS.asc SHA256SUMS
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release signing"
+            echo
+            echo "Signed \`SHA256SUMS\` with key \`$KEY\`; \`KEYS.asc\` holds the public key."
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - name: upload release artifacts
+        uses: actions/upload-artifact@v4
         with:
           name: cinterp-release
+          if-no-files-found: error
           path: |
             build/release/*.tar.gz
             build/release/*.spdx.json
             build/release/SHA256SUMS
+
+      - name: upload signatures (when signed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinterp-release-signatures
+          if-no-files-found: ignore
+          path: |
             build/release/SHA256SUMS.asc
             build/release/KEYS.asc
 
-      - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: publish release (signed)
+        if: startsWith(github.ref, 'refs/tags/') && steps.signing.outputs.signed == 'true'
+        uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
+          fail_on_unmatched_files: false
           files: |
             build/release/*.tar.gz
             build/release/*.spdx.json
             build/release/SHA256SUMS
             build/release/SHA256SUMS.asc
             build/release/KEYS.asc
-          generate_release_notes: true
+
+      - name: publish release (unsigned)
+        if: startsWith(github.ref, 'refs/tags/') && steps.signing.outputs.signed != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: false
+          body: |
+            ## ${{ github.ref_name }} — unsigned build
+
+            > [!WARNING]
+            > **This release is unsigned.** No GPG signing key was configured
+            > for the build, so there is no `SHA256SUMS.asc` or `KEYS.asc`
+            > asset. Verify downloads against `SHA256SUMS` only:
+            >
+            > ```sh
+            > sha256sum -c SHA256SUMS
+            > ```
+            >
+            > `SHA256SUMS` detects corrupted or tampered downloads; it does not
+            > prove who produced them.
+
+            The `sysv-x86_64` tarball contains the compiler (`bin/cinterp-cc`)
+            and the runtime. The `win64-x86_64`, `win32-x86` and `arm64`
+            tarballs are runtime-only. Each tarball ships its own `README.md`,
+            `SBOM.spdx.json` and — when it contains the compiler —
+            `THIRD_PARTY_NOTICES.md`.
+          files: |
+            build/release/*.tar.gz
+            build/release/*.spdx.json
+            build/release/SHA256SUMS

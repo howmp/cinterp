@@ -17,6 +17,63 @@ TOOL = "Tool: cinterp-gen-sbom"
 # turns into the external-symbol index embedded in `cinterp-cc`.
 ZIG_VERSION = "0.13.0"
 
+# Written next to `bin/cinterp-cc`, i.e. only into tarballs that ship the
+# compiler. It is part of the SBOM file list, so it has to exist before
+# `file_records()` runs.
+NOTICE_NAME = "THIRD_PARTY_NOTICES.md"
+
+
+def notice_text(version: str, target: str) -> str:
+    """Human-readable attribution for the derived data in `cinterp-cc`."""
+    return f"""# Third-party notices — cinterp {version} ({target})
+
+This tarball ships `cinterp-cc`, which embeds an external-symbol index
+generated at build time from data bundled with Zig {ZIG_VERSION}. That derived
+data is redistributed under the terms below. No upstream source code is
+included.
+
+## MinGW-w64 export definitions (ZPL-2.1)
+
+- SPDX package: `mingw-w64-defs`
+- Upstream: https://github.com/mingw-w64/mingw-w64
+- Input files: the `lib32`/`lib64`/`lib-common` `.def` export lists shipped
+  with Zig.
+- License: ZPL-2.1 (Zope Public License 2.1)
+- Copyright: Copyright (c) 2009-2013 by the mingw-w64 project
+
+Reproduced data: the symbol name -> DLL and calling-convention mapping used to
+auto-link Windows API imports (`compiler/src/win_defs.zig`). Only factual API
+metadata is copied.
+
+## glibc ABI lists (LGPL-2.1-or-later)
+
+- SPDX package: `glibc-abilists`
+- Upstream: https://sourceware.org/glibc/
+- Input files: Zig's `libc/glibc/abilists` symbol/version table.
+- License: LGPL-2.1-or-later
+- Copyright: Copyright (C) Free Software Foundation, Inc.
+
+Reproduced data: symbol name -> versioned soname mappings used by
+`compiler/src/libc_defs.zig`. Only factual symbol names, versions and library
+assignments are copied. The runtime resolves glibc symbols dynamically at run
+time like any other ELF program; no glibc source code is copied or statically
+linked.
+
+## Build tools (not redistributed)
+
+Zig {ZIG_VERSION} (MIT), LLVM/clang (Apache-2.0 WITH LLVM-exception) and
+Python 3.10+ (PSF-2.0) are build-time dependencies. They are not bundled in
+this tarball.
+
+## Scope
+
+This file is emitted only for tarballs that contain `bin/cinterp-cc` (today the
+Linux x86-64 tarball). Runtime-only tarballs (win64/win32/arm64) contain no
+derived MinGW-w64 or glibc data, so they ship no notice file and their
+`SBOM.spdx.json` does not name those packages. The same facts are recorded
+programmatically in `SBOM.spdx.json`.
+"""
+
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -61,7 +118,7 @@ def file_records(root: Path) -> list[dict]:
     return records
 
 
-def validate_document(document: dict) -> None:
+def validate_document(document: dict, ships_compiler: bool) -> None:
     """Check the referential integrity SPDX consumers rely on.
 
     Every relationship endpoint must exist as a package, a file or the
@@ -90,6 +147,31 @@ def validate_document(document: dict) -> None:
         if removed in names:
             raise SystemExit(f"SBOM must not reference the removed {removed} package")
 
+    file_names = {record["fileName"] for record in document["files"]}
+    notice_entry = f"./{NOTICE_NAME}"
+    derived = {"mingw-w64-defs", "glibc-abilists"}
+    if ships_compiler:
+        if notice_entry not in file_names:
+            raise SystemExit(
+                f"compiler tarball SBOM is missing {NOTICE_NAME}; "
+                "generate it before the file list"
+            )
+        missing = derived - set(names)
+        if missing:
+            raise SystemExit(
+                "compiler tarball SBOM is missing derived-data packages: "
+                + ", ".join(sorted(missing))
+            )
+    else:
+        if notice_entry in file_names:
+            raise SystemExit(f"runtime-only SBOM must not include {NOTICE_NAME}")
+        claimed = derived & set(names)
+        if claimed:
+            raise SystemExit(
+                "runtime-only SBOM must not claim derived-data packages: "
+                + ", ".join(sorted(claimed))
+            )
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -98,11 +180,39 @@ def main() -> int:
     parser.add_argument("--name", default="cinterp")
     parser.add_argument("--version", required=True)
     parser.add_argument("--target", default="native")
+    parser.add_argument(
+        "--no-notice",
+        action="store_true",
+        help=(
+            f"do not write {NOTICE_NAME}; rejected when bin/cinterp-cc is "
+            "present because compiler tarballs must ship the notice"
+        ),
+    )
     args = parser.parse_args()
 
     root = args.root.resolve()
     if not root.is_dir():
         raise SystemExit(f"not a directory: {root}")
+
+    # Only the `cinterp-cc` compiler embeds the generated external-symbol
+    # index; the runtime-only tarballs (win64/win32/arm64) do not.
+    ships_compiler = (root / "bin" / "cinterp-cc").is_file()
+
+    # Emit (or drop) the notice before hashing, so it appears in the SBOM file
+    # list, the package verification code and the tarball.
+    notice_path = root / NOTICE_NAME
+    if ships_compiler:
+        if args.no_notice:
+            raise SystemExit(
+                f"{NOTICE_NAME} is required when bin/cinterp-cc is packaged; "
+                "drop --no-notice"
+            )
+        notice_path.write_text(notice_text(args.version, args.target))
+        print(f"notice: {notice_path}")
+    elif notice_path.exists():
+        notice_path.unlink()
+        print(f"notice: removed stale {notice_path} (runtime-only tree)")
+
     files = file_records(root)
     digest = hashlib.sha256()
     for record in files:
@@ -118,10 +228,6 @@ def main() -> int:
     python_id = "SPDXRef-Package-python"
     mingw_id = "SPDXRef-Package-mingw-w64-defs"
     glibc_abilists_id = "SPDXRef-Package-glibc-abilists"
-
-    # Only the `cinterp-cc` compiler embeds the generated external-symbol
-    # index; the runtime-only tarballs (win64/win32/arm64) do not.
-    ships_compiler = (root / "bin" / "cinterp-cc").is_file()
 
     packages = [
         {
@@ -189,7 +295,8 @@ def main() -> int:
                     "cinterp-cc is generated at build time by "
                     "compiler/tools/gen_link_index.zig from the MinGW-w64 "
                     "lib32/lib64/lib-common .def files shipped with Zig. The "
-                    "ZPL 2.1 attribution is recorded in this SBOM."
+                    "ZPL 2.1 attribution is recorded in this SBOM and in "
+                    f"{NOTICE_NAME}."
                 ),
             }
         )
@@ -212,7 +319,9 @@ def main() -> int:
                     "compiler/tools/gen_link_index.zig from Zig's "
                     "libc/glibc/abilists symbol/version table (glibc ABI lists). "
                     "Only factual symbol names and library assignments are "
-                    "reproduced; no glibc code is copied."
+                    "reproduced; no glibc code is copied. The "
+                    "LGPL-2.1-or-later attribution is recorded in this SBOM and "
+                    f"in {NOTICE_NAME}."
                 ),
             }
         )
@@ -264,7 +373,7 @@ def main() -> int:
         "files": files,
         "relationships": relationships,
     }
-    validate_document(document)
+    validate_document(document, ships_compiler)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(document, indent=2, sort_keys=False) + "\n")
     print(f"SBOM: {args.output} ({len(files)} files)")

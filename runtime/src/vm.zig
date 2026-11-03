@@ -401,6 +401,9 @@ pub const VM = struct {
     sp: usize = 0,
     mem: []u8 = &.{},
     mem_top: usize = 0,
+    /// First byte of the argv/envp area `buildArgArea` carved out of `mem`;
+    /// zero means no area is reserved and the whole region is allocatable.
+    arg_area_start: usize = 0,
     plan_store: ?*plan_loader.Store = null,
     target: ?link_loader.TargetInfo = null,
     imports: link_loader.Table = .{},
@@ -426,6 +429,23 @@ pub const VM = struct {
     callback_destroying: bool = false,
     native_targets: [256]usize = [_]usize{0} ** 256,
     native_target_count: usize = 0,
+    native_plan_cache: [plan_loader.MAX_PLANS]?*const anyopaque = [_]?*const anyopaque{null} ** plan_loader.MAX_PLANS,
+
+    /// Upper bound for allocations in linear memory. Once the argv/envp area is
+    /// built it sits at the top of `mem` and must not be overwritten.
+    fn memLimit(self: *const VM) usize {
+        return if (self.arg_area_start != 0) self.arg_area_start else self.mem.len;
+    }
+
+    fn clearNativeCache(self: *VM) void {
+        for (&self.native_plan_cache) |*cached| cached.* = null;
+    }
+
+    fn resetResolverCaches(self: *VM) void {
+        self.import_handles = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS);
+        self.native_target_count = 0;
+        self.clearNativeCache();
+    }
 
     pub fn setError(self: *VM, msg: []const u8) void {
         const n = @min(msg.len, self.last_error.len - 1);
@@ -470,6 +490,8 @@ pub const VM = struct {
             old.deinit(std.heap.page_allocator);
         }
         self.plan_store = new_store;
+        // Provider handles and resolved targets belong to the replaced plans.
+        self.resetResolverCaches();
     }
 
     fn releaseCallbacks(self: *VM) void {
@@ -494,6 +516,7 @@ pub const VM = struct {
             old.deinit(std.heap.page_allocator);
             self.plan_store = null;
         }
+        self.resetResolverCaches();
     }
 
     pub fn loadLibrary(self: *VM, path: []const u8) !void {
@@ -505,6 +528,8 @@ pub const VM = struct {
         const handle = native.load(cpath) orelse return error.LibraryNotFound;
         self.libraries[self.library_count] = handle;
         self.library_count += 1;
+        // A new `--lib` handle takes precedence over resolved targets.
+        self.clearNativeCache();
     }
 
     fn loadPackageInPlace(self: *VM, bytes: []const u8) !void {
@@ -573,6 +598,10 @@ pub const VM = struct {
         scratch.plan_store = null;
         self.target = scratch.target;
         self.imports = scratch.imports;
+        // Explicit `--lib` handles outlive a package swap; per-plan provider
+        // handles and resolved native targets do not, because they are keyed by
+        // the replaced plan indexes.
+        self.resetResolverCaches();
 
         scratch.module_buf = &.{};
         scratch.module_len = 0;
@@ -736,16 +765,15 @@ pub const VM = struct {
         return error.SymbolNotFound;
     }
 
-    fn recordNativeTarget(self: *VM, addr: usize) void {
+    fn recordNativeTarget(self: *VM, addr: usize) !void {
         if (addr == 0) return;
         var i: usize = 0;
         while (i < self.native_target_count) : (i += 1) {
             if (self.native_targets[i] == addr) return;
         }
-        if (self.native_target_count < self.native_targets.len) {
-            self.native_targets[self.native_target_count] = addr;
-            self.native_target_count += 1;
-        }
+        if (self.native_target_count >= self.native_targets.len) return error.TooManyNativeTargets;
+        self.native_targets[self.native_target_count] = addr;
+        self.native_target_count += 1;
     }
 
     fn isNativeTarget(self: *const VM, addr: usize) bool {
@@ -771,6 +799,18 @@ pub const VM = struct {
 
         if (self.searchSymbol(name, .all)) |sym| return sym;
         return error.SymbolNotFound;
+    }
+
+    /// Resolve a plan's native symbol, remembering the target per plan index so
+    /// repeated `CALL_NATIVE` in a loop skips symbol lookup. The cache is
+    /// dropped whenever the plans or the `--lib` handles change.
+    fn resolvedNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
+        const slot: usize = plan_index;
+        if (slot >= self.native_plan_cache.len) return self.resolveNative(plan_index, name);
+        if (self.native_plan_cache[slot]) |cached| return cached;
+        const target = try self.resolveNative(plan_index, name);
+        self.native_plan_cache[slot] = target;
+        return target;
     }
 
     fn invokeFfi(self: *VM, plan: abi.CallPlan, target: *const anyopaque) !void {
@@ -941,6 +981,7 @@ pub const VM = struct {
         for (0..self.values.len) |i| self.values[i] = .{ .i = 0 };
         self.sp = 0;
         self.mem_top = 0;
+        self.arg_area_start = 0;
         @memset(self.mem, 0);
         self.frame_count = 0;
         self.result = 0;
@@ -977,6 +1018,7 @@ pub const VM = struct {
         const total = strings_len + arg_ptrs_size + env_ptrs_size + 16;
         if (total >= self.mem.len) return error.OutOfMemory;
         const area = self.mem.len - total;
+        self.arg_area_start = area;
         var pos: usize = area;
         var arg_ptrs: [max_ptrs]usize = undefined;
         for (cargs, 0..) |arg, idx| {
@@ -1512,6 +1554,19 @@ pub const VM = struct {
                     const store = self.plan_store orelse return error.NoPlans;
                     const pidx: usize = plan_idx;
                     const p = store.planAt(pidx) orelse return error.BadPlan;
+                    // Reject a plan the platform cannot marshal now, instead
+                    // of silently dropping the callback when it is invoked.
+                    const plan = store.callPlan(p);
+                    try platform.validate(plan);
+                    // The i686 callback trampoline only captures the outgoing
+                    // argument area. `__fastcall` passes its first two scalar
+                    // arguments in ECX/EDX, which the trampoline never reads, so
+                    // such a callback would run with zeroed arguments; refuse it
+                    // here instead of calling the wrong code. (`__cdecl` and
+                    // `__stdcall` both keep their arguments on the stack and
+                    // stay supported.)
+                    if (platform.abi_kind == .win32 and !platform.win32CallbackSupported(plan))
+                        return error.UnsupportedCallback;
 
                     callback_mutex.lock();
                     defer callback_mutex.unlock();
@@ -1521,6 +1576,11 @@ pub const VM = struct {
                     if (mapped >= 0) {
                         global_slot = @intCast(mapped);
                     } else {
+                        // Retired trampolines stay retired: a host may still
+                        // hold a function pointer from a destroyed VM, and
+                        // reusing its slot would redirect that pointer into a
+                        // different VM. The pool is therefore a one-way,
+                        // process-wide budget of 256 callback registrations.
                         var g: usize = 0;
                         var found = false;
                         while (g < callback_owners.len) : (g += 1) {
@@ -1535,7 +1595,7 @@ pub const VM = struct {
                     }
                     self.callback_entries[global_slot] = .{
                         .func = fidx,
-                        .plan = store.callPlan(p),
+                        .plan = plan,
                     };
                     callback_owners[global_slot] = self;
                     const addr = platform.callbackTable(global_slot) orelse return error.UnsupportedCallback;
@@ -1557,8 +1617,8 @@ pub const VM = struct {
                     // a callee that does not know the argument count.
                     if (plan.conv == 0 and op == OP_CALL_NATIVE and platform.abi_kind == .win32)
                         plan.conv = win32ConvFromName(name);
-                    const target = try self.resolveNative(idx, name);
-                    self.recordNativeTarget(@intFromPtr(target));
+                    const target = try self.resolvedNative(idx, name);
+                    try self.recordNativeTarget(@intFromPtr(target));
                     try self.invokeFfi(plan, target);
                 },
                 OP_FPCLASS => {
@@ -1575,7 +1635,7 @@ pub const VM = struct {
                     const v = try self.pop();
                     if (v.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(v.i);
-                    if (n > self.mem.len) return error.OutOfMemory;
+                    if (n > self.memLimit()) return error.OutOfMemory;
                     self.mem_top = n;
                 },
                 OP_VA_START => {
@@ -1607,7 +1667,7 @@ pub const VM = struct {
                                 ptr = addressFromBits(v.i);
                             }
                             pos = (pos + alignment - 1) & ~(alignment - 1);
-                            if (pos + n > self.mem.len) return error.OutOfMemory;
+                            if (pos + n > self.memLimit()) return error.OutOfMemory;
                             if (ptr) |src| {
                                 if (src + n > @intFromPtr(&self.mem[0]) + self.mem.len) return error.BadAddress;
                                 @memcpy(self.mem[pos .. pos + n], self.mem[src - @intFromPtr(&self.mem[0]) ..][0..n]);
@@ -1665,6 +1725,8 @@ pub const VM = struct {
                 },
                 OP_SETJMP => {
                     const slot = try readU16(code, &ip);
+                    const local_count: usize = f.local_count;
+                    if (slot >= local_count) return error.BadLocal;
                     const buf = try self.pop();
                     var found: ?*JumpEntry = null;
                     var free_slot: ?*JumpEntry = null;
@@ -1699,6 +1761,8 @@ pub const VM = struct {
                     while (ji < self.jumps.len) : (ji += 1) {
                         const e = &self.jumps[ji];
                         if (e.valid and e.buf == buf.u) {
+                            if (e.func >= self.func_count) return error.BadLongjmp;
+                            if (e.slot >= self.functions[e.func].local_count) return error.BadLongjmp;
                             ip = e.ip;
                             base = e.base;
                             current = e.func;
@@ -1713,7 +1777,7 @@ pub const VM = struct {
                 OP_ADDR_EXTERN => {
                     const idx = try readU16(code, &ip);
                     const sym = try self.resolveData(idx);
-                    self.recordNativeTarget(@intFromPtr(sym));
+                    try self.recordNativeTarget(@intFromPtr(sym));
                     const addr: u64 = @intFromPtr(sym);
                     try self.push(.{ .i = @bitCast(addr) });
                 },
@@ -1727,14 +1791,14 @@ pub const VM = struct {
                 OP_SET_MEM_TOP => {
                     const size = try readU32(code, &ip);
                     const n: usize = size;
-                    if (n > self.mem.len) return error.OutOfMemory;
+                    if (n > self.memLimit()) return error.OutOfMemory;
                     self.mem_top = n;
                 },
                 OP_ALLOCA => {
                     const size = try readU16(code, &ip);
                     const start = (self.mem_top + 7) & ~@as(usize, 7);
                     const n: usize = size;
-                    if (start + n > self.mem.len) return error.OutOfMemory;
+                    if (start + n > self.memLimit()) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
@@ -1746,7 +1810,7 @@ pub const VM = struct {
                     const alignment: usize = if (align_raw == 0) 8 else align_raw;
                     const start = (self.mem_top + alignment - 1) & ~(alignment - 1);
                     const n: usize = size;
-                    if (start + n > self.mem.len) return error.OutOfMemory;
+                    if (start + n > self.memLimit()) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
@@ -1757,7 +1821,7 @@ pub const VM = struct {
                     if (sv.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(sv.i);
                     const start = (self.mem_top + 7) & ~@as(usize, 7);
-                    if (start + n > self.mem.len) return error.OutOfMemory;
+                    if (start + n > self.memLimit()) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
@@ -1770,7 +1834,7 @@ pub const VM = struct {
                     if (sv.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(sv.i);
                     const start = (self.mem_top + alignment - 1) & ~(alignment - 1);
-                    if (start + n > self.mem.len) return error.OutOfMemory;
+                    if (start + n > self.memLimit()) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
@@ -1870,6 +1934,12 @@ pub const VM = struct {
                         if (type_code == 3) sizes[ti] = try readU16(code, &ip);
                     }
                     const callee_base = self.sp - arg_count;
+                    const src_base = callee_base + params;
+                    const extra_base = callee_base + locals;
+                    // Both the extras and their new home must stay inside the
+                    // value stack before anything is copied.
+                    if (extra_base + extra > self.stack_limit) return error.StackOverflow;
+                    if (src_base + extra > self.stack_limit) return error.StackOverflow;
                     self.frames[self.frame_count] = .{
                         .return_ip = ip,
                         .base = base,
@@ -1885,8 +1955,6 @@ pub const VM = struct {
                     self.frame_count += 1;
                     base = callee_base;
                     current = fidx;
-                    const src_base = callee_base + params;
-                    const extra_base = callee_base + locals;
                     if (extra_base > src_base and extra_base < src_base + extra) {
                         var ei: usize = extra;
                         while (ei > 0) {
@@ -1921,6 +1989,14 @@ pub const VM = struct {
                     if (arg_count < params or self.sp < arg_count) return error.StackUnderflow;
                     if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
                     const callee_base = self.sp - arg_count;
+                    // The callee's locals start immediately after its named
+                    // parameters. Move variadic extras past those locals so
+                    // compiler temporaries cannot overwrite them.
+                    const extra = arg_count - params;
+                    const extra_base = callee_base + locals;
+                    const src_base = callee_base + params;
+                    if (extra_base + extra > self.stack_limit) return error.StackOverflow;
+                    if (src_base + extra > self.stack_limit) return error.StackOverflow;
                     self.frames[self.frame_count] = .{
                         .return_ip = ip,
                         .base = base,
@@ -1936,12 +2012,6 @@ pub const VM = struct {
                     self.frame_count += 1;
                     base = callee_base;
                     current = fidx;
-                    // The callee's locals start immediately after its named
-                    // parameters. Move variadic extras past those locals so
-                    // compiler temporaries cannot overwrite them.
-                    const extra = arg_count - params;
-                    const extra_base = callee_base + locals;
-                    const src_base = callee_base + params;
                     if (extra_base > src_base and extra_base < src_base + extra) {
                         var ei: usize = extra;
                         while (ei > 0) {
@@ -1957,6 +2027,9 @@ pub const VM = struct {
                     va_base = extra_base;
                     va_named = 0;
                     va_count = extra;
+                    va_types = [_]u8{0} ** 64;
+                    va_sizes = [_]u16{0} ** 64;
+                    va_type_count = 0;
                     self.sp = extra_base + extra;
                     if (self.sp > self.stack_limit) return error.StackOverflow;
                     ip = 0;
@@ -2106,7 +2179,7 @@ pub const VM = struct {
 
     fn pushF80(self: *VM, value: f80) !void {
         const start = (self.mem_top + 15) & ~@as(usize, 15);
-        if (start + 16 > self.mem.len) return error.OutOfMemory;
+        if (start + 16 > self.memLimit()) return error.OutOfMemory;
         const p: *align(1) f80 = @ptrCast(&self.mem[start]);
         p.* = value;
         self.mem_top = start + 16;
@@ -2123,7 +2196,7 @@ pub const VM = struct {
 
     fn pushF128(self: *VM, value: f128) !void {
         const start = (self.mem_top + 15) & ~@as(usize, 15);
-        if (start + 16 > self.mem.len) return error.OutOfMemory;
+        if (start + 16 > self.memLimit()) return error.OutOfMemory;
         const p: *align(1) f128 = @ptrCast(&self.mem[start]);
         p.* = value;
         self.mem_top = start + 16;
@@ -2168,6 +2241,16 @@ fn readU64Ptr(ptr: [*]const u8) u64 {
 
 pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) callconv(.C) void {
     const s: usize = @intCast(slot);
+    // The i686 trampoline rewrites ESP from `frame.cleanup` once this returns,
+    // so clear it before anything can bail out: every early return below then
+    // balances the stack exactly like a `__cdecl` call.
+    switch (platform.abi_kind) {
+        .win32 => {
+            const wframe: *platform.Win32CbFrame = @ptrCast(frame);
+            wframe.cleanup = 0;
+        },
+        else => {},
+    }
     callback_mutex.lock();
     if (s >= callback_owners.len) {
         callback_mutex.unlock();
@@ -2194,12 +2277,25 @@ pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) ca
         callback_mutex.unlock();
     }
 
+    // An i686 `__stdcall` callback pops its own argument bytes; the trampoline
+    // can only learn how many from the plan, so hand it `plan.stack_size` (0
+    // for `__cdecl`, where the caller pops). This is done before validation so
+    // a rejected plan still returns with the stack balanced for the stdcall
+    // function the host actually called through. Other ABI frames have no
+    // cleanup field and are left untouched.
+    switch (platform.abi_kind) {
+        .win32 => {
+            const wframe: *platform.Win32CbFrame = @ptrCast(frame);
+            wframe.cleanup = platform.win32CallbackCleanup(entry.plan);
+        },
+        else => {},
+    }
     platform.validate(entry.plan) catch return;
     const n: usize = entry.plan.args.len;
-    if (n > 8) return;
     var scratch: [8192]u8 align(16) = undefined;
     var scratch_used: usize = 0;
-    var values: [8]Value = undefined;
+    var values: [plan_loader.MAX_ARGS]Value = undefined;
+    if (n > values.len) return;
     for (entry.plan.args, 0..) |arg, i| {
         if (arg.is_struct) {
             if (arg.locs.len == 1 and arg.locs[0].kind == .stack) {
@@ -2336,7 +2432,11 @@ pub const CiVmConfig = extern struct {
     memory_size: usize,
 };
 
-fn errorCode(err: anyerror) c_int {
+/// Map a runtime error to its documented `CI_E_*` category. Every error the
+/// bytecode interpreter, the package decoders and the platform layer can return
+/// is classified here; only genuinely internal failures fall through to
+/// `CI_ERROR`.
+pub fn errorCode(err: anyerror) c_int {
     return switch (err) {
         error.OutOfMemory => CI_E_OUT_OF_MEMORY,
         error.TooManyArgs, error.InvalidArgument => CI_E_INVALID_ARGUMENT,
@@ -2355,7 +2455,14 @@ fn errorCode(err: anyerror) c_int {
         error.ModuleTooLarge,
         error.Truncated,
         error.TrailingBytes,
+        error.BadImportMagic,
+        error.BadImportVersion,
+        error.TooManyImports,
+        error.TooManyProviders,
         => CI_E_BAD_PACKAGE,
+        error.BadTargetMagic,
+        error.BadTargetVersion,
+        error.BadTargetHeader,
         error.TargetMismatch,
         error.UnsupportedFeature,
         error.RuntimeTooOld,
@@ -2369,12 +2476,16 @@ fn errorCode(err: anyerror) c_int {
         error.BadImportProvider,
         error.ImportArchMismatch,
         error.ImportUnavailable,
+        error.TooManyPlans,
+        error.TooManyLocs,
+        error.BadLocKind,
         => CI_E_PLANS,
         error.SymbolNotFound,
         error.LibraryNotFound,
         error.SymbolTooLong,
         error.PathTooLong,
         error.TooManyLibraries,
+        error.TooManyNativeTargets,
         => CI_E_LINK,
         error.EntryNotFound => CI_E_ENTRY,
         error.StackOverflow,
@@ -2391,9 +2502,13 @@ fn errorCode(err: anyerror) c_int {
         error.TooManyCallbacks,
         error.DivisionByZero,
         error.BadLocal,
+        error.BadLongjmp,
+        error.TooManyJumps,
         error.TruncatedCode,
+        error.StackUnderflow,
         error.BadMemorySize,
         error.NullStruct,
+        error.UnsupportedVaList,
         => CI_E_RUNTIME,
         error.VmDestroyed => CI_E_DESTROYED,
         else => CI_ERROR,
@@ -2401,9 +2516,10 @@ fn errorCode(err: anyerror) c_int {
 }
 
 fn fail(m: *VM, err: anyerror) c_int {
-    m.last_error_code = errorCode(err);
+    const code = errorCode(err);
+    m.last_error_code = code;
     m.setError(@errorName(err));
-    return CI_ERROR;
+    return code;
 }
 
 pub export fn ci_abi_version() c_int {

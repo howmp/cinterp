@@ -13,12 +13,6 @@ jobs:
       - run: make lint
       - run: make c-testsuite
       - run: make size
-      - run: make fuzz
-      - run: make fuzz-exec
-      - run: make fuzz-bytecode
-      - run: make fuzz-ffi-exec
-      - run: make fuzz-capi-asan
-      - run: make fuzz-sanitizer
       - run: make runtime
       - run: make differential
       - run: make size-cross
@@ -31,6 +25,40 @@ jobs:
           zig build -Dtarget=x86-windows-gnu
           zig build -Dtarget=aarch64-linux-gnu
       - run: make release-artifacts
+
+  # Fuzzing runs once per seed so a lucky seed cannot hide a crash; crash and
+  # timeout candidates land in build/fuzz-artifacts and are uploaded even on
+  # failure. Mutated bytecode can legitimately form infinite loops, so the
+  # standard targets tolerate timeouts but count and save them; crashes remain
+  # hard failures. Run the scripts without --tolerate-timeouts for strict mode.
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [1, 2]
+    env:
+      FUZZ_SEED: ${{ matrix.seed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: sudo apt-get update && sudo apt-get install -y clang python3 make
+      - name: fuzz seed ${{ matrix.seed }}
+        run: |
+          make fuzz
+          make fuzz-exec
+          make fuzz-bytecode
+          make fuzz-ffi-exec
+          make fuzz-capi-asan
+          make fuzz-sanitizer
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuzz-artifacts-seed-${{ matrix.seed }}
+          path: build/fuzz-artifacts
+          if-no-files-found: ignore
 
   windows-smoke:
     runs-on: windows-latest

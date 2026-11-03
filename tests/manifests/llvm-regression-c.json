@@ -14,7 +14,9 @@
   "expected_exit": null,
   "timeout": 30,
   "compile_timeout": 120,
-  "skip": {},
+  "skip": {
+    "pr60822": "compiler limit: CIVM module larger than 2 MiB"
+  },
   "cases": [
     {
       "id": "20000121-1",
@@ -1465,7 +1467,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/medce-1.c"
     },
     {
-      "id": "memchr",
+      "id": "memchr-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/memchr.c"
     },
     {
@@ -1481,7 +1483,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/memchr-lib.c"
     },
     {
-      "id": "memcmp",
+      "id": "memcmp-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/memcmp.c"
     },
     {
@@ -1497,7 +1499,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/memcpy-chk-lib.c"
     },
     {
-      "id": "memmove",
+      "id": "memmove-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/memmove.c"
     },
     {
@@ -1525,7 +1527,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/memops-asm-lib.c"
     },
     {
-      "id": "mempcpy",
+      "id": "mempcpy-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/mempcpy.c"
     },
     {
@@ -1549,7 +1551,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/mempcpy-lib.c"
     },
     {
-      "id": "memset",
+      "id": "memset-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/memset.c"
     },
     {
@@ -3257,7 +3259,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/snprintf-chk-lib.c"
     },
     {
-      "id": "sprintf",
+      "id": "sprintf-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/sprintf.c"
     },
     {
@@ -3317,7 +3319,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/stpncpy-chk-lib.c"
     },
     {
-      "id": "strcat",
+      "id": "strcat-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strcat.c"
     },
     {
@@ -3333,7 +3335,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strcat-lib.c"
     },
     {
-      "id": "strchr",
+      "id": "strchr-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strchr.c"
     },
     {
@@ -3345,7 +3347,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strchr-lib.c"
     },
     {
-      "id": "strcmp",
+      "id": "strcmp-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strcmp.c"
     },
     {
@@ -3357,7 +3359,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strcmp-lib.c"
     },
     {
-      "id": "strcpy",
+      "id": "strcpy-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strcpy.c"
     },
     {
@@ -3365,7 +3367,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strcpy.c"
     },
     {
-      "id": "strcpy-2",
+      "id": "strcpy-2-builtins",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strcpy-2.c"
     },
     {
@@ -3389,7 +3391,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strcpy-lib.c"
     },
     {
-      "id": "strcspn",
+      "id": "strcspn-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strcspn.c"
     },
     {
@@ -3413,7 +3415,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/string-opt-5.c"
     },
     {
-      "id": "strlen",
+      "id": "strlen-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strlen.c"
     },
     {
@@ -3421,7 +3423,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strlen.c"
     },
     {
-      "id": "strlen-2",
+      "id": "strlen-2-builtins",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strlen-2.c"
     },
     {
@@ -3433,7 +3435,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strlen-2-lib.c"
     },
     {
-      "id": "strlen-3",
+      "id": "strlen-3-builtins",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strlen-3.c"
     },
     {
@@ -3465,7 +3467,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strlen-lib.c"
     },
     {
-      "id": "strncat",
+      "id": "strncat-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strncat.c"
     },
     {
@@ -3481,7 +3483,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strncat-lib.c"
     },
     {
-      "id": "strncmp",
+      "id": "strncmp-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strncmp.c"
     },
     {
@@ -3501,7 +3503,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strncmp-lib.c"
     },
     {
-      "id": "strncpy",
+      "id": "strncpy-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strncpy.c"
     },
     {
@@ -3521,7 +3523,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strncpy-lib.c"
     },
     {
-      "id": "strnlen",
+      "id": "strnlen-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strnlen.c"
     },
     {
@@ -3533,7 +3535,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strnlen-lib.c"
     },
     {
-      "id": "strpbrk",
+      "id": "strpbrk-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strpbrk.c"
     },
     {
@@ -3561,7 +3563,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strpcpy-lib.c"
     },
     {
-      "id": "strrchr",
+      "id": "strrchr-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strrchr.c"
     },
     {
@@ -3573,7 +3575,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strrchr-lib.c"
     },
     {
-      "id": "strspn",
+      "id": "strspn-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strspn.c"
     },
     {
@@ -3585,7 +3587,7 @@
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/strspn-lib.c"
     },
     {
-      "id": "strstr",
+      "id": "strstr-support",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/builtins/lib/strstr.c"
     },
     {

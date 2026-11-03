@@ -32,6 +32,26 @@ static int load_package(ci_vm *vm, const unsigned char *data, size_t size) {
     return rc;
 }
 
+static uint32_t read_u32(const unsigned char *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+/* A rejected load must return, and record, the CI_E_* category of the defect. */
+static int expect_load_error(ci_vm *vm, const unsigned char *data, size_t size, int want) {
+    int rc = ci_vm_load_package(vm, data, size);
+    if (rc != want) {
+        fprintf(stderr, "expected status %d, got %d (%s)\n", want, rc, ci_vm_last_error(vm));
+        return 0;
+    }
+    if (ci_vm_last_error_code(vm) != want) {
+        fprintf(stderr, "expected code %d, got %d (%s)\n", want, ci_vm_last_error_code(vm),
+                ci_vm_last_error(vm));
+        return 0;
+    }
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc != 4) {
         fprintf(stderr, "usage: %s hello.cib qsort.cib argv.cib\n", argv[0]);
@@ -54,13 +74,43 @@ int main(int argc, char **argv) {
     if (ci_vm_result(vm) != 42) return 9;
     if (ci_vm_last_error(vm)[0] != 0 || ci_vm_last_error_code(vm) != 0) return 10;
 
-    /* A rejected package must not replace the already-loaded one. */
+    /* A rejected package must not replace the already-loaded one, and the
+       status carries the CI_E_* category instead of the generic CI_ERROR. */
     unsigned char *bad = malloc(hello_size);
     if (!bad) return 11;
     memcpy(bad, hello, hello_size);
     bad[0] = 'X';
-    if (ci_vm_load_package(vm, bad, hello_size) >= 0) return 12;
+    if (!expect_load_error(vm, bad, hello_size, CI_E_BAD_PACKAGE)) return 12;
     free(bad);
+    if (ci_vm_run(vm, "main") != CI_OK || ci_vm_result(vm) != 42) return 13;
+
+    /* Each package section reports its own category on a bad header. */
+    if (hello_size < 25 || memcmp(hello, "CIPKG", 5) != 0 || hello[5] != 2) return 30;
+    uint32_t module_len = read_u32(hello + 9);
+    uint32_t plan_len = read_u32(hello + 13);
+    uint32_t meta_len = read_u32(hello + 17);
+    uint32_t import_len = read_u32(hello + 21);
+    size_t plan_off = 25 + (size_t)module_len;
+    size_t meta_off = plan_off + (size_t)plan_len;
+    size_t import_off = meta_off + (size_t)meta_len;
+    if (plan_len < 10 || meta_len < 1 || import_len < 4) return 31;
+    if (import_off + (size_t)import_len > hello_size) return 31;
+
+    unsigned char *broken = malloc(hello_size);
+    if (!broken) return 11;
+    memcpy(broken, hello, hello_size);
+    broken[meta_off] = 'X';
+    if (!expect_load_error(vm, broken, hello_size, CI_E_TARGET)) return 32;
+
+    memcpy(broken, hello, hello_size);
+    broken[plan_off + 6] = 0xFF;
+    broken[plan_off + 7] = 0xFF;
+    if (!expect_load_error(vm, broken, hello_size, CI_E_PLANS)) return 33;
+
+    memcpy(broken, hello, hello_size);
+    broken[import_off] = 'X';
+    if (!expect_load_error(vm, broken, hello_size, CI_E_BAD_PACKAGE)) return 34;
+    free(broken);
     if (ci_vm_run(vm, "main") != CI_OK || ci_vm_result(vm) != 42) return 13;
 
     char *args[] = {"embed", "x", "7"};

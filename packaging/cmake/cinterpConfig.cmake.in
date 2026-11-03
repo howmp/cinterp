@@ -1,4 +1,29 @@
-get_filename_component(_cinterp_prefix "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+# CMake package config for the cinterp C embedding runtime.
+#
+# Release tarballs ship this file twice: at <prefix>/cmake/cinterpConfig.cmake
+# and at <prefix>/lib/cmake/cinterp/cinterpConfig.cmake (the layout CMake
+# searches under CMAKE_PREFIX_PATH). Locate the prefix by looking for
+# include/cinterp.h next to either copy so both work unchanged.
+
+set(_cinterp_prefix_candidates
+  "${CMAKE_CURRENT_LIST_DIR}/.."          # <prefix>/cmake
+  "${CMAKE_CURRENT_LIST_DIR}/../../.."    # <prefix>/lib/cmake/cinterp
+)
+
+set(_cinterp_prefix "")
+foreach(_candidate IN LISTS _cinterp_prefix_candidates)
+  get_filename_component(_candidate_abs "${_candidate}" ABSOLUTE)
+  if(EXISTS "${_candidate_abs}/include/cinterp.h")
+    set(_cinterp_prefix "${_candidate_abs}")
+    break()
+  endif()
+endforeach()
+
+if(_cinterp_prefix STREQUAL "")
+  message(FATAL_ERROR
+    "cinterp: include/cinterp.h not found relative to ${CMAKE_CURRENT_LIST_DIR}")
+endif()
+
 set(cinterp_VERSION "@VERSION@")
 
 if(NOT TARGET cinterp::cinterp)
@@ -13,10 +38,17 @@ if(NOT TARGET cinterp::cinterp)
   add_library(cinterp::cinterp UNKNOWN IMPORTED)
   set_target_properties(cinterp::cinterp PROPERTIES
     IMPORTED_LOCATION "${CINTERP_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${CINTERP_INCLUDE_DIR}"
-    INTERFACE_COMPILE_DEFINITIONS "CINTERP_EMBEDDED=1")
+    INTERFACE_INCLUDE_DIRECTORIES "${CINTERP_INCLUDE_DIR}")
   if(NOT WIN32)
     set_property(TARGET cinterp::cinterp PROPERTY
       INTERFACE_LINK_LIBRARIES "dl;pthread;m")
   endif()
+endif()
+
+set(cinterp_LIBRARIES cinterp::cinterp)
+set(cinterp_INCLUDE_DIRS "${_cinterp_prefix}/include")
+set(cinterp_FOUND TRUE)
+
+if(COMMAND check_required_components)
+  check_required_components(cinterp)
 endif()

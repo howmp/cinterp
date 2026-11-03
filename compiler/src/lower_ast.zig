@@ -678,6 +678,27 @@ const CallbackTable = struct {
     next_slot: u16 = 0,
 };
 
+/// Structural equality of two CIPL plans: every field `main.zig` serializes is
+/// compared, including the symbol `name` (plans for different imports must
+/// never be merged) and the calling convention.
+fn plansEqual(a: abi.Plan, b: abi.Plan) bool {
+    if (!eql(a.name, b.name)) return false;
+    if (a.args.len != b.args.len or a.ret_locs.len != b.ret_locs.len) return false;
+    if (a.stack_size != b.stack_size or a.sret != b.sret) return false;
+    if (a.sse_count != b.sse_count or a.ret_size != b.ret_size or a.conv != b.conv) return false;
+    for (a.args, b.args) |x, y| {
+        if (x.size != y.size or x.alignment != y.alignment or x.is_struct != y.is_struct) return false;
+        if (x.locs.len != y.locs.len) return false;
+        for (x.locs, y.locs) |l, m| {
+            if (l.kind != m.kind or l.index != m.index or l.size != m.size or l.offset != m.offset) return false;
+        }
+    }
+    for (a.ret_locs, b.ret_locs) |l, m| {
+        if (l.kind != m.kind or l.index != m.index or l.size != m.size or l.offset != m.offset) return false;
+    }
+    return true;
+}
+
 const Patch = struct { pos: u32, label: []const u8 };
 
 const PhiAssign = struct {
@@ -706,6 +727,11 @@ const Context = struct {
     opts: Options,
 
     fn init(allocator: Allocator, module: *const ast.Module, abi_id: u8, ptr_size: u32, opts: Options) !Context {
+        // CIVM holds function indices/plan indices/parameter counts in u16.
+        // Reject modules that cannot be addressed before any narrowing cast;
+        // `main.zig` additionally enforces the runtime caps (512 functions,
+        // 64 args/plan, ...).
+        if (module.functions.len > std.math.maxInt(u16)) return error.TooManyFunctions;
         const layout = try Layout.init(allocator, module, ptr_size);
         var globals = try buildGlobals(allocator, module, &layout, ptr_size, opts.gep_const);
 
@@ -717,6 +743,7 @@ const Context = struct {
 
         var func_params = try allocator.alloc([]const ParamInfo, module.functions.len);
         for (module.functions, 0..) |f, idx| {
+            if (f.sig.params.len > std.math.maxInt(u16)) return error.TooManyArgs;
             var params = std.ArrayList(ParamInfo).init(allocator);
             for (f.sig.params) |param| {
                 const name = param.name orelse continue;
@@ -770,6 +797,19 @@ const Context = struct {
             .ptr_size = ptr_size,
             .opts = opts,
         };
+    }
+
+    /// Return the index of an already-appended plan that is byte-identical to
+    /// `plan`, or append it and return the new index. Dedup is by full content
+    /// (`plansEqual`), so distinct symbol names or ABI layouts never merge.
+    fn internPlan(self: *Context, plan: abi.Plan) !u16 {
+        for (self.plans.items, 0..) |existing, index| {
+            if (plansEqual(existing, plan)) return @intCast(index);
+        }
+        if (self.plans.items.len > std.math.maxInt(u16)) return error.TooManyPlans;
+        const index: u16 = @intCast(self.plans.items.len);
+        try self.plans.append(plan);
+        return index;
     }
 };
 
@@ -1966,6 +2006,8 @@ const Lowerer = struct {
     /// Direct call to another function in the same module (CIVM `OP_CALL` /
     /// `OP_CALL_VARIADIC_TYPED`).
     fn lowerVmCall(self: *Lowerer, call: ast.Call, result: ?ast.NamedRef, idx: u16) anyerror!void {
+        // OP_CALL_VARIADIC_TYPED stores the argument count as u16.
+        if (call.args.len > std.math.maxInt(u16)) return error.TooManyArgs;
         var need_copy = false;
         for (call.args) |arg| {
             if (isF80OrF128(arg.ty) and isTag(arg.val, .local)) {
@@ -2058,7 +2100,7 @@ const Lowerer = struct {
         try self.emitValue(call.callee.indirect);
 
         const plan_ret = if (sret_idx != null) "void" else try self.planType(call.ret);
-        const plan = try abi.buildPlanForAbi(
+        var plan = try abi.buildPlanForAbi(
             self.allocator,
             self.ctx.abi,
             "indirect",
@@ -2070,8 +2112,14 @@ const Lowerer = struct {
             byval_sizes,
             self.ctx.ptr_size,
         );
-        const plan_index: u16 = @intCast(self.ctx.plans.items.len);
-        try self.ctx.plans.append(plan);
+        // LLVM prints the convention on the call instruction, not in the
+        // function *type*: clang emits `call x86_stdcallcc i32 %fp(i32, i32)`
+        // for a `__stdcall` function pointer (verified against clang 18
+        // i686-windows), so `call.cc` is the authoritative source here. A
+        // function-pointer type never carries a cconv in textual IR, which is
+        // why `ast.FunctionType` has no `cc` field to consult.
+        plan.conv = abi.convFromName(call.cc);
+        const plan_index = try self.ctx.internPlan(plan);
         try self.emitU8(op.OP_CALL_INDIRECT_NATIVE);
         try self.emitU16(plan_index);
         if (!call.ret.isVoid()) {
@@ -2102,10 +2150,8 @@ const Lowerer = struct {
             }
         }
 
-        const is_varargs = call.is_varargs or blk: {
-            const decl = self.ctx.decls.get(name) orelse break :blk false;
-            break :blk decl.sig.is_varargs;
-        };
+        const decl = self.ctx.decls.get(name);
+        const is_varargs = call.is_varargs or (if (decl) |d| d.sig.is_varargs else false);
         const plan_ret = if (sret_idx != null) "void" else try self.planType(call.ret);
 
         var call_name = name;
@@ -2116,7 +2162,7 @@ const Lowerer = struct {
             try plan_types.append("ptr");
             try plan_types.append("ptr");
         }
-        const plan = try abi.buildPlanForAbi(
+        var plan = try abi.buildPlanForAbi(
             self.allocator,
             self.ctx.abi,
             call_name,
@@ -2128,8 +2174,11 @@ const Lowerer = struct {
             byval_sizes,
             self.ctx.ptr_size,
         );
-        const plan_index: u16 = @intCast(self.ctx.plans.items.len);
-        try self.ctx.plans.append(plan);
+        // The call-site convention wins over the declaration's; a missing
+        // keyword on both means the target default. `main.zig` may still
+        // override known WinAPI exports from the MinGW import table.
+        plan.conv = abi.convFromName(call.cc orelse (if (decl) |d| d.sig.cc else null));
+        const plan_index = try self.ctx.internPlan(plan);
 
         for (call.args) |arg| {
             switch (arg.val) {
@@ -2204,7 +2253,7 @@ const Lowerer = struct {
         const callee = &self.ctx.module.functions[func_index];
         const plan_ret = if (sret_idx != null) "void" else try self.planType(callee.sig.ret);
         const plan_name = try std.fmt.allocPrint(self.allocator, "callback:{s}", .{key});
-        const plan = try abi.buildPlanForAbi(
+        var plan = try abi.buildPlanForAbi(
             self.allocator,
             self.ctx.abi,
             plan_name,
@@ -2216,8 +2265,12 @@ const Lowerer = struct {
             byval_sizes,
             self.ctx.ptr_size,
         );
-        const plan_index: u16 = @intCast(self.ctx.plans.items.len);
-        try self.ctx.plans.append(plan);
+        // The callback runs the callee's own definition, so the definition's
+        // calling convention is authoritative (Win32 `__stdcall` callback ->
+        // conv=1; the runtime dispatches it accordingly).
+        plan.conv = abi.convFromName(callee.sig.cc);
+        const plan_index = try self.ctx.internPlan(plan);
+        if (self.ctx.callbacks.next_slot == std.math.maxInt(u16)) return error.TooManyCallbacks;
         const slot = self.ctx.callbacks.next_slot;
         self.ctx.callbacks.next_slot += 1;
         try self.ctx.callbacks.by_func.put(key, .{ .slot = slot, .func_index = func_index, .plan_index = plan_index });
@@ -3097,6 +3150,232 @@ test "AAPCS64 plans expand named structs to their literal body" {
         \\
     );
     try testing.expectError(error.UnsupportedFfi, compile(allocator, &unknown, 4, 8));
+}
+
+test "plansEqual compares every serialized plan field" {
+    var locs = [_]abi.Loc{.{ .kind = 0, .index = 1, .size = 8, .offset = 0 }};
+    var ret = [_]abi.Loc{.{ .kind = 4, .index = 0, .size = 4, .offset = 0 }};
+    var arg_list = [_]abi.ArgPlan{.{ .locs = &locs, .size = 8, .alignment = 8 }};
+    const base = abi.Plan{
+        .name = "foo",
+        .args = &arg_list,
+        .ret_locs = &ret,
+        .stack_size = 0,
+        .sret = false,
+        .sse_count = 0,
+        .ret_size = 4,
+        .conv = 0,
+    };
+    try testing.expect(plansEqual(base, base));
+
+    // Different symbol names never compare equal, whatever the layout.
+    var other = base;
+    other.name = "bar";
+    try testing.expect(!plansEqual(base, other));
+
+    other = base;
+    other.conv = 1;
+    try testing.expect(!plansEqual(base, other));
+
+    other = base;
+    other.stack_size = 8;
+    try testing.expect(!plansEqual(base, other));
+
+    other = base;
+    other.sret = true;
+    try testing.expect(!plansEqual(base, other));
+
+    other = base;
+    other.sse_count = 1;
+    try testing.expect(!plansEqual(base, other));
+
+    other = base;
+    other.ret_size = 8;
+    try testing.expect(!plansEqual(base, other));
+
+    var alt_locs = [_]abi.Loc{locs[0]};
+    alt_locs[0].index = 2;
+    var alt_arg = [_]abi.ArgPlan{.{ .locs = &alt_locs, .size = 8, .alignment = 8 }};
+    other = base;
+    other.args = &alt_arg;
+    try testing.expect(!plansEqual(base, other));
+
+    var size_arg = [_]abi.ArgPlan{.{ .locs = &locs, .size = 4, .alignment = 8 }};
+    other = base;
+    other.args = &size_arg;
+    try testing.expect(!plansEqual(base, other));
+
+    var align_arg = [_]abi.ArgPlan{.{ .locs = &locs, .size = 8, .alignment = 4 }};
+    other = base;
+    other.args = &align_arg;
+    try testing.expect(!plansEqual(base, other));
+
+    var struct_arg = [_]abi.ArgPlan{.{ .locs = &locs, .size = 8, .alignment = 8, .is_struct = true }};
+    other = base;
+    other.args = &struct_arg;
+    try testing.expect(!plansEqual(base, other));
+
+    var two_locs = [_]abi.Loc{ locs[0], locs[0] };
+    var two_loc_arg = [_]abi.ArgPlan{.{ .locs = &two_locs, .size = 8, .alignment = 8 }};
+    other = base;
+    other.args = &two_loc_arg;
+    try testing.expect(!plansEqual(base, other));
+
+    var alt_ret = [_]abi.Loc{.{ .kind = 5, .index = 0, .size = 4, .offset = 0 }};
+    other = base;
+    other.ret_locs = &alt_ret;
+    try testing.expect(!plansEqual(base, other));
+
+    // Every Loc field participates.
+    var ret_index = [_]abi.Loc{.{ .kind = 4, .index = 1, .size = 4, .offset = 0 }};
+    other = base;
+    other.ret_locs = &ret_index;
+    try testing.expect(!plansEqual(base, other));
+
+    var ret_offset = [_]abi.Loc{.{ .kind = 4, .index = 0, .size = 4, .offset = 8 }};
+    other = base;
+    other.ret_locs = &ret_offset;
+    try testing.expect(!plansEqual(base, other));
+
+    var ret_size = [_]abi.Loc{.{ .kind = 4, .index = 0, .size = 8, .offset = 0 }};
+    other = base;
+    other.ret_locs = &ret_size;
+    try testing.expect(!plansEqual(base, other));
+}
+
+test "identical native call signatures share one plan, different symbols do not" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const dedup_ir =
+        \\declare i32 @foo(i32)
+        \\declare i32 @bar(i32)
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  %a = call i32 @foo(i32 1)
+        \\  %b = call i32 @foo(i32 2)
+        \\  %c = call i32 @bar(i32 3)
+        \\  %d = add i32 %a, %b
+        \\  %e = add i32 %c, %d
+        \\  ret i32 %e
+        \\}
+        \\
+    ;
+    var module = try parseFixture(allocator, dedup_ir);
+    const result = try compile(allocator, &module, 1, 8);
+    // foo(x) is called twice -> one plan; bar(x) has the same layout but a
+    // different symbol name -> a second plan.
+    try testing.expectEqual(@as(usize, 2), result.plans.len);
+    try testing.expectEqualStrings("foo", result.plans[0].name);
+    try testing.expectEqualStrings("bar", result.plans[1].name);
+}
+
+test "calling conventions flow into plans: call site, declaration, indirect and callback" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Win32 `__stdcall` direct call: the call instruction carries the cconv.
+    var stdcall_module = try parseFixture(allocator,
+        \\declare x86_stdcallcc i32 @c_std_add3(i32, i32, i32)
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  %r = call x86_stdcallcc i32 @c_std_add3(i32 10, i32 20, i32 30)
+        \\  ret i32 %r
+        \\}
+        \\
+    );
+    const stdcall_result = try compile(allocator, &stdcall_module, 3, 4);
+    try testing.expectEqual(@as(usize, 1), stdcall_result.plans.len);
+    try testing.expectEqual(@as(u8, 1), stdcall_result.plans[0].conv);
+
+    // No cconv at the call site: fall back to the declaration (`__fastcall`).
+    var fastcall_module = try parseFixture(allocator,
+        \\declare x86_fastcallcc i32 @fast_add(i32, i32, i32)
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  %r = call i32 @fast_add(i32 1, i32 2, i32 3)
+        \\  ret i32 %r
+        \\}
+        \\
+    );
+    const fastcall_result = try compile(allocator, &fastcall_module, 3, 4);
+    try testing.expectEqual(@as(usize, 1), fastcall_result.plans.len);
+    try testing.expectEqual(@as(u8, 2), fastcall_result.plans[0].conv);
+
+    // Indirect call through a `__stdcall` function pointer.
+    var indirect_module = try parseFixture(allocator,
+        \\define i32 @run(ptr %fp) {
+        \\entry:
+        \\  %r = call x86_stdcallcc i32 %fp(i32 1, i32 2)
+        \\  ret i32 %r
+        \\}
+        \\
+    );
+    const indirect_result = try compile(allocator, &indirect_module, 3, 4);
+    try testing.expectEqual(@as(usize, 1), indirect_result.plans.len);
+    try testing.expectEqualStrings("indirect", indirect_result.plans[0].name);
+    try testing.expectEqual(@as(u8, 1), indirect_result.plans[0].conv);
+
+    // Callback plan uses the *callee definition's* convention.
+    var callback_module = try parseFixture(allocator,
+        \\define x86_stdcallcc i32 @cb(i32 %a, i32 %b) {
+        \\entry:
+        \\  %r = add i32 %a, %b
+        \\  ret i32 %r
+        \\}
+        \\
+        \\declare void @take(ptr)
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  call void @take(ptr @cb)
+        \\  ret i32 0
+        \\}
+        \\
+    );
+    const callback_result = try compile(allocator, &callback_module, 3, 4);
+    try testing.expectEqual(@as(usize, 2), callback_result.plans.len);
+    try testing.expectEqualStrings("take", callback_result.plans[0].name);
+    try testing.expectEqual(@as(u8, 0), callback_result.plans[0].conv);
+    try testing.expectEqualStrings("callback:cb", callback_result.plans[1].name);
+    try testing.expectEqual(@as(u8, 1), callback_result.plans[1].conv);
+}
+
+test "Win64 variadic lowering duplicates FP args (printf shape)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\declare i32 @printf(ptr, ...)
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  %r = call i32 (ptr, ...) @printf(ptr null, double 1.500000e+00, i32 7)
+        \\  ret i32 %r
+        \\}
+        \\
+    );
+    const result = try compile(allocator, &module, 2, 8);
+    try testing.expectEqual(@as(usize, 1), result.plans.len);
+    const plan = result.plans[0];
+    try testing.expectEqualStrings("printf", plan.name);
+    // ptr -> RCX, double -> XMM1 + RDX, int -> R8.
+    try testing.expectEqual(@as(u8, 0), plan.args[0].locs[0].kind);
+    try testing.expectEqual(@as(u16, 0), plan.args[0].locs[0].index);
+    try testing.expectEqual(@as(usize, 2), plan.args[1].locs.len);
+    try testing.expectEqual(@as(u8, 1), plan.args[1].locs[0].kind);
+    try testing.expectEqual(@as(u16, 1), plan.args[1].locs[0].index);
+    try testing.expectEqual(@as(u8, 0), plan.args[1].locs[1].kind);
+    try testing.expectEqual(@as(u16, 1), plan.args[1].locs[1].index);
+    try testing.expectEqual(@as(u8, 0), plan.args[2].locs[0].kind);
+    try testing.expectEqual(@as(u16, 2), plan.args[2].locs[0].index);
+    try testing.expectEqual(@as(u8, 1), plan.sse_count);
 }
 
 test "write golden files" {

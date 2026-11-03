@@ -75,15 +75,66 @@ extern "C" {
     pub fn ci_version() -> *const c_char;
 }
 
+/// Stable name for a `CI_*` status value, for logs and error messages.
+pub fn status_name(code: c_int) -> &'static str {
+    match code {
+        CI_OK => "CI_OK",
+        CI_ERROR => "CI_ERROR",
+        CI_E_INVALID_ARGUMENT => "CI_E_INVALID_ARGUMENT",
+        CI_E_OUT_OF_MEMORY => "CI_E_OUT_OF_MEMORY",
+        CI_E_BAD_PACKAGE => "CI_E_BAD_PACKAGE",
+        CI_E_TARGET => "CI_E_TARGET",
+        CI_E_PLANS => "CI_E_PLANS",
+        CI_E_LINK => "CI_E_LINK",
+        CI_E_ENTRY => "CI_E_ENTRY",
+        CI_E_RESOURCE => "CI_E_RESOURCE",
+        CI_E_RUNTIME => "CI_E_RUNTIME",
+        CI_E_DESTROYED => "CI_E_DESTROYED",
+        _ => "UNKNOWN",
+    }
+}
+
+/// A failed `ci_vm_*` call.
+///
+/// `code` carries the category from `ci_vm_last_error_code`, so callers can
+/// match on `CI_E_*` instead of guessing from the generic negative return
+/// value, which is kept in `status`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
+    /// Category reported by `ci_vm_last_error_code()` (a `CI_E_*` value), or
+    /// the raw status when the VM did not record a category.
     pub code: c_int,
+    /// The negative value the failing call returned (`CI_ERROR` or `CI_E_*`).
+    pub status: c_int,
+    /// Human-readable text from `ci_vm_last_error()`.
     pub message: String,
+}
+
+impl Error {
+    /// An error raised by this wrapper itself, without a VM call (for example
+    /// a path that is not valid UTF-8 or an entry name containing NUL).
+    pub fn local(code: c_int, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            status: code,
+            message: message.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "cinterp error {}: {}", self.code, self.message)
+        if self.message.is_empty() {
+            write!(f, "cinterp error {} ({})", self.code, status_name(self.code))
+        } else {
+            write!(
+                f,
+                "cinterp error {} ({}): {}",
+                self.code,
+                status_name(self.code),
+                self.message
+            )
+        }
     }
 }
 
@@ -117,14 +168,22 @@ impl Vm {
         }
     }
 
-    fn check(&self, code: c_int) -> Result<(), Error> {
-        if code == CI_OK {
+    /// Build an error for a failed call: the category comes from
+    /// `ci_vm_last_error_code`, while `status` preserves the return value.
+    fn error(&self, status: c_int) -> Error {
+        let category = self.last_error_code();
+        Error {
+            code: if category != CI_OK { category } else { status },
+            status,
+            message: self.last_error(),
+        }
+    }
+
+    fn check(&self, status: c_int) -> Result<(), Error> {
+        if status == CI_OK {
             Ok(())
         } else {
-            Err(Error {
-                code,
-                message: self.last_error(),
-            })
+            Err(self.error(status))
         }
     }
 
@@ -144,38 +203,34 @@ impl Vm {
     }
 
     pub fn load_library(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
-        let path = path.as_ref().to_str().ok_or_else(|| Error {
-            code: CI_E_INVALID_ARGUMENT,
-            message: "library path is not valid UTF-8".into(),
+        let path = path.as_ref().to_str().ok_or_else(|| {
+            Error::local(
+                CI_E_INVALID_ARGUMENT,
+                "library path is not valid UTF-8",
+            )
         })?;
-        let cpath = CString::new(path).map_err(|_| Error {
-            code: CI_E_INVALID_ARGUMENT,
-            message: "library path contains NUL".into(),
-        })?;
+        let cpath = CString::new(path)
+            .map_err(|_| Error::local(CI_E_INVALID_ARGUMENT, "library path contains NUL"))?;
         let code = unsafe { ci_vm_load_library(self.raw, cpath.as_ptr()) };
         self.check(code)
     }
 
     pub fn run(&mut self, entry: &str) -> Result<(), Error> {
-        let entry = CString::new(entry).map_err(|_| Error {
-            code: CI_E_INVALID_ARGUMENT,
-            message: "entry name contains NUL".into(),
-        })?;
+        let entry = CString::new(entry)
+            .map_err(|_| Error::local(CI_E_INVALID_ARGUMENT, "entry name contains NUL"))?;
         let code = unsafe { ci_vm_run(self.raw, entry.as_ptr()) };
         self.check(code)
     }
 
     pub fn run_args<S: AsRef<str>>(&mut self, entry: &str, args: &[S]) -> Result<(), Error> {
-        let entry = CString::new(entry).map_err(|_| Error {
-            code: CI_E_INVALID_ARGUMENT,
-            message: "entry name contains NUL".into(),
-        })?;
+        let entry = CString::new(entry)
+            .map_err(|_| Error::local(CI_E_INVALID_ARGUMENT, "entry name contains NUL"))?;
         let mut owned = Vec::with_capacity(args.len());
         for arg in args {
-            owned.push(CString::new(arg.as_ref()).map_err(|_| Error {
-                code: CI_E_INVALID_ARGUMENT,
-                message: "argument contains NUL".into(),
-            })?);
+            owned.push(
+                CString::new(arg.as_ref())
+                    .map_err(|_| Error::local(CI_E_INVALID_ARGUMENT, "argument contains NUL"))?,
+            );
         }
         let mut ptrs: Vec<*const c_char> = owned.iter().map(|s| s.as_ptr()).collect();
         let code = unsafe {
@@ -231,5 +286,39 @@ pub fn version() -> String {
         String::new()
     } else {
         unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_names_cover_the_public_codes() {
+        assert_eq!(status_name(CI_OK), "CI_OK");
+        assert_eq!(status_name(CI_ERROR), "CI_ERROR");
+        assert_eq!(status_name(CI_E_INVALID_ARGUMENT), "CI_E_INVALID_ARGUMENT");
+        assert_eq!(status_name(CI_E_TARGET), "CI_E_TARGET");
+        assert_eq!(status_name(CI_E_DESTROYED), "CI_E_DESTROYED");
+        assert_eq!(status_name(-99), "UNKNOWN");
+    }
+
+    #[test]
+    fn display_names_the_category() {
+        let err = Error::local(CI_E_INVALID_ARGUMENT, "bad input");
+        assert_eq!(err.code, CI_E_INVALID_ARGUMENT);
+        assert_eq!(err.status, CI_E_INVALID_ARGUMENT);
+        assert_eq!(
+            err.to_string(),
+            "cinterp error -2 (CI_E_INVALID_ARGUMENT): bad input"
+        );
+
+        let bare = Error::local(CI_E_RUNTIME, "");
+        assert_eq!(bare.to_string(), "cinterp error -10 (CI_E_RUNTIME)");
+    }
+
+    #[test]
+    fn abi_version_matches_the_header() {
+        assert_eq!(abi_version(), CI_ABI_VERSION);
     }
 }

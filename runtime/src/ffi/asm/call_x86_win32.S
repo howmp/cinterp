@@ -62,9 +62,3 @@ no_clean:
     pop ebx
     leave
     ret
-
-.text
-.globl _test_ret42
-_test_ret42:
-    mov eax, 42
-    ret

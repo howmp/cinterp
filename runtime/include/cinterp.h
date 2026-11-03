@@ -21,7 +21,15 @@ extern "C" {
 #define CI_ABI_VERSION 2
 typedef struct ci_vm ci_vm;
 
-/* Status values. Functions return CI_OK or a negative CI_E_* value. */
+/*
+ * Status values.
+ *
+ * Functions that return a status return CI_OK on success, or a negative
+ * CI_E_* value on failure. CI_ERROR (-1) is only returned when the runtime
+ * cannot categorize the failure; all other failures use a specific CI_E_*
+ * value. The category of the last failed operation is also available from
+ * ci_vm_last_error_code(), and ci_vm_last_error() returns its message.
+ */
 enum {
     CI_OK = 0,
     CI_ERROR = -1,

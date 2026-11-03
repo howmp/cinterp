@@ -56,7 +56,7 @@ offset  size  field
 
 - `header_size` 当前必须为 25；section 顺序固定。
 - `25 + module_len + plan_len + meta_len + import_len` 必须精确等于文件长度；不允许 padding。
-- `meta_len` 至少包含完整的 CIPM v1（29 字节头 + 字符串）。
+- `meta_len` 必须**精确等于**紧随其后的 CIPM section 长度（29 字节头 + `triple`/`link_db`/`producer` 三个字符串），既不允许多余字节也不允许截断：`decodeTarget` 解析完 CIPM 后要求读取位置等于 `meta_len`，否则返回 `TrailingBytes`；不足则返回 `Truncated`。
 - `import_len` 可以为 0；编译器在无外部符号时写 10 字节空 CIPI 头，不是省略。
 - 运行时模块上限 `MAX_MODULE = 2097152` 字节；CLI 读取包文件上限 16 MiB。
 - v2 在加载模块前执行目标校验；CIPI 在计划加载后校验 plan 索引。
@@ -99,9 +99,9 @@ offset size field
 ...    producer_len     "cinterp 0.1.0"
 ```
 
-- `features` 位：bit0=f80、bit1=f128、bit2=callback、bit3=varargs、bit4=auto-link、bit5=stdcall。运行时按位检查，缺失返回 `UnsupportedFeature`。
+- `features` 位：bit0=f80、bit1=f128、bit2=callback、bit3=varargs、bit4=auto-link、bit5=stdcall。运行时按位检查：包声明了运行时/当前架构不支持的位时返回 `UnsupportedFeature`。
 - `min_runtime` 高于运行时版本时返回 `RuntimeTooOld`。
-- `triple` 用于诊断；快速校验使用 arch/os/abi/ptr_bits/endian。
+- `triple` 用于诊断；快速校验使用 arch/os/abi/ptr_bits/endian。三个字符串的运行时上限分别为 `triple` 96B、`link_db` 128B、`producer` 64B，超限返回 `NameTooLong`（编译器在写入前做同样的检查）。
 - `link_db` 记录生成 CIPI 时使用的构建期索引来源：Linux 为 `glibc-abilists@<zig version>`，Windows 为 `mingw-defs@<zig version>`；没有 import 时可以为空。
 
 ### 2.4 CIPI：外部符号链接表（v1）
@@ -122,7 +122,7 @@ offset size field
 2     plan_index       # CIPL 计划索引；0xffff 预留给 data 符号
 1     kind             # 0=function, 1=data
 1     flags            # bit0=required, bit1=lazy, bit2=allow_fallback, bit3=allow_override
-1     callconv         # 0=cdecl, 1=stdcall/winapi
+1     callconv         # 0=cdecl, 1=stdcall/winapi, 2=fastcall（仅 Win32）
 1     arch_mask        # bit0=x86_64, bit1=x86, bit2=aarch64; 0=all
 2     min_os           # 0=unknown; Windows 编码为 (major<<8)|minor
 1     name_len
@@ -142,18 +142,20 @@ provider[]:
 - `plan_index` 绑定 CIPL；`0xffff` 表示 data entry，`ADDR_EXTERN` 使用 entry 索引解析地址。同一符号多次调用可以有多条 entry。
 - provider 按顺序尝试；成功后缓存库 handle 和符号地址。
 - 自动生成的 provider 只能是系统库名/allowlist；运行时会拒绝包含 `/`、`\` 或 `:` 的自动 provider 名，避免 CIB 指定任意路径。显式 `--lib` 仍允许用户路径。
-- 一个进程只执行一个 CIB；CIPI 不提供 CIB-to-CIB 链接/包间导出表，跨包请合并源码后重新生成。
+- 一个 VM 实例同一时间只持有一个包（再次 `load_package` 会整体替换）；CIPI 不提供 CIB-to-CIB 链接/包间导出表，跨包请合并源码后重新生成。
 - `arch_mask` 与 `min_os` 在加载时校验；不匹配返回 `ImportArchMismatch` / `ImportUnavailable`。
 - `kind=data` 已支持 `stdout`/`errno` 类 external data：编译器为未知外部全局生成 data entry，运行时按 provider/`--lib` 解析地址；`ordinal` 解析在 Windows 已支持。
 
 ### 2.5 运行时符号解析顺序
 
-对有 CIPI entry 的计划：
+对有 CIPI entry 的函数计划：
 
-1. 若 entry 允许 override，先搜索用户 `--lib` 加载的库（逆序）。
+1. 若 entry 允许 override（flags bit3），先搜索用户 `--lib` 加载的库（逆序）。
 2. 按 CIPI provider 顺序 `dlopen`/`LoadLibraryA` 并 `dlsym`/`GetProcAddress`；缓存成功结果。
-3. 若 entry 允许 fallback，再走旧的进程默认 → `--lib` → CRT 搜索。
+3. 若 entry 允许 fallback（flags bit2），再走进程默认 → `--lib` → CRT 搜索。
 4. 否则返回 `SymbolNotFound`。
+
+对 data entry（`CIPI.kind=data`，`ADDR_EXTERN`）：总是先搜索 `--lib`，再按 provider 顺序解析；仍失败则回退到进程/CRT 搜索。
 
 没有 CIPI entry 的计划（旧 v1 包或未收录的自定义符号）仍走旧搜索路径。
 
@@ -206,12 +208,12 @@ M     code bytes
   `callee_base = sp - param_count` 建立被调帧，清零 `callee_base+param_count`
   到 `callee_base+local_count-1`。
 - `OP_RET` 弹出一个值并返回给调用者；入口/Callback 的 `RET` 直接结束执行。
-- 运行时槽栈上限 `MAX_STACK = 8192`，帧上限 `MAX_FRAMES = 512`。
+- 运行时槽栈默认/上限 `MAX_STACK = 8192`（`ci_vm_config.stack_size` 只能把它调小；`0` 表示使用默认 8192），帧上限 `MAX_FRAMES = 512`。
 - 函数返回后，`OP_ALLOCA` 在 `mem_mark` 之后的线性内存会回收；调用者分配的内存保留。
 
 ### 3.4 线性内存与 globals
 
-VM 默认有 1 MiB 线性内存（`mem`，可由 `ci_vm_config.memory_size` 配置，上限 16 MiB），`mem_top` 是 bump pointer：
+VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认值，上限 16 MiB），`mem_top` 是 bump pointer：
 
 - `OP_ADDR_CONST offset` 压入 `&mem[offset]` 的**宿主地址**（不是文件偏移）。
 - `OP_SET_MEM_TOP size` 将 `mem_top` 设为 size。
@@ -224,6 +226,8 @@ VM 默认有 1 MiB 线性内存（`mem`，可由 `ci_vm_config.memory_size` 配�
 - 因此 `.cib` 中的全局地址是**运行期 VM 内存地址**，不是可重定位文件地址；同一包应在兼容的运行时进程中执行。
 
 ## 4. Opcode
+
+> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xA2 的全部常量，唯一例外是 `POP`（0x15）/`SWAP`（0x16）——它们只在运行时有解码实现，当前编译器不发出。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。
 
 栈效果按“先压入的值在下面”描述，例如 `a, b -> result` 表示先压 `a`、再压 `b`，opcode 弹 `b` 再弹 `a`。
 
@@ -318,7 +322,7 @@ VM 默认有 1 MiB 线性内存（`mem`，可由 `ci_vm_config.memory_size` 配�
 | 0x9F | `ALLOCA_ALIGNED` | u16 size,u8 align | 对齐的静态 alloca |
 | 0xA0 | `ALLOCA_DYN_ALIGN` | u8 align | 对齐的动态 alloca（size 在栈顶） |
 | 0xA1 | `CALL_VARIADIC_TYPED` | u16 func,u16 total,per-extra code/size | 内部 varargs 调用，携带 overflow 布局描述 |
-| 0xA2 | `FPCLASS` | — (u8 width) | LLVM is.fpclass 分类并压入 i1 |
+| 0xA2 | `FPCLASS` | u8 kind | `value,mask -> 0/1`；LLVM `is.fpclass`，kind 选择分类、mask 是测试位图 |
 
 ### 4.1 浮点谓词
 
@@ -367,13 +371,13 @@ offset size field
 ```
 size  field
 1     name_len
-N     name bytes（ASCII/UTF-8，运行时有效上限 32）
+N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列化前按 128 拒绝）
 2     args_count
 2     ret_count
 2     stack_size
 1     sret（0/1）
 1     sse_count
-1     conv（仅 v3；0=cdecl，1=stdcall；其他 ABI 忽略）
+1     conv（仅 v3；Win32：0=cdecl、1=stdcall、2=fastcall；其他 ABI 忽略）
 2     ret_size
 ```
 
@@ -428,9 +432,9 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 - `is_struct=1`：参数的 VM 值是“指向结构体字节的指针”；运行时从该地址拷贝 `size` 字节到 arg block（byval/HFA/大结构体）。
 - `sret=1`：隐藏返回指针；`sret` loc 指示隐藏指针槽。
 - `sse_count`：SysV `%al` / Win64 varargs 的向量计数；其他 ABI 通常为 0。
-- `conv`：Win32 调用约定；0=cdecl，1=stdcall；其他 ABI 忽略。
+- `conv`：Win32 调用约定；0=cdecl，1=stdcall，2=fastcall；其他 ABI 忽略该字节。fastcall 只能用于原生调用计划，fastcall **callback** 会被运行时以 `UnsupportedCallback` 拒绝。
 - `ret_size`：sret/聚合返回缓冲区的字节数。
-- `ret_count > 0`：普通返回 loc；多 loc、`st0` 或单 loc `size > 8` 时，运行时会把返回块复制到 `ret_buf` 并压入其地址（供 `extractvalue`/聚合 store）。
+- `ret_count > 0`：普通返回 loc（`ret_count ≤ 8`）；多 loc、`st0` 或单 loc `size > 8` 时，运行时会把返回块复制到 `ret_buf` 并压入其地址（供 `extractvalue`/聚合 store）。AArch64 的 4 元素 HFA 用 `xmm0`-`xmm3` 四个返回 loc（kind 6/7/9/10）。
 - `stack_size`：计划需要的栈参数字节数；运行时校验不超过 4096。
 
 ### 5.4 ABI id 与 LocKind 的对应
@@ -446,14 +450,14 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 
 ## 6. 完整示例：`hello.cib`
 
-运行 `./build/cinterp-cc compile examples/hello.c -o build/hello.cib --no-auto-link` 后（CIPKG v2）。下表的字段布局不变，但下面的 CIVM 指令字节是旧版示例；当前 `cinterp-cc` 的 `hello.c` 包为 189B（module 83B、plan 10B、meta 61B、import 10B），具体指令以 `xxd` 输出为准：
+运行 `./build/cinterp-cc compile examples/hello.c -o build/hello.cib --no-auto-link` 后（CIPKG v2，`VERSION=0.1.0`）。下面是一次实际构建的 `xxd -g1` 完整注解；不同编译器版本可能改变寄存器/指令选择，但字段布局不变。该包共 189B：module 83B、plan 10B、meta 61B、import 10B，CIVM `code_len` 为 60B：
 
 ```
 43 49 50 4b 47        CIPKG
 02                    version 2
 03                    flags = has_target | has_imports
 19 00                 header_size = 25
-35 00 00 00           module_len = 53
+53 00 00 00           module_len = 83
 0a 00 00 00           plan_len = 10
 3d 00 00 00           meta_len = 61
 0a 00 00 00           import_len = 10
@@ -463,16 +467,22 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 01                    arch 1
 01 00                 func_count = 1
 00 00                 reserved
-04 6d 61 69 6e         name_len=4, "main"
+04 6d 61 69 6e        name_len=4, "main"
 00 00                 param_count = 0
 01 00                 local_count = 1
-1e 00 00 00           code_len = 30
+3c 00 00 00           code_len = 60
 60 04 00              ALLOCA 4
 21 00 00              STORE_LOCAL 0
 10 00 00 00 00 00 00 00 00   LOAD_CONST_I64 0
 20 00 00              LOAD_LOCAL 0
 62 04                 STORE_MEM 4
 10 2a 00 00 00 00 00 00 00   LOAD_CONST_I64 42
+10 ff ff ff ff 00 00 00 00   LOAD_CONST_I64 0xffffffff（32 位宽度）
+1c                    AND
+10 20 00 00 00 00 00 00 00   LOAD_CONST_I64 32
+1e                    SHL
+10 20 00 00 00 00 00 00 00   LOAD_CONST_I64 32
+1f                    SHR_S
 01                    RET
 
 43 49 50 4c           CIPL
@@ -490,7 +500,7 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 40                    ptr_bits = 64
 01                    endian = little
 00                    flags
-3d 00 00 00 00 00 00 00  features = f80|callback|varargs|auto-link|stdcall
+3d 00 00 00 00 00 00 00  features = f80|callback|varargs|auto-link|stdcall (0x3d)
 01 00                 min_runtime = 1
 13 00                 triple_len = 19
 00 00                 link_db_len = 0
@@ -532,32 +542,35 @@ xxd -g1 build/hello.cib
 ./runtime/zig-out/bin/cinterp-run build/hello.cib main
 ```
 
-运行时加载失败会返回错误名（`BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageHeader`、`TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`BadAbi`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`Truncated`、`TrailingBytes`、`BadPlan` 等），CLI 输出 `load failed` / `run failed`。
+运行时加载失败会返回错误名（`BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageHeader`、`BadPackageSize`、`BadTargetMagic`、`BadTargetVersion`、`BadTargetHeader`、`TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`BadAbi`、`BadImportMagic`、`BadImportVersion`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`Truncated`、`TrailingBytes`、`BadPlan` 等），CLI 输出 `load failed` / `run failed`。
 
 ### 7.1 C ABI 错误码
 
-`ci_vm_*` 返回 `CI_OK`（0）或下列稳定负值；`ci_vm_last_error_code` 给出同一类别，`ci_vm_last_error` 给出具体错误名。
+`ci_vm_load_module`/`ci_vm_load_plans`/`ci_vm_load_package`/`ci_vm_load_library`/`ci_vm_run`/`ci_vm_run_args` 返回 `CI_OK`（0）或下列稳定负值。**返回值本身就是类别**：失败时返回对应的 `CI_E_*`；只有 `errorCode` 无法归类的错误才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别，`ci_vm_last_error` 返回具体错误名（如 `BadPackageMagic`）。成功的调用（以及 `ci_vm_clear_error`）清空错误文本与类别；`ci_vm_result` 返回上次成功运行的 `main` 返回值，不是状态码。
 
-| 值 | 名称 | 覆盖的主要错误名 |
+| 值 | 名称 | 覆盖的错误名 |
 | ---: | --- | --- |
-| -1 | `CI_ERROR` | `errorCode` 未归类的内部错误 |
+| -1 | `CI_ERROR` | `errorCode` 的兜底分支：未归类的错误，正常路径不应出现 |
 | -2 | `CI_E_INVALID_ARGUMENT` | `InvalidArgument`、`TooManyArgs` |
 | -3 | `CI_E_OUT_OF_MEMORY` | `OutOfMemory` |
-| -4 | `CI_E_BAD_PACKAGE` | `BadPackage*`、`BadMagic`、`BadVersion`、`BadArch`、`BadModule`、`BadLocals`、`TooManyFunctions`、`NameTooLong`、`ModuleTooLarge`、`Truncated`、`TrailingBytes` |
-| -5 | `CI_E_TARGET` | `TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`UnsupportedOs`（非 Linux/Windows 运行时）、`UnsupportedLibc`（musl 运行时） |
-| -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable` |
-| -7 | `CI_E_LINK` | `SymbolNotFound`、`LibraryNotFound`、`SymbolTooLong`、`PathTooLong`、`TooManyLibraries` |
+| -4 | `CI_E_BAD_PACKAGE` | `BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageHeader`、`BadPackageSize`、`BadMagic`、`BadVersion`、`BadArch`、`BadModule`、`BadLocals`、`TooManyFunctions`、`NameTooLong`、`ModuleTooLarge`、`Truncated`、`TrailingBytes`、`BadImportMagic`、`BadImportVersion`、`TooManyImports`、`TooManyProviders` |
+| -5 | `CI_E_TARGET` | `BadTargetMagic`、`BadTargetVersion`、`BadTargetHeader`、`TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`UnsupportedOs`（非 Linux/Windows 运行时）、`UnsupportedLibc`（musl 运行时） |
+| -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`TooManyPlans`、`TooManyLocs`、`BadLocKind` |
+| -7 | `CI_E_LINK` | `SymbolNotFound`、`LibraryNotFound`、`SymbolTooLong`、`PathTooLong`、`TooManyLibraries`、`TooManyNativeTargets` |
 | -8 | `CI_E_ENTRY` | `EntryNotFound` |
 | -9 | `CI_E_RESOURCE` | `StackOverflow`、`FrameOverflow`、`ReturnTooLarge` |
-| -10 | `CI_E_RUNTIME` | `BadAddress`、`BadOpcode`、`BadFunction`、`BadArgCount`、`BadJump`、`BadCallbackSlot`、`UnsupportedCallback`、`TooManyCallbacks`、`DivisionByZero`、`BadLocal`、`TruncatedCode`、`BadMemorySize`、`NullStruct` |
-| -11 | `CI_E_DESTROYED` | `VmDestroyed`（callback 执行期间 VM 被销毁） |
+| -10 | `CI_E_RUNTIME` | `BadAddress`、`BadOpcode`、`BadFunction`、`BadArgCount`、`BadJump`、`BadCallbackSlot`、`UnsupportedCallback`、`TooManyCallbacks`、`DivisionByZero`、`BadLocal`、`BadLongjmp`、`TooManyJumps`、`TruncatedCode`、`StackUnderflow`、`BadMemorySize`、`NullStruct`、`UnsupportedVaList` |
+| -11 | `CI_E_DESTROYED` | `VmDestroyed`（VM 正在销毁时注册/执行 callback） |
+
+该表与 `runtime/include/cinterp.h` 的枚举及 `runtime/src/vm.zig` 的 `errorCode`（当前 `CI_ABI_VERSION = 2`）一一对应；新增类别只能追加新的负值，不得复用既有数值。
 
 ## 8. 限制与兼容性
 
 - `CIVM` 当前 v1；`CIPKG` 当前 v2（接受 v1）；`CIPL` 当前 v3（接受 v2）；`CIPM`/`CIPI` 当前 v1。
-- `CIVM` 函数数上限 512、函数名有效上限 128、模块上限 2097152 字节；槽栈 8192、帧 512、线性内存默认 1 MiB（可配置，上限 16 MiB，显式 32 字节对齐）。
-- `CIPL` 计划上限 1024、每计划参数 64、每参数 loc 8、名称有效上限 128；FFI arg/stack/ret 缓冲区各 4096 字节。
+- `CIVM` 函数数上限 512、函数名有效上限 128、模块上限 2097152 字节；槽栈默认/上限 8192（`ci_vm_config.stack_size` 只能下调，`0` 表示默认 8192）、帧 512、线性内存默认 1 MiB（`memory_size=0`；上限 16 MiB，32 字节对齐）。
+- `CIPL` 计划上限 1024、每计划参数 64、每计划返回 loc 8、每参数 loc 8、名称有效上限 128；FFI arg/stack/ret 缓冲区各 4096 字节（`stack_size` 也受 4096 限制）。
 - CIPM 目标必须匹配运行时；v1 包没有目标 triple，只能依赖 CIPL ABI 和调用方正确选择运行时。macOS/未知 OS 与 musl 运行时在 load 阶段显式返回 `UnsupportedOs`/`UnsupportedLibc`，不会回退到 Linux glibc。
 - CIPI 上限 512 entry、每 entry 8 provider、名称/符号 64 字节、版本 32 字节；自动 provider 只允许库名，不允许 CIB 携带任意路径。
+- `CIVM` 函数名、CIPL 计划名、CIPI 名称都按字节计数，不是 Unicode 字符数；超限在解析阶段返回 `NameTooLong`。
 - 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。运行时不提供进程内沙箱或 Safe 模式。
 - 自动链接覆盖函数符号和基础 external data（`stdout`/`t_status` 等，`CIPI.kind=data` + `ADDR_EXTERN`）；向量、复杂聚合全局初始化仍不在范围内。`CIPKG` 本身不携带 `.so`/`.dll` 二进制。

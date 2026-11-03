@@ -1,1 +1,4 @@
 # gcc-torture-compile has no separate skip list; .excluded owns unsupported cases
+limits-externdecl	compiler limit: more than 512 entries in the CIPI import table
+pr37669-2	compiler limit: more than 64 arguments in one call plan
+stuct	compiler limit: CIVM module larger than 2 MiB

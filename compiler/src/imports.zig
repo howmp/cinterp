@@ -7,6 +7,17 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
+/// Caps read by `runtime/src/ffi/link_loader.zig`. The compiler cannot import
+/// `runtime/`, so keep these in sync; `main.zig`'s `validateLimits` reports a
+/// `compiler limit: ...` diagnostic before serialization, and `serialize`
+/// re-checks them so no package the runtime would reject can be written.
+pub const MAX_IMPORTS: usize = 512;
+pub const MAX_PROVIDERS: usize = 8;
+pub const MAX_IMPORT_NAME: usize = 64;
+pub const MAX_PROVIDER_NAME: usize = 64;
+pub const MAX_SYMBOL: usize = 64;
+pub const MAX_VERSION: usize = 32;
+
 pub const Provider = struct {
     kind: u8 = 1,
     lib: []const u8,
@@ -47,15 +58,17 @@ pub const Table = struct {
     }
 
     pub fn serialize(self: *const Table, allocator: Allocator) ![]u8 {
-        if (self.entries.items.len > std.math.maxInt(u16)) return error.TooManyImports;
+        if (self.entries.items.len > MAX_IMPORTS) return error.TooManyImports;
         var out = std.ArrayList(u8).init(allocator);
+        errdefer out.deinit();
         try out.appendSlice("CIPI");
         try out.append(1);
         try out.append(0);
         try writeU16(&out, @intCast(self.entries.items.len));
         try writeU16(&out, 0);
         for (self.entries.items) |entry| {
-            if (entry.name.len > 255 or entry.providers.len > 255) return error.NameTooLong;
+            if (entry.name.len > MAX_IMPORT_NAME) return error.NameTooLong;
+            if (entry.providers.len > MAX_PROVIDERS) return error.TooManyProviders;
             try writeU16(&out, entry.plan_index);
             try out.append(entry.kind);
             try out.append(entry.flags);
@@ -66,8 +79,9 @@ pub const Table = struct {
             try out.appendSlice(entry.name);
             try out.append(@intCast(entry.providers.len));
             for (entry.providers) |provider| {
-                if (provider.lib.len > 255 or provider.symbol.len > 255 or
-                    provider.version.len > 255) return error.NameTooLong;
+                if (provider.lib.len > MAX_PROVIDER_NAME or
+                    provider.symbol.len > MAX_SYMBOL or
+                    provider.version.len > MAX_VERSION) return error.NameTooLong;
                 try out.append(provider.kind);
                 try out.append(@intCast(provider.lib.len));
                 try out.appendSlice(provider.lib);
@@ -117,4 +131,40 @@ test "entry serialization preserves providers and flags" {
     try std.testing.expectEqual(@as(u16, 1), std.mem.readInt(u16, bytes[6..8], .little));
     try std.testing.expect(std.mem.indexOf(u8, bytes, "libc.so.6") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "libm.so.6") != null);
+}
+
+test "serialization rejects records beyond the runtime caps" {
+    var table = Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    const no_providers: [0]Provider = .{};
+    // > 64-byte import name.
+    try table.add(.{ .plan_index = 0, .name = "i" ** 65, .providers = @constCast(&no_providers) });
+    try std.testing.expectError(error.NameTooLong, table.serialize(std.testing.allocator));
+
+    var long_lib = Table.init(std.testing.allocator);
+    defer long_lib.deinit();
+    const bad_provider = [_]Provider{.{ .lib = "l" ** 65, .symbol = "puts" }};
+    try long_lib.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&bad_provider) });
+    try std.testing.expectError(error.NameTooLong, long_lib.serialize(std.testing.allocator));
+
+    var long_symbol = Table.init(std.testing.allocator);
+    defer long_symbol.deinit();
+    const bad_symbol = [_]Provider{.{ .lib = "libc.so.6", .symbol = "s" ** 65 }};
+    try long_symbol.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&bad_symbol) });
+    try std.testing.expectError(error.NameTooLong, long_symbol.serialize(std.testing.allocator));
+
+    var many_providers = Table.init(std.testing.allocator);
+    defer many_providers.deinit();
+    const nine = [_]Provider{.{ .lib = "libc.so.6", .symbol = "puts" }} ** 9;
+    try many_providers.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&nine) });
+    try std.testing.expectError(error.TooManyProviders, many_providers.serialize(std.testing.allocator));
+
+    var many_imports = Table.init(std.testing.allocator);
+    defer many_imports.deinit();
+    var i: usize = 0;
+    while (i <= MAX_IMPORTS) : (i += 1) {
+        try many_imports.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&no_providers) });
+    }
+    try std.testing.expectError(error.TooManyImports, many_imports.serialize(std.testing.allocator));
 }

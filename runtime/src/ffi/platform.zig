@@ -146,7 +146,13 @@ pub const Win32CbFrame = extern struct {
     ret_edx: u32,
     ret_st0: f64,
     ret_x87: u8,
-    _pad: [7]u8,
+    _pad0: [3]u8,
+    /// Argument bytes the trampoline adds to ESP after `leave`: the stack
+    /// image size for a `__stdcall` callback (the callee pops them) and 0 for
+    /// `__cdecl` (the caller does). `ci_callback_dispatch` fills this in before
+    /// running the VM function; `callbacks_x86_win32.S` reads offset 28 as a
+    /// dword so the trampoline can use a memory operand for the stack adjust.
+    cleanup: u32,
     ret_st0_f80: [16]u8,
 };
 
@@ -187,6 +193,9 @@ comptime {
         .win32 => {
             if (@sizeOf(Win32CbFrame) != 48) @compileError("bad win32 cb size");
             if (@offsetOf(Win32CbFrame, "ret_st0") != 16) @compileError("bad win32 cb st0");
+            // `callbacks_x86_win32.S` hardcodes CB_CLEANUP = 28.
+            if (@offsetOf(Win32CbFrame, "cleanup") != 28) @compileError("bad win32 cb cleanup");
+            if (@offsetOf(Win32CbFrame, "ret_st0_f80") != 32) @compileError("bad win32 cb st0 f80");
         },
         .aapcs64 => {
             if (@sizeOf(Arm64CbFrame) != 384) @compileError("bad arm64 cb size");
@@ -564,84 +573,160 @@ pub fn invoke(frame: *Frame, target: *const anyopaque) void {
     }
 }
 
-fn validateCommon(plan: abi.CallPlan, gpr_max: u16, xmm_max: u16, stack_only: bool) !void {
+/// Size of the byte blocks `vm.invokeFfi` stages arguments, returns and the
+/// outgoing stack image in. Every offset/size in a plan has to fit here.
+pub const block_size: u16 = 4096;
+
+/// Return register files one ABI can report. Restricting the kinds keeps the
+/// `readRet*` switches below exhaustive: a plan can only name a loc kind the
+/// matching reader has a case for, so the `unreachable` arms stay dead.
+const RetKinds = struct {
+    rax: bool = false,
+    rdx: bool = false,
+    xmm0: bool = false,
+    xmm1: bool = false,
+    xmm2: bool = false,
+    xmm3: bool = false,
+    st0: bool = false,
+
+    fn accepts(self: RetKinds, kind: abi.LocKind) bool {
+        return switch (kind) {
+            .rax => self.rax,
+            .rdx => self.rdx,
+            .xmm0 => self.xmm0,
+            .xmm1 => self.xmm1,
+            .xmm2 => self.xmm2,
+            .xmm3 => self.xmm3,
+            .st0 => self.st0,
+            else => false,
+        };
+    }
+};
+
+fn retKindsFor(kind: Kind) RetKinds {
+    return switch (kind) {
+        // SysV: RAX/RDX, XMM0/XMM1 and ST0 (`long double`).
+        .sysv => .{ .rax = true, .rdx = true, .xmm0 = true, .xmm1 = true, .st0 = true },
+        // MS x64: RAX/RDX and XMM0/XMM1; `long double` is memory class.
+        .win64 => .{ .rax = true, .rdx = true, .xmm0 = true, .xmm1 = true },
+        // i686: EAX/EDX and ST0 (every float returns there).
+        .win32 => .{ .rax = true, .rdx = true, .xmm0 = true, .st0 = true },
+        // AAPCS64: x0/x1 and v0-v3.
+        .aapcs64 => .{ .rax = true, .rdx = true, .xmm0 = true, .xmm1 = true, .xmm2 = true, .xmm3 = true },
+    };
+}
+
+/// Argument register file sizes of one ABI.
+const RegLimits = struct { gpr_max: u16, xmm_max: u16 };
+
+fn limitsFor(kind: Kind) RegLimits {
+    return switch (kind) {
+        .sysv => .{ .gpr_max = 6, .xmm_max = 8 },
+        .win64 => .{ .gpr_max = 4, .xmm_max = 4 },
+        .win32 => .{ .gpr_max = 2, .xmm_max = 0 },
+        .aapcs64 => .{ .gpr_max = 8, .xmm_max = 8 },
+    };
+}
+
+/// Validate `plan` as if it targeted `kind` instead of the host ABI. Kept free
+/// of host state so the rules can be unit-tested for every ABI on any host.
+fn validateFor(kind: Kind, plan: abi.CallPlan) !void {
     if (plan.args.len > 64) return error.BadPlan;
     if (plan.ret_locs.len > 8) return error.BadPlan;
-    if (plan.stack_size > 4096) return error.BadPlan;
-    if (plan.ret_size > 4096) return error.BadPlan;
+    if (plan.stack_size > block_size) return error.BadPlan;
+    if (plan.ret_size > block_size) return error.BadPlan;
     if (plan.sse_count > 8) return error.BadPlan;
+    // Only i686 carries a calling convention in the plan: 0 = cdecl,
+    // 1 = stdcall, 2 = fastcall. Every other ABI has a single C convention and
+    // ignores the byte, so it stays unconstrained there.
+    if (kind == .win32 and plan.conv > 2) return error.BadPlan;
 
+    const limits = limitsFor(kind);
+    var sret_locs: usize = 0;
     for (plan.args) |arg| {
         if (arg.locs.len == 0) return error.BadPlan;
-        if (arg.size > 4096) return error.BadPlan;
+        if (arg.size > block_size) return error.BadPlan;
+        // `vm.invokeFfi` copies `arg.size` bytes (`is_struct`) or `loc.size`
+        // bytes from the *first* loc's offset into its 4096-byte arg block.
+        if (@as(u32, arg.locs[0].offset) + @as(u32, arg.size) > block_size) return error.BadPlan;
         for (arg.locs) |loc| {
-            const off: usize = loc.offset;
-            const n: usize = loc.size;
-            if (off + n > 4096) return error.BadPlan;
+            const off: u32 = loc.offset;
+            const n: u32 = loc.size;
+            if (off + n > block_size) return error.BadPlan;
             switch (loc.kind) {
                 .gpr => {
-                    if (stack_only or loc.index >= gpr_max or n > 8 or off + 8 > 256) return error.BadPlan;
+                    if (loc.index >= limits.gpr_max or n > 8 or off + 8 > 256) return error.BadPlan;
                 },
                 .xmm => {
-                    if (stack_only or loc.index >= xmm_max or n > 16) return error.BadPlan;
+                    if (loc.index >= limits.xmm_max or n > 16) return error.BadPlan;
                 },
                 .stack => {
-                    const idx: usize = loc.index;
-                    if (idx + n > 4096) return error.BadPlan;
+                    // The stack image is exactly `plan.stack_size` bytes and the
+                    // asm/copy steps move it through a 4096-byte buffer, so a
+                    // loc has to fit both.
+                    if (@as(u32, loc.index) + n > plan.stack_size) return error.BadPlan;
                 },
-                .sret => {},
+                .sret => {
+                    if (!plan.sret) return error.BadPlan;
+                    sret_locs += 1;
+                    // On i686 the loc's `index` is the offset of the hidden
+                    // pointer inside the outgoing argument area, which
+                    // `configureWin32` writes a machine word through.
+                    if (kind == .win32) {
+                        const bytes: u32 = @max(n, 4);
+                        if (@as(u32, loc.index) + bytes > plan.stack_size) return error.BadPlan;
+                    }
+                },
                 else => return error.BadPlan,
             }
         }
     }
+    // `plan.sret` promises a hidden return pointer; without a `.sret` loc no
+    // argument carries it and the call would write to a random address.
+    if (plan.sret and sret_locs == 0) return error.BadPlan;
 
+    const allowed = retKindsFor(kind);
     for (plan.ret_locs) |loc| {
-        const off: usize = loc.offset;
-        const n: usize = loc.size;
-        if (off + n > 4096) return error.BadPlan;
+        const off: u32 = loc.offset;
+        const n: u32 = loc.size;
+        if (off + n > block_size) return error.BadPlan;
+        if (!allowed.accepts(loc.kind)) return error.BadPlan;
         switch (loc.kind) {
-            .rax, .rdx => {
-                if (n > 8) return error.BadPlan;
-            },
-            .xmm0, .xmm1, .xmm2, .xmm3, .st0 => {
-                if (n > 16) return error.BadPlan;
-            },
+            .rax, .rdx => if (n > 8) return error.BadPlan,
+            .xmm0, .xmm1, .xmm2, .xmm3, .st0 => if (n > 16) return error.BadPlan,
             else => return error.BadPlan,
         }
     }
-}
-
-fn validateSysV(plan: abi.CallPlan) !void {
-    try validateCommon(plan, 6, 8, false);
-}
-
-fn validateWin64(plan: abi.CallPlan) !void {
-    try validateCommon(plan, 4, 4, false);
-}
-
-fn validateWin32(plan: abi.CallPlan) !void {
-    try validateCommon(plan, 2, 0, false);
-    for (plan.ret_locs) |loc| {
-        switch (loc.kind) {
-            .rax, .rdx => if (loc.size > 8) return error.BadPlan,
-            .xmm0 => if (loc.size > 8) return error.BadPlan,
-            .st0 => if (loc.size > 16) return error.BadPlan,
-            else => return error.BadPlan,
-        }
+    if (plan.ret_locs.len > 0) {
+        // `vm.invokeFfi` copies `ret_size` bytes out of the return block: from
+        // the first loc's offset for a single loc, from offset 0 for several
+        // (where `ret_size <= block_size` above is the only bound needed).
+        if (@as(u32, plan.ret_locs[0].offset) + @as(u32, plan.ret_size) > block_size) return error.BadPlan;
     }
-}
-
-fn validateArm64(plan: abi.CallPlan) !void {
-    try validateCommon(plan, 8, 8, false);
 }
 
 pub fn validate(plan: abi.CallPlan) !void {
-    switch (abi_kind) {
-        .sysv => try validateSysV(plan),
-        .win64 => try validateWin64(plan),
-        .win32 => try validateWin32(plan),
-        .aapcs64 => try validateArm64(plan),
-    }
+    try validateFor(abi_kind, plan);
+}
+
+/// Whether an i686 callback for `plan` can be dispatched through the
+/// `callbacks_x86_win32.S` trampolines.
+///
+/// The trampoline only records the outgoing argument area, so `__fastcall`'s
+/// ECX/EDX arguments would reach the VM as zeros; those are rejected outright.
+/// A `__stdcall` callback pops its own argument bytes; the trampoline reads
+/// that count from `Win32CbFrame.cleanup`. `__fastcall` callbacks are rejected
+/// because the trampoline only captures the stack argument area.
+pub fn win32CallbackSupported(plan: abi.CallPlan) bool {
+    return plan.conv != 2;
+}
+
+/// Argument bytes the i686 callback trampoline adds to ESP after it returns:
+/// `plan.stack_size` for `__stdcall` (the callee pops them) and 0 for
+/// `__cdecl` (the caller does).
+pub fn win32CallbackCleanup(plan: abi.CallPlan) u32 {
+    if (plan.conv != 1) return 0;
+    return plan.stack_size;
 }
 
 extern const ci_cb_table: [256]*const anyopaque;
@@ -908,4 +993,150 @@ pub fn callbackWriteRet(frame: *CallbackFrame, loc: abi.Loc, bits: u64) void {
 pub fn callbackTable(slot: usize) ?*const anyopaque {
     if (slot >= 256) return null;
     return ci_cb_table[slot];
+}
+
+// ----------------------------------------------------------------------- tests
+//
+// The rules are exercised through `validateFor`, which takes the ABI as an
+// argument, so every case runs on any host instead of only on the ABI the test
+// binary was built for.
+
+const empty_args = [_]abi.ArgPlan{};
+
+test "plan validation bounds the argument staging block" {
+    // A byval aggregate copies `arg.size` bytes from the first loc's offset, so
+    // the loc can still sit inside the block while the copy overruns it.
+    var locs = [_]abi.Loc{.{ .kind = .stack, .index = 0, .size = 4, .offset = 4092 }};
+    var args = [_]abi.ArgPlan{.{ .locs = &locs, .size = 8, .alignment = 4, .is_struct = true }};
+    const over = abi.CallPlan{ .args = &args, .ret_locs = &.{}, .stack_size = 4 };
+    try std.testing.expectError(error.BadPlan, validateFor(.win32, over)); // 4092 + 8
+
+    args[0].size = 4;
+    try validateFor(.win32, over); // exactly 4096
+
+    // The per-loc copy of a scalar argument is bounded as well.
+    var scalar = [_]abi.Loc{.{ .kind = .stack, .index = 0, .size = 8, .offset = 4092 }};
+    var scalar_args = [_]abi.ArgPlan{.{ .locs = &scalar, .size = 8, .alignment = 4 }};
+    const scalar_plan = abi.CallPlan{ .args = &scalar_args, .ret_locs = &.{}, .stack_size = 8 };
+    try std.testing.expectError(error.BadPlan, validateFor(.win32, scalar_plan));
+    scalar[0].offset = 4088;
+    try validateFor(.win32, scalar_plan);
+}
+
+test "plan validation bounds the return staging block by offset+ret_size" {
+    var ret = [_]abi.Loc{.{ .kind = .rax, .size = 8, .offset = 4088 }};
+    const plan = abi.CallPlan{ .args = &empty_args, .ret_locs = &ret, .ret_size = 16 };
+    // The loc itself fits (4088 + 8 == 4096); the `ret_size` copy does not.
+    try std.testing.expectError(error.BadPlan, validateFor(.sysv, plan));
+    ret[0].offset = 4080;
+    try validateFor(.sysv, plan); // 4080 + 16 == 4096
+
+    // Several locs are copied from offset 0, so `ret_size` alone bounds them.
+    var multi = [_]abi.Loc{
+        .{ .kind = .rax, .size = 8, .offset = 0 },
+        .{ .kind = .rdx, .size = 8, .offset = 8 },
+    };
+    const multi_plan = abi.CallPlan{ .args = &empty_args, .ret_locs = &multi, .ret_size = 4096 };
+    try validateFor(.sysv, multi_plan);
+    var too_big = multi_plan;
+    too_big.ret_size = 4097;
+    try std.testing.expectError(error.BadPlan, validateFor(.sysv, too_big));
+}
+
+test "plan validation restricts return loc kinds to the ABI" {
+    var st0 = [_]abi.Loc{.{ .kind = .st0, .size = 16, .offset = 0 }};
+    const long_double = abi.CallPlan{ .args = &empty_args, .ret_locs = &st0, .ret_size = 16 };
+    try validateFor(.sysv, long_double);
+    try validateFor(.win32, long_double);
+    // Win64 classifies `long double` as memory and returns it through sret, and
+    // AAPCS64 uses v0/v1 instead of the x87 file.
+    try std.testing.expectError(error.BadPlan, validateFor(.win64, long_double));
+    try std.testing.expectError(error.BadPlan, validateFor(.aapcs64, long_double));
+
+    var xmm3 = [_]abi.Loc{.{ .kind = .xmm3, .size = 8, .offset = 0 }};
+    const hfa = abi.CallPlan{ .args = &empty_args, .ret_locs = &xmm3, .ret_size = 8 };
+    try validateFor(.aapcs64, hfa);
+    try std.testing.expectError(error.BadPlan, validateFor(.sysv, hfa));
+    try std.testing.expectError(error.BadPlan, validateFor(.win64, hfa));
+    try std.testing.expectError(error.BadPlan, validateFor(.win32, hfa));
+
+    var xmm1 = [_]abi.Loc{.{ .kind = .xmm1, .size = 8, .offset = 0 }};
+    const pair = abi.CallPlan{ .args = &empty_args, .ret_locs = &xmm1, .ret_size = 8 };
+    try validateFor(.sysv, pair);
+    try validateFor(.win64, pair);
+    try std.testing.expectError(error.BadPlan, validateFor(.win32, pair));
+
+    // Argument-friendly kinds are never valid returns.
+    var gpr = [_]abi.Loc{.{ .kind = .gpr, .size = 8, .offset = 0 }};
+    const as_ret = abi.CallPlan{ .args = &empty_args, .ret_locs = &gpr, .ret_size = 8 };
+    for ([_]Kind{ .sysv, .win64, .win32, .aapcs64 }) |kind| {
+        try std.testing.expectError(error.BadPlan, validateFor(kind, as_ret));
+    }
+}
+
+test "plan validation ties .sret locs to plan.sret" {
+    var locs = [_]abi.Loc{.{ .kind = .sret, .size = 8, .offset = 0 }};
+    var args = [_]abi.ArgPlan{.{ .locs = &locs, .size = 8, .alignment = 8 }};
+
+    // A `.sret` loc without `plan.sret` would send the hidden pointer nowhere.
+    const stray = abi.CallPlan{ .args = &args, .ret_locs = &.{}, .ret_size = 16 };
+    try std.testing.expectError(error.BadPlan, validateFor(.sysv, stray));
+
+    const with_sret = abi.CallPlan{ .args = &args, .ret_locs = &.{}, .sret = true, .ret_size = 16 };
+    try validateFor(.sysv, with_sret);
+    try validateFor(.win64, with_sret);
+    try validateFor(.aapcs64, with_sret);
+
+    // Conversely `sret = true` needs a loc that carries the pointer.
+    var plain = [_]abi.Loc{.{ .kind = .gpr, .size = 8, .offset = 0 }};
+    var plain_args = [_]abi.ArgPlan{.{ .locs = &plain, .size = 8, .alignment = 8 }};
+    const missing = abi.CallPlan{ .args = &plain_args, .ret_locs = &.{}, .sret = true, .ret_size = 16 };
+    try std.testing.expectError(error.BadPlan, validateFor(.sysv, missing));
+    try std.testing.expectError(error.BadPlan, validateFor(.aapcs64, missing));
+}
+
+test "plan validation bounds stack locs by plan.stack_size" {
+    var locs = [_]abi.Loc{.{ .kind = .stack, .index = 4, .size = 8, .offset = 0 }};
+    var args = [_]abi.ArgPlan{.{ .locs = &locs, .size = 8, .alignment = 4 }};
+    const plan = abi.CallPlan{ .args = &args, .ret_locs = &.{}, .stack_size = 8 };
+    // 4 + 8 overruns the 8-byte outgoing area even though it is far below 4096.
+    try std.testing.expectError(error.BadPlan, validateFor(.win32, plan));
+    try std.testing.expectError(error.BadPlan, validateFor(.sysv, plan));
+    var larger = plan;
+    larger.stack_size = 12;
+    try validateFor(.win32, larger);
+    try validateFor(.sysv, larger);
+
+    // The i686 `.sret` loc addresses the same area with a machine word.
+    var sret_locs = [_]abi.Loc{.{ .kind = .sret, .index = 8, .size = 4, .offset = 0 }};
+    var sret_args = [_]abi.ArgPlan{.{ .locs = &sret_locs, .size = 4, .alignment = 4 }};
+    const bad_sret = abi.CallPlan{ .args = &sret_args, .ret_locs = &.{}, .stack_size = 8, .sret = true, .ret_size = 16 };
+    try std.testing.expectError(error.BadPlan, validateFor(.win32, bad_sret));
+    sret_locs[0].index = 4;
+    try validateFor(.win32, bad_sret);
+}
+
+test "plan validation restricts the Win32 calling convention byte" {
+    for ([_]u8{ 0, 1, 2 }) |conv| {
+        try validateFor(.win32, .{ .args = &empty_args, .ret_locs = &.{}, .conv = conv });
+    }
+    try std.testing.expectError(error.BadPlan, validateFor(.win32, .{ .args = &empty_args, .ret_locs = &.{}, .conv = 3 }));
+    // The byte is a Win32 decoration mapping only; other ABIs ignore it.
+    try validateFor(.sysv, .{ .args = &empty_args, .ret_locs = &.{}, .conv = 3 });
+}
+
+test "plan validation keeps a plain integer call valid on every ABI" {
+    var arg_locs = [_]abi.Loc{.{ .kind = .stack, .index = 0, .size = 4, .offset = 0 }};
+    var args = [_]abi.ArgPlan{.{ .locs = &arg_locs, .size = 4, .alignment = 4 }};
+    var ret = [_]abi.Loc{.{ .kind = .rax, .size = 4, .offset = 0 }};
+    const plan = abi.CallPlan{ .args = &args, .ret_locs = &ret, .stack_size = 4, .ret_size = 4 };
+    for ([_]Kind{ .sysv, .win64, .win32, .aapcs64 }) |kind| try validateFor(kind, plan);
+
+    // Register arguments respect each ABI's file size.
+    var gpr_locs = [_]abi.Loc{.{ .kind = .gpr, .index = 4, .size = 8, .offset = 0 }};
+    var gpr_args = [_]abi.ArgPlan{.{ .locs = &gpr_locs, .size = 8, .alignment = 8 }};
+    const gpr_plan = abi.CallPlan{ .args = &gpr_args, .ret_locs = &.{} };
+    try std.testing.expectError(error.BadPlan, validateFor(.win64, gpr_plan));
+    try validateFor(.sysv, gpr_plan);
+    try validateFor(.aapcs64, gpr_plan);
 }
