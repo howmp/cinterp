@@ -4,9 +4,10 @@ const abi = @import("abi.zig");
 const lower_ast = @import("lower_ast.zig");
 const ir = @import("ir/parser.zig");
 const verify = @import("ir/verify.zig");
-const cstdapi = @import("cstdapi.zig");
 const imports = @import("imports.zig");
-const winmd = @import("winmd.zig");
+const libc_defs = @import("libc_defs.zig");
+const link_wrappers = @import("link_wrappers.zig");
+const win_defs = @import("win_defs.zig");
 const build_options = @import("build_options");
 
 const Allocator = std.mem.Allocator;
@@ -48,7 +49,6 @@ const Options = struct {
     dump_imports: bool = false,
     cib_version: u8 = 2,
     auto_link: bool = true,
-    link_db: ?[]const u8 = null,
 };
 
 fn writeU16(list: *std.ArrayList(u8), v: u16) !void {
@@ -142,10 +142,10 @@ fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]
     return out.toOwnedSlice();
 }
 
-fn convertWinmdProviders(allocator: Allocator, providers: []const winmd.Provider) ![]imports.Provider {
+fn convertProviders(allocator: Allocator, providers: anytype) ![]imports.Provider {
     const out = try allocator.alloc(imports.Provider, providers.len);
     for (providers, 0..) |provider, index| {
-        out[index] = .{ .lib = provider.dll, .symbol = provider.symbol };
+        out[index] = .{ .lib = provider.lib, .symbol = provider.symbol };
     }
     return out;
 }
@@ -157,13 +157,19 @@ fn fallbackWindowsProviders(allocator: Allocator, name: []const u8) ![]imports.P
     return out;
 }
 
+/// Build the CIPI table for a package.
+///
+/// Function plans are resolved through the build-time Zig indexes:
+///   * Windows: MinGW `.def` data (`win_defs`) → DLL + Win32 call convention.
+///   * Linux: glibc `abilists` (`libc_defs`) → libc/libm/pthread/... provider.
+/// Plans with no index entry are left out of CIPI on purpose: the runtime's
+/// process/`--lib`/default-CRT fallback resolves them, which is what keeps
+/// UCRT `printf` and unknown custom libraries working.
 fn buildImportTable(
     allocator: Allocator,
     plans: []const abi.Plan,
     external_data: []const []const u8,
     target: Target,
-    cstd_db: *cstdapi.Database,
-    win_db: ?*winmd.Database,
     auto_link: bool,
 ) !imports.Table {
     var table = imports.Table.init(allocator);
@@ -196,12 +202,6 @@ fn buildImportTable(
             out[0] = .{ .lib = "libc.so.6", .symbol = name };
             out[1] = .{ .lib = "libm.so.6", .symbol = name };
             providers = out;
-        } else if (win_db) |db| {
-            if (db.lookup(name, target.arch)) |api| {
-                providers = try convertWinmdProviders(allocator, api.providers);
-            } else {
-                providers = try fallbackWindowsProviders(allocator, name);
-            }
         } else {
             providers = try fallbackWindowsProviders(allocator, name);
         }
@@ -220,18 +220,15 @@ fn buildImportTable(
             if (std.mem.startsWith(u8, plan.name, "callback:")) continue;
             var providers: ?[]imports.Provider = null;
             var call_conv = plan.conv;
-            var min_os: u16 = 0;
             if (target.os == 2) {
-                if (win_db) |db| {
-                    if (db.lookup(plan.name, target.arch)) |api| {
-                        providers = try convertWinmdProviders(allocator, api.providers);
-                        call_conv = api.conv;
-                        min_os = api.min_os;
-                    }
+                if (win_defs.lookup(target.arch, plan.name)) |resolved| {
+                    providers = try convertProviders(allocator, resolved.slice());
+                    call_conv = resolved.conv;
                 }
-            }
-            if (providers == null) {
-                providers = try cstd_db.lookup(target.name, target.os, plan.name);
+            } else {
+                if (libc_defs.lookup(target.arch, plan.name)) |resolved| {
+                    providers = try convertProviders(allocator, resolved.slice());
+                }
             }
             if (providers) |list| {
                 if (list.len == 0) continue;
@@ -239,10 +236,12 @@ fn buildImportTable(
                     .plan_index = @intCast(plan_index),
                     .name = plan.name,
                     .kind = 0,
-                    .flags = 11,
+                    // Windows providers may be missing on the host (e.g. a
+                    // MinGW-only export); allow the runtime fallback.
+                    .flags = if (target.os == 2) 11 | 4 else 11,
                     .call_conv = call_conv,
                     .arch_mask = archMask(target.arch),
-                    .min_os = min_os,
+                    .min_os = 0,
                     .providers = list,
                 });
             }
@@ -354,16 +353,7 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8) !void {
 fn usage() void {
     std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir]\n" ++
         "                      [--dump] [--dump-ast] [--dump-imports]\n" ++
-        "                      [--cib-version 1|2] [--no-auto-link] [--link-db DIR]\n", .{});
-}
-
-fn resolveDbFile(allocator: Allocator, path: []const u8, name: []const u8) ![]const u8 {
-    if (std.fs.cwd().openDir(path, .{})) |dir_value| {
-        var dir = dir_value;
-        dir.close();
-        return try std.fs.path.join(allocator, &.{ path, name });
-    } else |_| {}
-    return try allocator.dupe(u8, path);
+        "                      [--cib-version 1|2] [--no-auto-link]\n", .{});
 }
 
 /// Parse the IR text into the typed AST, verify target consistency and lower it.
@@ -428,7 +418,6 @@ pub fn main() !void {
     var dump_imports = false;
     var cib_version: u8 = 2;
     var auto_link = true;
-    var link_db: ?[]const u8 = null;
 
     var i: usize = 2;
     while (i < argv.len) : (i += 1) {
@@ -486,19 +475,6 @@ pub fn main() !void {
             cib_version = parseCibVersion(a["--cib-version=".len..]);
         } else if (std.mem.eql(u8, a, "--no-auto-link")) {
             auto_link = false;
-        } else if (std.mem.eql(u8, a, "--link-db")) {
-            i += 1;
-            if (i >= argv.len) {
-                usage();
-                std.process.exit(2);
-            }
-            link_db = argv[i];
-        } else if (std.mem.startsWith(u8, a, "--link-db=")) {
-            link_db = a["--link-db=".len..];
-            if (link_db.?.len == 0) {
-                std.debug.print("--link-db requires a directory or file path\n", .{});
-                std.process.exit(2);
-            }
         } else if (a.len > 0 and a[0] == '-') {
             usage();
             std.process.exit(2);
@@ -538,58 +514,36 @@ pub fn main() !void {
         .dump_imports = dump_imports,
         .cib_version = cib_version,
         .auto_link = auto_link,
-        .link_db = link_db,
     });
 
-    var cstd_db = if (link_db) |path|
-        try cstdapi.Database.initFromPath(allocator, path)
-    else
-        try cstdapi.Database.initDefault(allocator);
-    defer cstd_db.deinit();
-
-    var win_db: ?winmd.Database = null;
-    defer if (win_db) |*db| db.deinit();
-    if (target.os == 2) {
-        if (link_db) |path| {
-            const win_path = try resolveDbFile(allocator, path, "winmd.generated.json.gz");
-            win_db = try winmd.Database.initFromPath(allocator, win_path);
-        } else {
-            win_db = try winmd.Database.init(allocator);
-        }
-    }
+    // `data/link_wrappers.json` aliases a handful of same-signature symbols
+    // that headers/IR spell differently (Windows `snprintf -> _snprintf`).
+    // `atexit -> __cxa_atexit` stays in lower_ast.zig because it adds args.
+    var wrappers = try link_wrappers.Wrappers.init(allocator);
+    defer wrappers.deinit();
 
     for (result.plans) |*plan| {
-        if (cstd_db.alias(target.os, plan.name)) |aliased| {
+        if (wrappers.alias(target.os, plan.name)) |aliased| {
             plan.name = aliased;
         }
         if (target.os == 2) {
-            if (win_db) |*db| {
-                if (db.lookup(plan.name, target.arch)) |api| plan.conv = api.conv;
-            }
+            if (win_defs.lookup(target.arch, plan.name)) |resolved| plan.conv = resolved.conv;
         }
     }
 
-    var import_table = buildImportTable(
+    var import_table = try buildImportTable(
         allocator,
         result.plans,
         result.external_data,
         target,
-        &cstd_db,
-        if (win_db) |*db| db else null,
         auto_link,
-    ) catch |err| {
-        if (err == error.UnavailableSymbol) std.process.exit(1);
-        return err;
-    };
+    );
     defer import_table.deinit();
 
     if (auto_link and result.plans.len > 0) {
-        target.link_db = cstd_db.databaseId();
-        if (target.os == 2) {
-            if (win_db) |*db| {
-                target.link_db = try std.fmt.allocPrint(allocator, "{s};{s}", .{ target.link_db, db.databaseId() });
-            }
-        }
+        // Diagnostic provenance of the build-time table; no checked-in link
+        // snapshots are involved any more.
+        target.link_db = if (target.os == 2) win_defs.source_id else libc_defs.source_id;
     }
 
     const module = try moduleSerialize(allocator, result.functions);

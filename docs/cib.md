@@ -13,7 +13,11 @@
 - `compiler-zig/src/lower_ast.zig`：CIVM、opcode、globals 初始化
 - `compiler-zig/src/abi.zig`：CIPL、`Loc`/`ArgPlan`/`CallPlan`
 - `compiler-zig/src/imports.zig`：CIPI 结构与序列化
-- `compiler-zig/src/cstdapi.zig` / `winmd.zig`：C 标准库/Windows API 自动链接
+- `compiler-zig/src/link_index.zig`：构建期生成的符号索引的二进制格式
+- `compiler-zig/src/win_defs.zig`：Windows provider（Zig 自带 MinGW `.def` 数据）
+- `compiler-zig/src/libc_defs.zig`：Linux provider（Zig 自带 glibc `abilists` 数据）
+- `compiler-zig/src/link_wrappers.zig` + `src/data/link_wrappers.json`：target 级 ABI 别名（`snprintf -> _snprintf`）
+- `compiler-zig/tools/gen_link_index.zig`：构建期索引生成器
 - `runtime/src/vm.zig`：CIVM 解析、opcode 执行、C ABI、provider 解析
 - `runtime/src/ffi/plan_loader.zig`：CIPL 解析
 - `runtime/src/ffi/link_loader.zig`：CIPM/CIPI 解析
@@ -91,14 +95,14 @@ offset size field
 25     2    link_db_len
 27     2    producer_len
 29     triple_len       canonical target triple（UTF-8）
-...    link_db_len      "cstdapi@<commit>;winmd@<commit>"
+...    link_db_len      "glibc-abilists@<zig version>" / "mingw-defs@<zig version>"
 ...    producer_len     "cinterp 0.1.0"
 ```
 
 - `features` 位：bit0=f80、bit1=f128、bit2=callback、bit3=varargs、bit4=auto-link、bit5=stdcall。运行时按位检查，缺失返回 `UnsupportedFeature`。
 - `min_runtime` 高于运行时版本时返回 `RuntimeTooOld`。
 - `triple` 用于诊断；快速校验使用 arch/os/abi/ptr_bits/endian。
-- `link_db` 记录生成 CIPI 时使用的 cstdapi/winmd 上游版本；没有 import 时可以为空。
+- `link_db` 记录生成 CIPI 时使用的构建期索引来源：Linux 为 `glibc-abilists@<zig version>`，Windows 为 `mingw-defs@<zig version>`；没有 import 时可以为空。
 
 ### 2.4 CIPI：外部符号链接表（v1）
 
@@ -153,13 +157,16 @@ provider[]:
 
 没有 CIPI entry 的计划（旧 v1 包或未收录的自定义符号）仍走旧搜索路径。
 
-### 2.6 自动链接数据库
+### 2.6 外部符号索引（构建期生成）
 
-编译器按 target 自动生成 CIPI，只写实际使用的外部符号：
+编译器按 target 自动生成 CIPI，只写实际使用的外部符号。符号 → provider 的映射不再来自签入的数据库，而是在构建期由 `compiler-zig/tools/gen_link_index.zig` 从已安装的 Zig 工具链生成，并以二进制表内嵌进 `cinterp-cc`：
 
-- **C 标准库**：`compiler-zig/src/data/cstdapi.generated.json` 由 `tools/gen_cstdapi.py` 从 cstdapi 生成并被编译器内嵌；Linux 候选 `libc.so.6`/`libm.so.6`，Windows 候选 `ucrtbase.dll`/`msvcrt.dll`/`ntdll.dll`，包含 `_snprintf` 等别名。
-- **Windows API**：`compiler-zig/src/data/winmd.generated.json.gz` 由 `tools/gen_winmd.py` 从 winmd 生成；name → DLL/callconv/min_os/arch_mask，运行期按 DLL 自动加载。
-- `--no-auto-link` 关闭生成；未命中的自定义符号继续使用 `--lib`/旧 fallback。
+- **Linux**（`compiler-zig/src/libc_defs.zig`，`glibc-abilists@<zig version>`）：解析 `<zig lib>/libc/glibc/abilists`，只保留 `x86_64-linux-gnu` 与 `aarch64-linux-gnu`；库名映射 `c → libc.so.6`、`m → libm.so.6`、`pthread → libpthread.so.0`、`dl → libdl.so.2`、`rt → librt.so.1`、`util → libutil.so.1`、`resolv → libresolv.so.2`，`ld`（动态 loader）不作为 provider。`printf`/`qsort` → `libc.so.6`，`sin` → `libm.so.6`，`pthread_create` → `libc.so.6` + `libpthread.so.0`。
+- **Windows**（`compiler-zig/src/win_defs.zig`，`mingw-defs@<zig version>`）：解析 `<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def` 与 `lib-common/*.def.in`（用 `zig cc -E` 预处理），得到 DLL、实际导出符号、`arch_mask` 与调用约定。具体 DLL（`kernel32.dll`/`user32.dll`）优先于 `api-ms-win-*`；`ucrtbase` 优先于 `msvcrt`；PE 可执行文件（`*.exe`）永不作为 provider。
+- **别名**：`compiler-zig/src/data/link_wrappers.json` 是唯一保留的签入链接元数据，提供同签名 target 别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）；`atexit -> __cxa_atexit` 仍由 `lower_ast.zig` 处理。
+- **运行期 fallback**：索引未收录的符号不写 plan entry，运行期从进程符号、`--lib` 库、默认 CRT 库（Linux `libc.so.6`/`libm.so.6`/`libdl.so.2`/`libpthread.so.0`/`librt.so.1`/`libutil.so.1`/`libresolv.so.2`，Windows `msvcrt.dll`/`ucrtbase.dll`/`ntdll.dll`）继续解析。Windows plan entry 的 provider 允许失败后 fallback（flag bit2）。
+- **`min_os`**：MinGW defs 没有最低 OS 版本信息，新包的 plan entry 一律写 `min_os=0`；旧包仍按其原字段校验。
+- `--no-auto-link` 关闭生成；自定义符号继续使用 `--lib`/运行期 fallback。
 
 ## 3. CIVM 模块（v1）
 
@@ -502,9 +509,12 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 32）
 
 ```
 >>> cinterp-run --dump-target --dump-imports --load-only build/ffi_printf.cib
-target: x86_64-pc-linux-gnu arch=1 os=1 abi=1 ptr=64 endian=1 features=0x3d link_db=cstdapi@...
-import[plan 0] printf: libc.so.6:printf libm.so.6:printf
+target: x86_64-pc-linux-gnu arch=1 os=1 abi=1 ptr=64 endian=1 features=0x3d link_db=glibc-abilists@0.13.0
+import[plan 65535] printf: libc.so.6:printf libm.so.6:printf
+import[plan 0] printf: libc.so.6:printf
 ```
+
+（`link_db` 里的 `0.13.0` 是生成索引时使用的 Zig 版本；Windows 包显示 `mingw-defs@0.13.0`。）
 
 ## 7. 检查与验证
 

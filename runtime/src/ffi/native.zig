@@ -61,12 +61,29 @@ pub fn symbolOrdinal(handle: ?*anyopaque, ordinal: u16) ?*anyopaque {
     return null;
 }
 
-pub fn defaultC() ?*anyopaque {
-    if (comptime is_windows) {
-        if (load("msvcrt.dll")) |h| return h;
-        return load("ucrtbase.dll");
-    }
-    if (comptime builtin.abi == .musl) return null;
-    if (load("libc.so.6")) |h| return h;
-    return load("libc.so");
+const windows_default_libraries = [_][:0]const u8{
+    "msvcrt.dll",
+    "ucrtbase.dll",
+    "ntdll.dll",
+};
+
+const linux_default_libraries = [_][:0]const u8{
+    "libc.so.6",
+    "libm.so.6",
+    "libdl.so.2",
+    "libpthread.so.0",
+    "librt.so.1",
+    "libutil.so.1",
+    "libresolv.so.2",
+};
+
+/// Default libraries searched after the process namespace and explicit
+/// `--lib` handles. These cover v1 packages, `--no-auto-link` packages and
+/// symbols the build-time link indexes do not know about. Missing entries are
+/// skipped by the caller (for example libdl/librt are merged into libc on
+/// newer glibc systems).
+pub fn defaultLibraries() []const [:0]const u8 {
+    if (comptime is_windows) return &windows_default_libraries;
+    if (comptime builtin.abi == .musl) return &.{};
+    return &linux_default_libraries;
 }

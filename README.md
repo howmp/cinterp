@@ -11,8 +11,8 @@ and no runtime code generation / executable memory.
   package with target metadata (`CIPM`) and external-symbol link metadata
   (`CIPI`). The AST is the only IR frontend; the former string parser and the
   original Python compiler has been removed. Python is used only by the test,
-  fuzz and benchmark harnesses plus the offline `tools/gen_*.py` metadata
-  generators.
+  fuzz and benchmark harnesses; the external-symbol link metadata is generated
+  at build time from the installed Zig toolchain (see below).
 - **Runtime** (Zig 0.13): stack VM with linear memory, C ABI (`ci_vm_*`),
   compile-time ABI selection, fixed assembly engines for SysV x86-64,
   Win64, Win32 cdecl/stdcall and AArch64 AAPCS64, native symbol resolution
@@ -150,23 +150,39 @@ CIPL and the opcode table.
 ```bash
 ./build/cinterp-cc compile source.c -o out.cib \
   [--dump] [--dump-imports] [--keep-ir] [--target TARGET] \
-  [--cib-version 1|2] [--no-auto-link] [--link-db DIR]
+  [--cib-version 1|2] [--no-auto-link]
 ```
 
 `--dump` prints functions and FFI plans; `--dump-imports` prints CIB provider
 bindings; `--keep-ir` keeps the generated LLVM IR next to the package.
 `--cib-version 1` emits legacy packages without CIPM/CIPI. `--no-auto-link`
-disables automatic C-standard-library/Windows-API binding. `--link-db DIR`
-overrides the embedded cstdapi/winmd databases. Targets: `x86_64-linux`
+disables automatic C-standard-library/Windows-API binding. Targets: `x86_64-linux`
 (default native), `x86_64-windows`, `i686-windows`, `aarch64-linux`. Windows
 targets automatically use Zig's bundled MinGW headers (`libc/include/any-windows-any`)
 when available; set `ZIG_LIB_DIR` to override.
 
-The compiler automatically links used C standard library symbols on all
-targets (libc/libm, UCRT/MSVCRT/NTDLL) and Windows APIs on Windows targets
-(via the vendored winmd index); no `--lib` is required for those. Custom
-libraries still use `--lib` and take precedence over CIB providers. Only one
-CIB is executed at a time; CIB-to-CIB linking is explicitly unsupported.
+The compiler automatically links used C standard library symbols and Windows
+APIs; no `--lib` is required for those. The symbol -> provider tables are
+generated at build time from the installed Zig toolchain, so there is no
+checked-in link database and no `--link-db` override:
+
+- **Linux** (`compiler-zig/src/libc_defs.zig`): Zig's bundled glibc `abilists`
+  give the exporting soname (`printf` -> `libc.so.6`, `sin` -> `libm.so.6`,
+  `pthread_create` -> `libc.so.6`/`libpthread.so.0`).
+- **Windows** (`compiler-zig/src/win_defs.zig`): Zig's bundled MinGW `.def`
+  files give the DLL, x86 stdcall decoration and call convention
+  (`GetTickCount64` -> `kernel32.dll`, `GetSystemMetrics` -> `user32.dll`,
+  `MessageBoxA@16` -> `user32.dll` with `conv=1`).
+- **Runtime fallback**: symbols the indexes do not describe (UCRT `printf`,
+  custom libraries) are resolved at run time from the process, `--lib`
+  libraries and the default C runtime (`libc.so.6`/`libm.so.6`/... on Linux,
+  `msvcrt.dll`/`ucrtbase.dll`/`ntdll.dll` on Windows).
+
+Because the Windows index no longer carries a minimum-OS field, new packages
+declare `min_os=0`; calling an API that is missing on an older Windows fails at
+run time instead of load time. Custom libraries still use `--lib` and take
+precedence over CIB providers. Only one CIB is executed at a time; CIB-to-CIB
+linking is explicitly unsupported.
 
 The compiler currently supports:
 
@@ -280,10 +296,13 @@ compiler-zig/          Zig compiler (build-time)
   src/ir/              typed LLVM IR lexer/parser/AST/verifier
   src/lower_ast.zig    AST -> CIVM lowering
   src/abi.zig          CallPlan model and per-ABI plan builders
-  src/cstdapi.zig      embedded C-library link metadata and --link-db
   src/imports.zig      structured CIPI table and serializer
-  src/winmd.zig        embedded Windows API metadata
-  src/data/            cstdapi/winmd/wrapper metadata
+  src/link_index.zig   binary format of the generated symbol indexes
+  src/win_defs.zig     Windows providers from Zig's bundled MinGW .def files
+  src/libc_defs.zig    Linux providers from Zig's bundled glibc abilists
+  src/link_wrappers.zig  target link-ABI aliases (snprintf -> _snprintf)
+  src/data/link_wrappers.json  the only checked-in link metadata
+  tools/gen_link_index.zig     build-time generator for win_defs/libc_defs
 docs/cib.md            binary package format reference
 runtime/               Zig VM/runtime (shipped)
   src/vm.zig           VM, linear memory, C ABI, callback dispatcher
@@ -296,9 +315,8 @@ examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free
                        MEMORY/register/mixed struct FFI, qsort callback, math,
                        float32 FFI, bitfields
 scripts/               Python test/fuzz/benchmark harnesses
-tools/                  offline link-metadata regeneration scripts
 spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
-dev.md                 architecture, decisions, ABI details, boundaries
 ```
+
 
 See `dev.md` for architecture, implementation decisions, ABI details, validation evidence and known boundaries.

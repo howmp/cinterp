@@ -54,7 +54,7 @@
 - **语言版本**：Zig 0.13（与运行时同一 pin）
 - **C 前端**：`zig cc`（Zig 捆绑 clang 18），通过 subprocess 调用
 - **实现**：typed IR lexer/parser/AST、subset verifier、CIVM lowering、CIPL/CIPM/CIPI writer
-- **链接元数据**：内嵌 cstdapi/winmd/link_wrappers，`--link-db` 可覆盖 cstdapi/winmd
+- **链接元数据**：构建期由 `compiler-zig/tools/gen_link_index.zig` 从已安装 Zig 工具链生成 Windows（MinGW `.def`）与 Linux（glibc `abilists`）符号索引，二进制内嵌；保留的运行期 ABI 别名只有 `link_wrappers.json`。无 `--link-db`，无签入的 cstdapi/winmd 数据库（见 §23）。
 
 不依赖 libclang/LLVM 进程内 API，也不依赖 Python 编译器包。
 
@@ -453,15 +453,19 @@ ci_abi_call_sysv64:
 cl/
 ├── compiler-zig/                      # Zig 编译器（build-time）
 │   ├── build.zig
+│   ├── tools/                         # 构建期链接元数据生成器
+│   │   └── gen_link_index.zig         # MinGW defs -> win_defs / glibc abilists -> libc_defs
 │   └── src/
 │       ├── main.zig                   # CLI、CIPKG/CIPM/CIPI writer
 │       ├── ir/                        # typed LLVM IR lexer/parser/AST/verifier
 │       ├── lower_ast.zig              # AST -> CIVM lowering
 │       ├── abi.zig                    # CallPlan/CallbackPlan
-│       ├── cstdapi.zig                # C 标准库链接元数据 / --link-db
 │       ├── imports.zig                # CIPI 结构与序列化
-│       ├── winmd.zig                  # Windows API 元数据
-│       └── data/                      # cstdapi/winmd/link_wrappers
+│       ├── link_index.zig             # 构建期符号索引的二进制格式
+│       ├── win_defs.zig               # Windows provider（Zig 自带 MinGW .def）
+│       ├── libc_defs.zig              # Linux provider（Zig 自带 glibc abilists）
+│       ├── link_wrappers.zig          # target 级 ABI 别名（snprintf -> _snprintf）
+│       └── data/link_wrappers.json    # 唯一保留的签入链接元数据
 │
 ├── runtime/                           # Zig 运行时（shipped）
 │   ├── build.zig
@@ -855,19 +859,21 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 19.7 计划完成状态
 
 - **计划状态**：HFA/long double/聚合回调边角已完成；`_Complex`/GCC builtins、外部 inline/weak 地址语义明确不做，atexit/signal 已按普通 libc 符号/callback 处理；后续 Zig 前端工作见 §21。
-- **2026-10-31 新增完成**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。
+- **2026-10-31 新增完成（历史，链接元数据部分已被 §23 取代）**：CIPKG v2/CIPM 目标声明、CIPI 自动符号链接、cstdapi C 标准库自动链接（Libc/libm/UCRT/MSVCRT）、winmd Windows API 自动链接（18k+ API 索引）、真实 Win64/Win32/ARM64 验证。cstdapi/winmd 数据库已删除，现由构建期生成的 MinGW defs / glibc abilists 索引承担同一职责（§23）。
 - **明确范围外**：向量类型/vector ABI、复杂聚合全局初始化、Win64 `__vectorcall`/COM、Win32 `thiscall`、SysV `i128`/向量参数；Win32 fastcall 已单独支持。
 - **宿主限制**：Windows CRT `%Lf` 行为与原生 MinGW 一致；未额外提供格式化 shim。
 - **信任模型**：运行时只执行可信 CIB；不提供 Safe 模式或进程内沙箱，不可信输入由宿主自行隔离。
 - 交付物与验证数字见 19.5；旧 CIB 目标/自动链接设计已合并到 §19.8。
 
-### 19.8 目标声明与外部符号自动链接（2026-10-31）
+### 19.8 目标声明与外部符号自动链接（2026-10-31，**历史**：链接元数据部分已被 §23 取代）
+
+> **历史章节**：本节记录的 cstdapi/winmd 数据库与 `--link-db` 已在 §23 中删除。CIPKG/CIPM/CIPI 的二进制格式与运行期解析语义仍然有效；关于符号来源的部分（Phase 1/Phase 2、`--link-db`）只作为历史记录保留。
 
 - **CIPKG v2**：25B 头 + CIVM/CIPL/CIPM/CIPI 四段；v1 仍可加载。CIPM 声明 arch/os/abi/ptr/endian/features/triple/min_runtime/link-db；加载时先校验目标。
 - **CIPM/CIPI**：`runtime/src/ffi/link_loader.zig` 解析；CIPI entry 绑定 CIPL plan 索引，携带 provider、真实符号/别名、ordinal、callconv、arch_mask、min_os。
-- **运行期解析**：`--lib` 显式覆盖 → CIPI provider（缓存 handle）→ 可选旧 fallback；自动 provider 只接受库名，拒绝路径分隔符。Windows `min_os` 用 `RtlGetVersion` 校验。
-- **Phase 1 cstdapi**：`tools/gen_cstdapi.py` 生成 `cstdapi.generated.json`（844KB，upstream `abba9c4`）；Linux `libc.so.6`/`libm.so.6`，Windows `ucrtbase.dll`/`msvcrt.dll`/`ntdll.dll`，含 `_snprintf` 兼容别名。
-- **Phase 2 winmd**：`tools/gen_winmd.py` 生成 `winmd.generated.json.gz`（132KB，18,083 API，upstream `9b80278`）；name→DLL/callconv/min_os/arch_mask，按 DLL 自动加载。
+- **运行期解析**：`--lib` 显式覆盖 → CIPI provider（缓存 handle）→ 可选旧 fallback；自动 provider 只接受库名，拒绝路径分隔符。Windows `min_os` 用 `RtlGetVersion` 校验（新包写 0，见 §23）。
+- **Phase 1 cstdapi（历史）**：曾由 `tools/gen_cstdapi.py` 生成 `cstdapi.generated.json`（844KB，upstream `abba9c4`）；Linux `libc.so.6`/`libm.so.6`，Windows `ucrtbase.dll`/`msvcrt.dll`/`ntdll.dll`，含 `_snprintf` 兼容别名。该脚本与数据文件已删除。
+- **Phase 2 winmd（历史）**：曾由 `tools/gen_winmd.py` 生成 `winmd.generated.json.gz`（132KB，18,083 API，upstream `9b80278`）；name→DLL/callconv/min_os/arch_mask，按 DLL 自动加载。该脚本与数据文件已删除。
 - **对齐修复**：新增 VM 字段导致 Zig 重排 `mem`/`ret_buf`，Win64 struct FFI 的 byval 指针未对齐触发 trap；已给 `mem`/`ret_buf`/FFI 缓冲显式 `align(16)`。这是本轮唯一影响既有 ABI 的回归。
 - **验证**：`make test`（21 compiler + 4 runtime + 端到端/负路径）、`scripts/test_cross.sh`（Win64 20、Win32 21、ARM64 19）、真实 Windows `winapi`（GetTickCount64/GetSystemMetrics/GetModuleHandleA/wsprintfA）均通过。
 
@@ -877,10 +883,10 @@ zig build -Dtarget=aarch64-linux-gnu
 - **CIPM**：arch/os/abi/ptr_bits/endian/flags、`features`（f80/f128/callback/varargs/auto-link/stdcall）、`min_runtime`、target triple、`link_db`、producer。加载器在解析模块前校验 arch/os/abi/pointer/endian/features/min_runtime。
 - **CIPI**：每条 entry 绑定一个 CIPL 计划索引；携带 function/data kind、required/lazy/allow_fallback/allow_override flags、callconv、arch_mask、min_os、逻辑名和有序 provider 列表。provider 包含库名、真实符号/别名、ordinal、预留 version。
 - **解析策略**：显式 `--lib` 覆盖优先；随后按 CIB provider 顺序加载并缓存 handle；仅当 flags 允许 fallback 时回退旧搜索。自动 provider 只接受系统库名（拒绝 `/`、`\`、`:`）；绝对路径只允许显式 `--lib`。
-- **兼容/版本**：CIPKG v2 默认、v1 兼容；CIPM/CIPI v1；CIPL 保持 v3（v2 可读），CIVM 的 `arch=1` 表示 VM 字节码架构、保持不变；未知版本在加载阶段失败。`--cib-version 1` 可生成旧包，`--no-auto-link` 不生成 import，`--link-db DIR` 可替换生成数据库。
-- **自动链接数据**：cstdapi 表用于 C 标准库符号→Linux libc/libm 或 Windows UCRT/MSVCRT/NTDLL/别名；winmd 表用于 Windows API→DLL/callconv/min_os/arch_mask。两表都固定 upstream commit，只有实际使用符号进入 CIB。
+- **兼容/版本**：CIPKG v2 默认、v1 兼容；CIPM/CIPI v1；CIPL 保持 v3（v2 可读），CIVM 的 `arch=1` 表示 VM 字节码架构、保持不变；未知版本在加载阶段失败。`--cib-version 1` 可生成旧包，`--no-auto-link` 不生成 import。（历史：`--link-db DIR` 已随 cstdapi/winmd 一起删除，见 §23。）
+- **自动链接数据（历史）**：曾用 cstdapi 表做 C 标准库符号→Linux libc/libm 或 Windows UCRT/MSVCRT/NTDLL/别名，用 winmd 表做 Windows API→DLL/callconv/min_os/arch_mask，两表都固定 upstream commit。现在改为构建期从 Zig 工具链生成的 MinGW defs / glibc abilists 索引，`min_os` 固定为 0（§23）。
 - **工具/诊断**：`--dump-imports`（编译器和运行时）、`--dump-target`、`--load-only`；运行时错误名区分 `TargetMismatch`、`UnsupportedFeature`、`BadImportPlan`、`ImportArchMismatch`、`ImportUnavailable`。
-- **边界**：向量、复杂聚合全局初始化、Win64 vectorcall/COM、Win32 fastcall/thiscall 等仍不在自动链接范围；external data 已支持基础 provider/`--lib` 解析。cstdapi/winmd 只是链接元数据，不替代 C 头文件或 ABI 计划。
+- **边界**：向量、复杂聚合全局初始化、Win64 vectorcall/COM、Win32 fastcall/thiscall 等仍不在自动链接范围；external data 已支持基础 provider/`--lib` 解析。链接索引只是元数据，不替代 C 头文件或 ABI 计划。
 
 ## 20. C 测试集基础设施（2026-10-31，支持集已完成）
 
@@ -936,7 +942,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **VLA**：实现 `llvm.stacksave/stackrestore`，恢复 `mem_top`；VLA 在循环/作用域结束时复用栈区。TCC `79_vla_continue`、`122_vla_reuse` 通过。
 - **柔性数组**：struct 尾部 `[]` 布局、malloc 扩展和 GEP 访问通过 csuite `vla_fam` 验证。
 - **C11**：`_Generic`、`_Static_assert`、`_Alignas/_Alignof`、`static inline`、`_Noreturn` 通过 `csuite/c11`；新增 aligned alloca opcode，支持 local `_Alignas(32)`。
-- **external data**：补充 `__environ`、`_environ`、`__progname*`、`_pgmptr`、`_tzname`、`_timezone`、`_daylight`、`_opt*` 等数据别名；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 通过 cstdapi helper provider 解析。`csuite/external_data` 四目标通过。
+- **external data**：补充 `__environ`、`_environ`、`__progname*`、`_pgmptr`、`_tzname`、`_timezone`、`_daylight`、`_opt*` 等数据别名；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 通过 CIPI data provider（`ucrtbase.dll`/`msvcrt.dll`）解析。`csuite/external_data` 四目标通过。
 - **stdio/wide/locale**：修复实际 cinterp 侧 `snprintf`/字符串问题；`strtol/wcstol` 的非法 base 差异已在原生 glibc 复现，归为 host-libc reference difference，不再保留 runtime shim。其余 `libc-test` mismatch 同样标记为 musl expected 不适用于当前宿主，不是 cinterp 回归。若产品要求 musl 语义，应引入显式 musl provider/参考目标，而不是修改 expected 或 skip 冒充通过。
 - **结果**：full 4292/4519（227 skip）；standard 394/495；csuite 17/17；TCC 97/45；libc-test 47/28；跨 ABI csuite 17/17。
 
@@ -965,7 +971,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - **统一元数据**：`compiler-zig/src/data/link_wrappers.json` 同时描述：
   - `targets.<os>.<symbol>`：真实符号、provider、额外参数（argument adapter，如 atexit 的两个零参数）。
   - `aliases.<os>.<symbol>`：同签名符号改名（如 Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）。
-- **编译期使用**：`compiler-zig/src/cstdapi.zig` 从内嵌元数据读取 aliases；`compiler-zig/src/lower_ast.zig` 处理 `atexit -> __cxa_atexit` 的参数适配；`cstdapi.zig` 为真实符号提供 CIPI provider。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
+- **编译期使用**：`compiler-zig/src/link_wrappers.zig` 从 `data/link_wrappers.json` 读取 `aliases`；`compiler-zig/src/lower_ast.zig` 处理 `atexit -> __cxa_atexit` 的参数适配；真实符号的 CIPI provider 由构建期生成的 `win_defs.zig`（Windows）和 `libc_defs.zig`（Linux）给出（§23）。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
 - **runtime 简化**：删除 `runtime/src/ffi/native.zig` 的 `alias()`、`vm.resolveNative()` 的 alias fallback、`strtol/wcstol` shim，以及 `_`/`@` 名称猜测。运行时现在只按 CIB provider、显式 `--lib` 和系统 fallback 查找，不再包含具体函数名分支。
 - **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4292/4519、standard 394/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。
 
@@ -1056,7 +1062,7 @@ zig build -Dtarget=aarch64-linux-gnu
 > 本节记录已删除的 Python 编译器路径；当前 `cinterp-cc` 为唯一编译器，`--inprocess`/`--batch` 已移除。
 
 - **profile**：`20000112-1.c` 单次 clang IR ~27ms、完整 Python compile ~70-80ms；`compile_text` 的小文件 regex/lowering 约 40ms。瓶颈是进程启动、link DB 加载、IR 文本处理，不是单一算法。
-- **lazy DB**：无外部 plan 时 `cstdapi.apply`/`winmd.apply` 直接返回，避免每次 compile 加载 cstdapi JSON。
+- **lazy DB（历史 Python 路径）**：无外部 plan 时 `cstdapi.apply`/`winmd.apply` 直接返回，避免每次 compile 加载 cstdapi JSON。当前 Zig 编译器改用构建期内嵌的二进制索引，启动时不再解析 JSON（§23）。
 - **strip_meta 快路径**：无 C 字符串的 IR 行不再 `re.split`；热正则预编译。`compile_text` 5 次 benchmark 53ms→40ms。
 - **runner `--inprocess`**：在 test runner 进程内编译，复用 Python 解释器和已加载数据库；csuite 441ms→254ms（约1.7x）。
 - **`--cib-cache`**：内容寻址缓存，key 含编译器源码 mtime/size 指纹、target、source、CPATH；Makefile suite 默认使用 `build/cib-cache`。修复 cache-hit 误走 `else` 子进程编译的 bug 后，standard 约16.2s→13.5s；full CIB 全部命中时约109s。
@@ -1125,7 +1131,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 20.26 发布与生产质量收口（2026-11-02）
 
-- **许可证/声明**：`LICENSE`（MIT）、`THIRD_PARTY_NOTICES.md`（winmd MIT；cstdapi 上游未声明许可证，仅消费生成的事实性符号表；Zig/Clang/Python 为构建工具）随每个 tarball 发布。
+- **许可证/声明**：`LICENSE`（MIT）随每个 tarball 发布；mingw-w64 `.def` 派生索引的 ZPL 2.1 归属与 glibc `abilists` 派生索引的 LGPL-2.1-or-later 归属记录在每目标 SPDX SBOM 中（`scripts/gen_sbom.py`）。
 - **单一版本源**：根 `VERSION` 为唯一来源；`compiler-zig/build.zig` 读取并注入 `cinterp-cc --version` 与 CIPM producer，runtime `build_options.version`、`cinterp-run --version`、`ci_version()`、共享库 SONAME 均由它派生。`docs/compatibility.md` 固化 CIPKG/CIVM/CIPL/CIPM/CIPI、`runtime_version`、C ABI 与 N−1 读取保证。
 - **发布链**：`scripts/package_release.sh` 生成四个目标 tarball + 每目标 SPDX 2.3 SBOM + `SHA256SUMS`，支持 `CINTERP_GPG_KEY` 分离签名；`split_debug` 用 objcopy 生成 `.debug` 和 `.gnu_debuglink`。`.github/workflows/release.yml` 在 tag 上跑集成/差分测试、版本校验、构建、可选签名并发布。GPG 路径已用临时 key 实测 `Good signature`；生产 key 由 release secret 提供。Python wheel 已随 Python 编译器删除。
 - **绑定**：tarball 内含 `pkgconfig/cinterp.pc`、`cmake/cinterpConfig.cmake`、`rust/cinterp-sys`（raw FFI + 小 safe wrapper）。已验证 `pkg-config` + C host、CMake `find_package`、cargo 消费者运行 `result=42`。
@@ -1230,10 +1236,11 @@ make release-artifacts
 - **验证**：AST full **4323/4521（198 skip）**、standard **396/495（99 skip）**、
   smoke 17/17、四目标 csuite 17/17；示例 fixtures 与 17 个 lowering 用例的
   golden（`src/testdata/lower_ast/golden/`）在删除前后逐字节一致；
-  parser/AST/verifier/abi/winmd 单测通过；前端使用 `-g0`，debug info 本来就不进入 CIB。
-- **Windows API 自动链接**：winmd 数据嵌入 `cinterp-cc`；Win64/Win32 的
+  parser/AST/verifier/abi/imports 单测通过（当时另有 `winmd.zig` 单测，已随 §23 删除，改为 `link_index`/`link_wrappers`/`win_defs`/`libc_defs` 单测）；前端使用 `-g0`，debug info 本来就不进入 CIB。
+- **Windows API 自动链接**：当时 winmd 数据嵌入 `cinterp-cc`；Win64/Win32 的
   `GetTickCount64`/`GetSystemMetrics`/`GetModuleHandleA`/`wsprintfA` 在 Wine 下
-  均为 `result: 7`（`make test-winapi`）。
+  均为 `result: 7`（`make test-winapi`）。winmd 已在 §23 中被 MinGW defs 索引替代，
+  同一组 API 仍为 `result: 7`。
 - **former legacy 差异**：旧 parity 的 10 个差异全部是 AST 修正字符串解析 bug
   （`inttoptr` 全局常量、`external constant` 导入、初始化器中 `@global*` 误匹配、
   以 `null` 结尾的 callee 丢调用）。现在保留为 AST 正确性单测与 golden 期望，
@@ -1253,19 +1260,19 @@ make release-artifacts
 ### 22.1 范围
 
 - 删除 `compiler/`（`pyproject.toml`、`src/cinterp/**`、`tests/**`）；`cinterp-cc` 是唯一编译器。
-- 链接元数据迁移到 `compiler-zig/src/data/`：`cstdapi.generated.json`、`link_wrappers.json`、`winmd.generated.json.gz`；编译器通过 `@embedFile` 内嵌，`--link-db DIR` 仍可覆盖 cstdapi/winmd。
-- Python 保留在测试/验证链路：`scripts/test_suites.py`、fuzz、benchmark、differential、`minimize_failure.py`，以及 `tools/gen_cstdapi.py` / `tools/gen_winmd.py` 离线再生成脚本。它们不参与 `cinterp-cc` 的编译路径。
+- 链接元数据改为 Zig 侧自持：当时迁移到 `compiler-zig/src/data/`（`cstdapi.generated.json`、`link_wrappers.json`、`winmd.generated.json.gz`）并 `@embedFile` 内嵌。**该状态已被 §23 取代**：cstdapi/winmd 数据与 `--link-db` 已删除，只剩 `link_wrappers.json`，其余索引由 `compiler-zig/tools/gen_link_index.zig` 在构建期从 Zig 工具链生成。
+- Python 保留在测试/验证链路：`scripts/test_suites.py`、fuzz、benchmark、differential、`minimize_failure.py`。它们不参与 `cinterp-cc` 的编译路径，也不再有任何离线链接元数据生成脚本。
 
 ### 22.2 CLI 对等
 
 四个原先只有 Python 编译器支持的选项已移植到 `cinterp-cc`：
 
 - `--cib-version 1|2`：v1 写 15 字节 CIPKG 头（CIVM+CIPL，无 CIPM/CIPI），v2 保持 25 字节头。
-- `--no-auto-link`：只保留外部数据条目，不写 cstdapi/winmd 的 plan import。
-- `--link-db DIR`：目录或文件路径；缺失时回退内嵌 cstdapi/winmd。
+- `--no-auto-link`：只保留外部数据条目，不写自动链接的 plan import。
+- `--link-db DIR`：**已删除**（§23.2）；符号索引在构建期内嵌，不再有运行期数据库覆盖选项。
 - `--dump-imports`：直接遍历结构化 CIPI 表，输出 `import[plan N] name: lib:symbol, ...`。
 
-导入表由 `compiler-zig/src/imports.zig` 统一构建和序列化；`compiler-zig/src/cstdapi.zig` 复刻 Python 的 available/provider/`_snprintf` 前导下划线回退语义；Windows `snprintf`/`vsnprintf` 别名来自迁移后的 `link_wrappers.json`。
+导入表由 `compiler-zig/src/imports.zig` 统一构建和序列化；Linux provider 来自 `compiler-zig/src/libc_defs.zig`（Zig 自带 glibc abilists），Windows provider 来自 `compiler-zig/src/win_defs.zig`（Zig 自带 MinGW defs），同签名别名来自 `compiler-zig/src/link_wrappers.zig` + `data/link_wrappers.json`（Windows `snprintf -> _snprintf`）。
 
 ### 22.3 测试与发布链
 
@@ -1292,7 +1299,51 @@ make test-suites-smoke
 ./build/cinterp-cc --version
 ./build/cinterp-cc compile examples/ffi_printf.c -o build/t.cib --dump-imports
 ./build/cinterp-cc compile examples/ffi_printf.c -o build/t.cib --no-auto-link --dump-imports
-./build/cinterp-cc compile examples/ffi_printf.c -o build/t.cib --link-db compiler-zig/src/data --dump-imports
 ./build/cinterp-cc compile examples/hello.c -o build/hello-v1.cib --cib-version 1
 ./runtime/zig-out/bin/cinterp-run build/hello-v1.cib
 ```
+
+## 23. 只依赖 Zig 的外部符号索引（2026-11-03）
+
+### 23.1 决策
+
+- 删除签入的 cstdapi/winmd 数据库，以及 `--link-db`。外部符号 provider 改为**构建期**从已安装 Zig 工具链生成：
+  - Windows：`<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def`（含用 `zig cc -E` 预处理的 `*.def.in`）。
+  - Linux：`<zig lib>/libc/glibc/abilists`（Zig 链接 glibc 使用的符号/版本表）。
+- 运行期仍保留 `--lib`、进程符号和默认 CRT 库 fallback，覆盖索引未收录的符号、`--no-auto-link` 和 v1 包。
+- `compiler-zig/src/data/link_wrappers.json` 是唯一保留的签入链接元数据，只描述同签名别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）；`atexit -> __cxa_atexit` 仍在 `lower_ast.zig` 中处理。
+
+### 23.2 实现
+
+- `compiler-zig/tools/gen_link_index.zig`：host 工具，构建期由 `build.zig` 运行两次，生成 `win_defs` 与 `libc_defs` 的二进制表和 wrapper 模块；`zig build gen-link-index` 可单独重新生成并打印大小。
+- `compiler-zig/src/link_index.zig`：共享二进制格式（magic `CILI`、字符串池、库表、排序 entry、arch_mask/conv/priority）。
+- `compiler-zig/src/win_defs.zig`：解析 MinGW `LIBRARY`/`EXPORTS`/别名/`@N`；具体 DLL 优先于 `api-ms-win-*`，`ucrtbase` 优先于 `msvcrt`，`*.exe` 永不作为 provider；x86 `@N` 推断 stdcall，其他为 cdecl；`min_os=0`。
+- `compiler-zig/src/libc_defs.zig`：读取 abilists 的 libs/versions/targets/functions inclusion；保留 `x86_64-linux-gnu`/`aarch64-linux-gnu`；`c/m/pthread/dl/rt/util/resolv` 映射到 soname，`ld` 跳过；同符号多库保留多个 provider，`libc` 优先。
+- `compiler-zig/src/link_wrappers.zig`：只读 `data/link_wrappers.json` 的 aliases。
+- `main.zig` 的 `buildImportTable`：Windows 命中 `win_defs`、Linux 命中 `libc_defs` 时写 CIPI plan provider；未命中不写 entry，交给运行期 fallback；`--no-auto-link` 仍跳过 plan entry。
+- `runtime/src/{ffi/native.zig,vm.zig}`：`libc_handle` 改为按需加载的默认库列表（Linux libc/libm/dl/pthread/rt/util/resolv；Windows msvcrt/ucrtbase/ntdll），`searchSymbol`/`loadImportedData` 在 `--lib` 之后搜索它们。
+- `CIPM.link_db` 记录构建期索引来源：`mingw-defs@<zig version>` 或 `glibc-abilists@<zig version>`；没有 plan import 时可以为空。
+
+### 23.3 已知边界
+
+- MinGW defs 不含 `min_os`；新包统一写 0，旧包仍按原字段校验。
+- abilists 的 `ld` 库、objects/TLS 段暂不进入 Linux provider 索引；函数符号覆盖当前 C/POSIX 支持集。
+- MinGW defs 与 winmd 的 API 覆盖不完全相同；迁移时以 `make test-winapi`、full suite 和 `--dump-imports` 的 kernel32/user32/API-set 断言验证。
+- 构建需要完整的 Zig 0.13 `libc/mingw` 与 `libc/glibc/abilists`；缺失时 `zig build` 直接失败并提示。
+- 发布二进制内嵌派生的 MinGW/glibc 符号表；每目标 SPDX SBOM 记录 ZPL 2.1/LGPL 来源。`--link-db` 已删除，不再支持运行期替换数据库。
+
+### 23.4 验证
+
+```bash
+make compiler-zig runtime
+cd compiler-zig && zig build test
+make test
+make test-winapi
+make lint
+make differential
+make test-suites-smoke
+make test-suites
+make test-suites-full
+```
+
+`--dump-imports` 预期：Linux `printf -> libc.so.6`、`sin -> libm.so.6`；Windows x64 `GetTickCount64 -> kernel32.dll`、`GetSystemMetrics -> user32.dll`；x86 `MessageBoxA@16` 使用 `MessageBoxA` 导出符号且 `conv=1`，`wsprintfA` 为 `conv=0`。

@@ -57,8 +57,10 @@ The crate exposes the raw `ci_vm_*` symbols plus a small safe wrapper; see
 
 Use the target that matches the runtime you will load the package into.
 `--dump-imports` lists the native symbols the package expects; the compiler
-auto-links C standard library symbols and (on Windows) documented Windows
-APIs. Custom libraries can be added with `--lib` at run time.
+auto-links C standard library symbols and (on Windows) Windows APIs using the
+symbol indexes it generates at build time from the Zig toolchain. Symbols the
+indexes do not cover are resolved by the runtime fallback; custom libraries can
+be added with `--lib` at run time.
 
 ## C API
 

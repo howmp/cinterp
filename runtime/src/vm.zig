@@ -330,7 +330,9 @@ pub const VM = struct {
     target: ?link_loader.TargetInfo = null,
     imports: link_loader.Table = .{},
     import_handles: [link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS]?*anyopaque = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS),
-    libc_handle: ?*anyopaque = null,
+    default_handles: [8]?*anyopaque = [_]?*anyopaque{null} ** 8,
+    default_count: usize = 0,
+    default_loaded: bool = false,
     libraries: [8]?*anyopaque = [_]?*anyopaque{null} ** 8,
     library_count: usize = 0,
     symbol_buf: [256]u8 = undefined,
@@ -530,6 +532,22 @@ pub const VM = struct {
         }
     }
 
+    /// Lazily load the platform's default C/CRT libraries once per VM. These
+    /// are the last search tier after the process namespace and `--lib`
+    /// handles: they keep v1 packages, `--no-auto-link` packages and symbols
+    /// missing from the build-time indexes working.
+    fn defaultHandles(self: *VM) []?*anyopaque {
+        if (!self.default_loaded) {
+            self.default_loaded = true;
+            for (native.defaultLibraries()) |name| {
+                if (self.default_count >= self.default_handles.len) break;
+                self.default_handles[self.default_count] = native.load(name);
+                self.default_count += 1;
+            }
+        }
+        return self.default_handles[0..self.default_count];
+    }
+
     fn searchSymbol(self: *VM, cname: [*:0]const u8) ?*const anyopaque {
         if (native.symbol(null, cname)) |sym| return sym;
         var li: usize = self.library_count;
@@ -539,11 +557,10 @@ pub const VM = struct {
                 if (native.symbol(handle, cname)) |sym| return sym;
             }
         }
-        if (self.libc_handle == null) {
-            self.libc_handle = native.defaultC();
-        }
-        if (self.libc_handle) |handle| {
-            if (native.symbol(handle, cname)) |sym| return sym;
+        for (self.defaultHandles()) |maybe_handle| {
+            if (maybe_handle) |handle| {
+                if (native.symbol(handle, cname)) |sym| return sym;
+            }
         }
         return null;
     }

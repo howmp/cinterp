@@ -7,6 +7,51 @@ fn readVersion(b: *std.Build) []const u8 {
     return std.mem.trim(u8, text, " \t\r\n");
 }
 
+/// Build the host-side link-index generator and run it for both metadata
+/// sources. The outputs are a compact `.bin` plus a wrapper module that
+/// `@embedFile`s it; `addLinkIndexes` injects those wrappers as anonymous
+/// imports so `src/win_defs.zig` / `src/libc_defs.zig` can read them.
+const LinkIndexes = struct {
+    win_zig: std.Build.LazyPath,
+    libc_zig: std.Build.LazyPath,
+};
+
+fn generateLinkIndexes(b: *std.Build) LinkIndexes {
+    const generator = b.addExecutable(.{
+        .name = "gen-link-index",
+        .root_source_file = b.path("tools/gen_link_index.zig"),
+        .target = b.host,
+        .optimize = .ReleaseSafe,
+    });
+    const format_module = b.createModule(.{ .root_source_file = b.path("src/link_index.zig") });
+    generator.root_module.addImport("link_index", format_module);
+
+    const win_run = b.addRunArtifact(generator);
+    win_run.addArg("win");
+    win_run.addArg(b.graph.zig_exe);
+    _ = win_run.addOutputFileArg("win_defs.bin");
+    const win_zig = win_run.addOutputFileArg("win_defs_generated.zig");
+
+    const libc_run = b.addRunArtifact(generator);
+    libc_run.addArg("libc");
+    libc_run.addArg(b.graph.zig_exe);
+    _ = libc_run.addOutputFileArg("libc_defs.bin");
+    const libc_zig = libc_run.addOutputFileArg("libc_defs_generated.zig");
+
+    // `zig build gen-link-index` regenerates and validates both tables without
+    // building the compiler; the generator prints entry/library/blob sizes.
+    const gen_step = b.step("gen-link-index", "Generate the MinGW/glibc external-symbol link indexes");
+    gen_step.dependOn(&win_run.step);
+    gen_step.dependOn(&libc_run.step);
+
+    return .{ .win_zig = win_zig, .libc_zig = libc_zig };
+}
+
+fn addLinkIndexes(indexes: LinkIndexes, module: *std.Build.Module) void {
+    module.addAnonymousImport("win_defs_generated", .{ .root_source_file = indexes.win_zig });
+    module.addAnonymousImport("libc_defs_generated", .{ .root_source_file = indexes.libc_zig });
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -15,6 +60,8 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);
 
+    const indexes = generateLinkIndexes(b);
+
     const exe = b.addExecutable(.{
         .name = "cinterp-cc",
         .root_source_file = b.path("src/main.zig"),
@@ -22,6 +69,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addOptions("build_options", options);
+    addLinkIndexes(indexes, &exe.root_module);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -36,6 +84,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests.root_module.addOptions("build_options", options);
+    addLinkIndexes(indexes, &tests.root_module);
     const run_tests = b.addRunArtifact(tests);
 
     const imports_tests = b.addTest(.{
@@ -45,12 +94,35 @@ pub fn build(b: *std.Build) void {
     });
     const run_imports_tests = b.addRunArtifact(imports_tests);
 
-    const cstdapi_tests = b.addTest(.{
-        .root_source_file = b.path("src/cstdapi.zig"),
+    const link_index_tests = b.addTest(.{
+        .root_source_file = b.path("src/link_index.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const run_cstdapi_tests = b.addRunArtifact(cstdapi_tests);
+    const run_link_index_tests = b.addRunArtifact(link_index_tests);
+
+    const link_wrappers_tests = b.addTest(.{
+        .root_source_file = b.path("src/link_wrappers.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_link_wrappers_tests = b.addRunArtifact(link_wrappers_tests);
+
+    const win_defs_tests = b.addTest(.{
+        .root_source_file = b.path("src/win_defs.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    win_defs_tests.root_module.addAnonymousImport("win_defs_generated", .{ .root_source_file = indexes.win_zig });
+    const run_win_defs_tests = b.addRunArtifact(win_defs_tests);
+
+    const libc_defs_tests = b.addTest(.{
+        .root_source_file = b.path("src/libc_defs.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    libc_defs_tests.root_module.addAnonymousImport("libc_defs_generated", .{ .root_source_file = indexes.libc_zig });
+    const run_libc_defs_tests = b.addRunArtifact(libc_defs_tests);
 
     const ir_tests = b.addTest(.{
         .root_source_file = b.path("src/ir/tests.zig"),
@@ -77,21 +149,16 @@ pub fn build(b: *std.Build) void {
     });
     const run_lower_ast_tests = b.addRunArtifact(lower_ast_tests);
 
-    const winmd_tests = b.addTest(.{
-        .root_source_file = b.path("src/winmd.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const run_winmd_tests = b.addRunArtifact(winmd_tests);
-
-    const test_step = b.step("test", "Run compiler-zig unit tests (including src/abi, src/ir, src/lower_ast, src/cstdapi and src/imports)");
+    const test_step = b.step("test", "Run compiler-zig unit tests (main, abi, ir, lower_ast, imports, link_index, link_wrappers, win_defs, libc_defs)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_imports_tests.step);
-    test_step.dependOn(&run_cstdapi_tests.step);
+    test_step.dependOn(&run_link_index_tests.step);
+    test_step.dependOn(&run_link_wrappers_tests.step);
+    test_step.dependOn(&run_win_defs_tests.step);
+    test_step.dependOn(&run_libc_defs_tests.step);
     test_step.dependOn(&run_ir_tests.step);
     test_step.dependOn(&run_abi_tests.step);
     test_step.dependOn(&run_lower_ast_tests.step);
-    test_step.dependOn(&run_winmd_tests.step);
 
     // `zig build ir-dump -- <file.ll>`: structural dump of the typed IR AST.
     // Debug aid for the lowering port; not installed.

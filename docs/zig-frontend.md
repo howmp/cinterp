@@ -43,12 +43,30 @@ lowerer. Unsupported legal IR produces a `line:column` diagnostic instead of a
 panic or a silent zero. The exact allowlist is in `docs/ir-subset.md`; target
 triple/OS/pointer-width and little-endian consistency are checked before lowering.
 
-## Windows API imports
+## External symbol resolution (build-time indexes)
 
-`cinterp-cc` embeds `winmd.generated.json.gz` and resolves Windows API names
-(including Win32 stdcall decoration such as `\01_GetTickCount64@0`) to the
-correct DLL/provider. `make test-winapi` compiles `examples/winapi.c` for
-Win64/Win32 and runs it under Wine.
+`cinterp-cc` does not ship a checked-in link database. `compiler-zig/build.zig`
+builds `tools/gen_link_index.zig` as a host tool and runs it twice; the outputs
+are a compact binary table plus a wrapper module that `@embedFile`s it, injected
+as the `win_defs_generated` / `libc_defs_generated` anonymous imports.
+
+- Windows (`src/win_defs.zig`): `<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def`
+  plus the `*.def.in` templates preprocessed with `zig cc -E`, giving DLL,
+  exported symbol, `arch_mask` and call convention. Windows API names
+  (including Win32 stdcall decoration such as `\01_GetTickCount64@0`) resolve
+  to `kernel32.dll`/`user32.dll`/`api-ms-win-*`, with concrete DLLs preferred
+  over API sets. `make test-winapi` compiles `examples/winapi.c` for
+  Win64/Win32 and runs it under Wine.
+- Linux (`src/libc_defs.zig`): `<zig lib>/libc/glibc/abilists` restricted to
+  `x86_64-linux-gnu` and `aarch64-linux-gnu`, giving the exporting soname
+  (`libc.so.6`, `libm.so.6`, `libpthread.so.0`, ...).
+- Symbols the indexes do not describe are left out of CIPI and resolved by the
+  runtime fallback (process symbols, `--lib`, default CRT libraries).
+  `src/data/link_wrappers.json` is the only remaining checked-in link metadata
+  and only holds same-signature aliases (`snprintf -> _snprintf`).
+
+`zig build gen-link-index` regenerates both tables on their own (it prints
+entry/library/blob sizes) without building the rest of the compiler.
 
 ## Build and use
 
@@ -68,8 +86,9 @@ For cross targets use `--target`:
 
 ## Testing
 
-Python is used only by the test, fuzz and benchmark harnesses plus the offline
-`tools/gen_*.py` metadata generators. The compiler itself has no Python
-dependency. `make test` runs the Zig compiler unit tests and the end-to-end
-integration suite; release tarballs include `bin/cinterp` as a thin wrapper
-around the adjacent `cinterp-cc`.
+Python is used only by the test, fuzz and benchmark harnesses. The compiler
+itself has no Python dependency, and its external-symbol tables are generated
+from the Zig toolchain by `zig build` (or `zig build gen-link-index`). `make
+test` runs the Zig compiler unit tests and the end-to-end integration suite;
+release tarballs include `bin/cinterp` as a thin wrapper around the adjacent
+`cinterp-cc`.

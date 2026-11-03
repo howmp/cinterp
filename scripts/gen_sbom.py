@@ -12,6 +12,11 @@ from pathlib import Path
 
 TOOL = "Tool: cinterp-gen-sbom"
 
+# Zig release that supplies the build-time link metadata (MinGW `.def` files
+# and the glibc `abilists` table) that `compiler-zig/tools/gen_link_index.zig`
+# turns into the external-symbol index embedded in `cinterp-cc`.
+ZIG_VERSION = "0.13.0"
+
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -56,6 +61,36 @@ def file_records(root: Path) -> list[dict]:
     return records
 
 
+def validate_document(document: dict) -> None:
+    """Check the referential integrity SPDX consumers rely on.
+
+    Every relationship endpoint must exist as a package, a file or the
+    document id, and element ids must be unique. Keeps a bad edit
+    to the package list from shipping an unusable SBOM.
+    """
+    known = {"SPDXRef-DOCUMENT"}
+    for package in document["packages"]:
+        element_id = package["SPDXID"]
+        if element_id in known:
+            raise SystemExit(f"duplicate SPDX element id: {element_id}")
+        known.add(element_id)
+    for record in document["files"]:
+        element_id = record["SPDXID"]
+        if element_id in known:
+            raise SystemExit(f"duplicate SPDX element id: {element_id}")
+        known.add(element_id)
+    for relationship in document["relationships"]:
+        for key in ("spdxElementId", "relatedSpdxElement"):
+            if relationship[key] not in known:
+                raise SystemExit(
+                    f"relationship {key} references unknown id: {relationship[key]}"
+                )
+    names = [package["name"] for package in document["packages"]]
+    for removed in ("winmd", "cstdapi"):
+        if removed in names:
+            raise SystemExit(f"SBOM must not reference the removed {removed} package")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True, type=Path)
@@ -78,11 +113,15 @@ def main() -> int:
     )
 
     cinterp_id = "SPDXRef-Package-cinterp"
-    winmd_id = "SPDXRef-Package-winmd"
-    cstdapi_id = "SPDXRef-Package-cstdapi"
     zig_id = "SPDXRef-Package-zig"
     llvm_id = "SPDXRef-Package-llvm"
     python_id = "SPDXRef-Package-python"
+    mingw_id = "SPDXRef-Package-mingw-w64-defs"
+    glibc_abilists_id = "SPDXRef-Package-glibc-abilists"
+
+    # Only the `cinterp-cc` compiler embeds the generated external-symbol
+    # index; the runtime-only tarballs (win64/win32/arm64) do not.
+    ships_compiler = (root / "bin" / "cinterp-cc").is_file()
 
     packages = [
         {
@@ -100,30 +139,9 @@ def main() -> int:
             "comment": f"target={args.target}",
         },
         {
-            "name": "winmd",
-            "SPDXID": winmd_id,
-            "versionInfo": "9b8027802f05b1c84a8630e7f739eb519add9767",
-            "downloadLocation": "https://github.com/howmp/winmd",
-            "filesAnalyzed": False,
-            "licenseConcluded": "MIT",
-            "licenseDeclared": "MIT",
-            "copyrightText": "NOASSERTION",
-        },
-        {
-            "name": "cstdapi",
-            "SPDXID": cstdapi_id,
-            "versionInfo": "abba9c4569939b4eca640419a7bf2c97e8b550ee",
-            "downloadLocation": "https://github.com/howmp/cstdapi",
-            "filesAnalyzed": False,
-            "licenseConcluded": "NOASSERTION",
-            "licenseDeclared": "NOASSERTION",
-            "copyrightText": "NOASSERTION",
-            "comment": "Upstream snapshot does not declare a license; only generated symbol data is consumed.",
-        },
-        {
             "name": "zig",
             "SPDXID": zig_id,
-            "versionInfo": "0.13.0",
+            "versionInfo": ZIG_VERSION,
             "downloadLocation": "https://ziglang.org/download/",
             "filesAnalyzed": False,
             "licenseConcluded": "MIT",
@@ -152,6 +170,53 @@ def main() -> int:
         },
     ]
 
+    # `compiler-zig/src/win_defs.zig` embeds a table generated from the
+    # MinGW-w64 `.def` export lists that Zig bundles. Only the derived
+    # symbol -> DLL/callconv index is redistributed, never upstream sources.
+    if ships_compiler:
+        packages.append(
+            {
+                "name": "mingw-w64-defs",
+                "SPDXID": mingw_id,
+                "versionInfo": f"bundled-with-zig-{ZIG_VERSION}",
+                "downloadLocation": "https://github.com/mingw-w64/mingw-w64",
+                "filesAnalyzed": False,
+                "licenseConcluded": "ZPL-2.1",
+                "licenseDeclared": "ZPL-2.1",
+                "copyrightText": "Copyright (c) 2009 - 2013 by the mingw-w64 project",
+                "comment": (
+                    "Derived data: the Windows external-symbol index embedded in "
+                    "cinterp-cc is generated at build time by "
+                    "compiler-zig/tools/gen_link_index.zig from the MinGW-w64 "
+                    "lib32/lib64/lib-common .def files shipped with Zig. The "
+                    "ZPL 2.1 attribution is recorded in this SBOM."
+                ),
+            }
+        )
+        # `compiler-zig/src/libc_defs.zig` embeds a symbol -> soname table
+        # generated from the glibc abilists that Zig bundles for its own
+        # glibc linking support.
+        packages.append(
+            {
+                "name": "glibc-abilists",
+                "SPDXID": glibc_abilists_id,
+                "versionInfo": f"bundled-with-zig-{ZIG_VERSION}",
+                "downloadLocation": "https://sourceware.org/glibc/",
+                "filesAnalyzed": False,
+                "licenseConcluded": "LGPL-2.1-or-later",
+                "licenseDeclared": "LGPL-2.1-or-later",
+                "copyrightText": "Copyright (C) Free Software Foundation, Inc.",
+                "comment": (
+                    "Derived data: the Linux external-symbol index embedded in "
+                    "cinterp-cc is generated at build time by "
+                    "compiler-zig/tools/gen_link_index.zig from Zig's "
+                    "libc/glibc/abilists symbol/version table (glibc ABI lists). "
+                    "Only factual symbol names and library assignments are "
+                    "reproduced; no glibc code is copied."
+                ),
+            }
+        )
+
     relationships = [
         {
             "spdxElementId": "SPDXRef-DOCUMENT",
@@ -167,14 +232,15 @@ def main() -> int:
                 "relatedSpdxElement": record["SPDXID"],
             }
         )
-    for dep in (winmd_id, cstdapi_id):
-        relationships.append(
-            {
-                "spdxElementId": dep,
-                "relationshipType": "DEPENDENCY_OF",
-                "relatedSpdxElement": cinterp_id,
-            }
-        )
+    if ships_compiler:
+        for dep in (mingw_id, glibc_abilists_id):
+            relationships.append(
+                {
+                    "spdxElementId": dep,
+                    "relationshipType": "DEPENDENCY_OF",
+                    "relatedSpdxElement": cinterp_id,
+                }
+            )
     for tool in (zig_id, llvm_id, python_id):
         relationships.append(
             {
@@ -198,6 +264,7 @@ def main() -> int:
         "files": files,
         "relationships": relationships,
     }
+    validate_document(document)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(document, indent=2, sort_keys=False) + "\n")
     print(f"SBOM: {args.output} ({len(files)} files)")

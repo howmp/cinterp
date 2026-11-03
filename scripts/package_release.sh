@@ -10,7 +10,7 @@ mkdir -p "$OUT"
 
 copy_common() {
     local dest="$1"
-    cp LICENSE THIRD_PARTY_NOTICES.md README.md VERSION "$dest/"
+    cp LICENSE README.md VERSION "$dest/"
     mkdir -p "$dest/docs" "$dest/examples"
     cp docs/*.md "$dest/docs/"
     cp -a examples/. "$dest/examples/"

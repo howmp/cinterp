@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "comment": "Target link-ABI wrappers that are not represented in LLVM IR or public headers. Kept outside generated cstdapi/winmd data so it survives regeneration.",
+  "comment": "Target link-ABI wrappers that are not represented in LLVM IR or public headers. Kept outside the build-time-generated symbol indexes (compiler-zig/tools/gen_link_index.zig) so it survives regeneration.",
   "targets": {
     "linux": {
       "atexit": {
