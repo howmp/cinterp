@@ -1252,6 +1252,27 @@ make release-artifacts
 - full 的 benchmark 在 8 并发下会因 120s wall-clock 超时；默认
   `make test-suites-full` 单并发为 **4323/4521（198 skip）**，与 Python 基线一致。
 
+### 21.6 IR 解析器重构（2026-11-03）
+
+- **新前端**：`compiler-zig/src/ir/{lexer,ast,parser,verify,tests}.zig` 提供 no-copy
+  token、typed `Module/Function/Instruction/Type/Value/Attr` AST、多行 switch、
+  constexpr、byval/sret、f80/fp128、alias/ifunc opaque record 和 `line:column`
+  诊断；`src/lower_ast.zig` 从 AST 生成 CIVM/CIPL，`--ir-parser=ast` 已是默认。
+- **回退**：`--ir-parser=legacy` 保留原 `lower.zig` 字符串解析器；默认和 legacy
+  共用 `CompileResult`/CIPKG/CIPL/CIPM/CIPI 序列化。
+- **验证**：AST full **4323/4521（198 skip）**、standard **396/495（99 skip）**、
+  smoke 17/17、四目标 csuite 17/17；examples 默认与 legacy CIB 逐字节一致；
+  parser/AST/verifier/winmd 单测通过；前端使用 `-g0`，debug info 本来就不进入 CIB。
+- **Windows API 自动链接**：winmd 数据嵌入 `cinterp-cc`；Win64/Win32 的
+  `GetTickCount64`/`GetSystemMetrics`/`GetModuleHandleA`/`wsprintfA` 在 Wine 下
+  Python/AST 均为 `result: 7`（`make test-winapi`）。
+- **已知字节差异**：当前 `make parser-parity` 有 62 个逐字节一致、10 个显式 allowlist
+  差异、0 个未解释/失效差异；`llvm.compiler.used` 的元数据差异已通过 legacy 同步
+  跳过 LLVM 元数据全局消除。剩余 10 项均为 AST 修正 legacy 解析 bug：`inttoptr`
+  全局常量、`external constant` 导入、初始化器中 `@global*` 误匹配、以及以
+  `null` 结尾的 callee 被误判为 null 而丢调用；不得为对齐而复制这些 bug。详见
+  `docs/ir-parser-differences.md`。
+
 ### 21.5 已知限制
 
 - 运行时 plan 参数上限 64；compile-only 压力用例

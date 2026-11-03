@@ -1,8 +1,10 @@
 # Zig compiler frontend
 
-`cinterp-cc` is the default build-time compiler. It is a Zig program that invokes
-the `zig cc` C frontend, parses the resulting LLVM IR text, and emits the same
-CIVM bytecode and CIPKG v2 package format as the original Python compiler.
+`cinterp-cc` is the default build-time compiler. It invokes the `zig cc` C
+frontend, parses the resulting LLVM IR text with a typed lexer/parser/AST and a
+subset verifier, then emits the same CIVM bytecode and CIPKG v2 package format as
+the original Python compiler. `--ir-parser=ast` is the default;
+`--ir-parser=legacy` keeps the old string parser for rollback/differential use.
 
 ## Requirements
 
@@ -13,7 +15,7 @@ CIVM bytecode and CIPKG v2 package format as the original Python compiler.
 ## Flags passed to `zig cc`
 
 ```text
--S -emit-llvm -O0 -fno-discard-value-names
+-S -emit-llvm -O0 -g0 -fno-discard-value-names
 -fno-sanitize=all -fno-stack-protector -ffine-grained-bitfield-accesses
 ```
 
@@ -21,6 +23,28 @@ CIVM bytecode and CIPKG v2 package format as the original Python compiler.
 `llvm.sadd.with.overflow` / `llvm.ubsantrap` intrinsics that are not part of the
 CIVM lowering contract. `-fno-stack-protector` removes compiler-inserted stack
 checks that have no runtime counterpart.
+
+## IR pipeline
+
+```text
+LLVM IR text
+  -> ir/lexer.zig        spans/tokens (no-copy)
+  -> ir/parser.zig       typed Module/Function/BasicBlock/Instruction AST
+  -> ir/verify.zig       subset allowlist + target/datalayout checks
+  -> lower_ast.zig       CIVM + CIPL plans
+```
+
+The parser only accepts the instruction/type/intrinsic subset consumed by the
+lowerer. Unsupported legal IR produces a `line:column` diagnostic instead of a
+panic or a silent zero. The exact allowlist is in `docs/ir-subset.md`; target
+triple/OS/pointer-width and little-endian consistency are checked before lowering.
+
+## Windows API imports
+
+`cinterp-cc` embeds `winmd.generated.json.gz` and resolves Windows API names
+(including Win32 stdcall decoration such as `\01_GetTickCount64@0`) to the
+correct DLL/provider. `make test-winapi` compiles `examples/winapi.c` with both
+the Python and AST frontends for Win64/Win32 and runs them under Wine.
 
 ## Build and use
 

@@ -1,4 +1,4 @@
-.PHONY: all test test-py compiler-zig runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross test-suites-smoke-py test-suites-py test-suites-full-py fetch-suites generate-diff
+.PHONY: all test test-py compiler-zig runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross parser-parity test-winapi test-suites-smoke-py test-suites-py test-suites-full-py fetch-suites generate-diff
 
 all: test
 
@@ -25,6 +25,12 @@ lint: compiler-zig runtime
 	build/cinterp-cc compile examples/ffi_qsort.c -o build/lint-qsort.cib
 	build/cinterp-cc compile examples/ffi_callback.c -o build/lint-callback.cib
 	python3 scripts/civm_lint.py build/lint-hello.cib build/lint-qsort.cib build/lint-callback.cib
+
+parser-parity: compiler-zig runtime
+	python3 scripts/ir_parser_parity.py
+
+test-winapi: compiler-zig
+	python3 scripts/test_winapi.py
 
 test: compiler-zig
 	CINTERP_COMPILER="$(CURDIR)/build/cinterp-cc" ./scripts/test.sh
@@ -54,16 +60,16 @@ fetch-suites:
 	python3 scripts/fetch_suites.py --all --support
 
 test-suites-smoke: compiler-zig runtime
-	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier smoke --cib-cache build/cib-cache-zig --report build/test-suites-smoke.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier smoke --cib-cache build/cib-cache-zig-ast --report build/test-suites-smoke.json
 
 test-suites: compiler-zig runtime
-	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier standard --cib-cache build/cib-cache-zig --report build/test-suites.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier standard --cib-cache build/cib-cache-zig-ast --report build/test-suites.json
 
 test-suites-full: compiler-zig runtime
-	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier full --cib-cache build/cib-cache-zig --report build/test-suites-full.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier full --cib-cache build/cib-cache-zig-ast --report build/test-suites-full.json
 
 test-suites-nightly: compiler-zig runtime
-	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier nightly --cib-cache build/cib-cache-zig --report build/test-suites-nightly.json
+	python3 scripts/test_suites.py --compiler zig --compiler-path build/cinterp-cc --tier nightly --cib-cache build/cib-cache-zig-ast --report build/test-suites-nightly.json
 	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
 
 test-suites-smoke-py: runtime

@@ -701,6 +701,15 @@ fn findWordOutsideQuotes(text: []const u8, word: []const u8) ?usize {
     return null;
 }
 
+/// LLVM linker metadata globals (`@llvm.compiler.used`, `@llvm.global_ctors`,
+/// ...) describe linker-side metadata; they are not program objects and must
+/// not reserve VM storage. `lower_ast.buildGlobals` skips them; skip them here
+/// too so both frontends produce the same data image.
+fn isLlvmMetadataGlobal(name: []const u8) bool {
+    const bare = if (name.len > 0 and name[0] == '@') name[1..] else name;
+    return std.mem.startsWith(u8, bare, "llvm.") or std.mem.startsWith(u8, bare, ".llvm.");
+}
+
 fn parseGlobals(allocator: Allocator, text: []const u8, structs: *const Structs, ptr_size: u32) !Globals {
     const Spec = struct { name: []const u8, ty: []const u8, init: []const u8, align_: u32 };
     var specs = std.ArrayList(Spec).init(allocator);
@@ -712,6 +721,7 @@ fn parseGlobals(allocator: Allocator, text: []const u8, structs: *const Structs,
         if (!std.mem.startsWith(u8, line, "@")) continue;
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
         const name = std.mem.trim(u8, line[0..eq], " \t\r");
+        if (isLlvmMetadataGlobal(name)) continue;
         const rest = std.mem.trim(u8, line[eq + 1 ..], " \t\r");
         if (std.mem.startsWith(u8, rest, "external ") or std.mem.indexOf(u8, rest, " external ") != null) {
             if (std.mem.indexOf(u8, rest, "global") != null or std.mem.indexOf(u8, rest, "thread_local") != null) {
@@ -2630,7 +2640,13 @@ fn buildAapcs64Plan(allocator: Allocator, name: []const u8, ret_ty: []const u8, 
     return .{ .name = name, .args = try args.toOwnedSlice(), .ret_locs = r.locs, .stack_size = std.mem.alignForward(u16, stack_size, 8), .sret = sret_idx != null, .sse_count = sse_count, .ret_size = r.size };
 }
 
-fn buildPlanForAbi(allocator: Allocator, abi: u8, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, is_varargs: bool, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16, ptr_size: u32) !Plan {
+/// Build an ABI call plan from raw type spellings.
+///
+/// Shared with the AST lowering path (`lower_ast.zig`), which renders typed IR
+/// types back to their canonical spelling and reuses this code so that the
+/// `Loc` kinds, plan ordering and every size/offset stay bit-identical between
+/// the legacy text path and the AST path. Keep the behaviour unchanged.
+pub fn buildPlanForAbi(allocator: Allocator, abi: u8, name: []const u8, ret_ty: []const u8, arg_types: []const []const u8, is_varargs: bool, sret_idx: ?usize, sret_size: u16, byval_sizes: []const u16, ptr_size: u32) !Plan {
     return switch (abi) {
         1 => buildSysvPlan(allocator, name, ret_ty, arg_types, is_varargs, sret_idx, sret_size, byval_sizes, ptr_size),
         2 => buildWin64Plan(allocator, name, ret_ty, arg_types, sret_idx, sret_size, byval_sizes, ptr_size),

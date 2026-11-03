@@ -11,6 +11,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y clang python3 make
       - run: make test
       - run: make lint
+      - run: make parser-parity
       - run: make c-testsuite
       - run: make size
       - run: make fuzz

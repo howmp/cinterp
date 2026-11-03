@@ -12,7 +12,9 @@ vendored.
 - Source: https://github.com/howmp/winmd
 - Upstream commit used: 9b8027802f05b1c84a8630e7f739eb519add9767
 - License: MIT (recorded in `compiler/src/cinterp/link/winmd.generated.json.gz`)
-- Generated file: `compiler/src/cinterp/link/winmd.generated.json.gz`
+- Generated files: `compiler/src/cinterp/link/winmd.generated.json.gz`
+  (Python compiler) and `compiler-zig/src/data/winmd.generated.json.gz`
+  (embedded in the Zig compiler for Windows API provider lookup)
 
 MIT License
 
