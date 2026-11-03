@@ -70,9 +70,9 @@ build_one() {
     cp runtime/zig-out/include/cinterp.h "$dest/include/"
     cp -a runtime/zig-out/lib/. "$dest/lib/"
     if [ "$target" = "x86_64-linux-gnu" ]; then
-        (cd compiler-zig && zig build -Doptimize=ReleaseSmall >/dev/null)
+        (cd compiler && zig build -Doptimize=ReleaseSmall >/dev/null)
         mkdir -p "$dest/bin"
-        cp compiler-zig/zig-out/bin/cinterp-cc "$dest/bin/cinterp-cc"
+        cp compiler/zig-out/bin/cinterp-cc "$dest/bin/cinterp-cc"
         cp packaging/bin/cinterp.in "$dest/bin/cinterp"
         chmod +x "$dest/bin/cinterp"
     fi

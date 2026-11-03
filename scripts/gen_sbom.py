@@ -13,7 +13,7 @@ from pathlib import Path
 TOOL = "Tool: cinterp-gen-sbom"
 
 # Zig release that supplies the build-time link metadata (MinGW `.def` files
-# and the glibc `abilists` table) that `compiler-zig/tools/gen_link_index.zig`
+# and the glibc `abilists` table) that `compiler/tools/gen_link_index.zig`
 # turns into the external-symbol index embedded in `cinterp-cc`.
 ZIG_VERSION = "0.13.0"
 
@@ -170,7 +170,7 @@ def main() -> int:
         },
     ]
 
-    # `compiler-zig/src/win_defs.zig` embeds a table generated from the
+    # `compiler/src/win_defs.zig` embeds a table generated from the
     # MinGW-w64 `.def` export lists that Zig bundles. Only the derived
     # symbol -> DLL/callconv index is redistributed, never upstream sources.
     if ships_compiler:
@@ -187,13 +187,13 @@ def main() -> int:
                 "comment": (
                     "Derived data: the Windows external-symbol index embedded in "
                     "cinterp-cc is generated at build time by "
-                    "compiler-zig/tools/gen_link_index.zig from the MinGW-w64 "
+                    "compiler/tools/gen_link_index.zig from the MinGW-w64 "
                     "lib32/lib64/lib-common .def files shipped with Zig. The "
                     "ZPL 2.1 attribution is recorded in this SBOM."
                 ),
             }
         )
-        # `compiler-zig/src/libc_defs.zig` embeds a symbol -> soname table
+        # `compiler/src/libc_defs.zig` embeds a symbol -> soname table
         # generated from the glibc abilists that Zig bundles for its own
         # glibc linking support.
         packages.append(
@@ -209,7 +209,7 @@ def main() -> int:
                 "comment": (
                     "Derived data: the Linux external-symbol index embedded in "
                     "cinterp-cc is generated at build time by "
-                    "compiler-zig/tools/gen_link_index.zig from Zig's "
+                    "compiler/tools/gen_link_index.zig from Zig's "
                     "libc/glibc/abilists symbol/version table (glibc ABI lists). "
                     "Only factual symbol names and library assignments are "
                     "reproduced; no glibc code is copied."

@@ -85,8 +85,8 @@ smoke = text("evidence-release-smoke.txt")
 check("P5 tarball smoke", "compile_rc=0" in smoke and "run_rc=0" in smoke and "result: 42" in smoke, "compile_rc=0 run_rc=0 result:42")
 mk = (ROOT / "Makefile").read_text()
 ts = (ROOT / "scripts/test.sh").read_text()
-check("P5 Makefile default", "build/cinterp-cc" in mk and "test: compiler-zig" in mk, "default + compiler-zig target")
-check("P5 test.sh default", "build/cinterp-cc" in ts and "compiler-zig" in ts, "Zig compiler default")
+check("P5 Makefile default", "build/cinterp-cc" in mk and "test: compiler" in mk, "default + compiler target")
+check("P5 test.sh default", "build/cinterp-cc" in ts and "compiler" in ts, "Zig compiler default")
 removed_compiler = "compiler" + "/src"
 check("P5 Python compiler removed", removed_compiler not in mk and "test-py" not in mk, "no Python compiler path")
 

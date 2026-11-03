@@ -57,7 +57,7 @@ width matches `--target`, and that the module is little-endian. The parser
 reports `line:column` for unsupported/ill-formed IR. Runtime/CI gates:
 
 ```bash
-cd compiler-zig && zig build test
+cd compiler && zig build test
 make test-suites-full
 make test-suites-cross
 ```

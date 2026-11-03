@@ -478,7 +478,7 @@ def main() -> int:
 
     compiler_path = Path(args.compiler_path)
     if not compiler_path.is_file():
-        print(f"missing compiler: {compiler_path} (run make compiler-zig)", file=sys.stderr)
+        print(f"missing compiler: {compiler_path} (run make compiler)", file=sys.stderr)
         return 2
     print(f"compiler: {compiler_path}", file=sys.stderr)
 

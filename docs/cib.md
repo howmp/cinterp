@@ -9,15 +9,15 @@
 
 运行时按“包 → 目标校验 → 模块 → 计划 → import 校验 → 固定汇编引擎”的顺序工作。`CIPKG` v1（无 CIPM/CIPI）仍然可读。本文描述的是**当前实现**的二进制格式；代码是最终事实来源：
 
-- `compiler-zig/src/main.zig`：`CIPKG`、CIPM、CIPI 写入
-- `compiler-zig/src/lower_ast.zig`：CIVM、opcode、globals 初始化
-- `compiler-zig/src/abi.zig`：CIPL、`Loc`/`ArgPlan`/`CallPlan`
-- `compiler-zig/src/imports.zig`：CIPI 结构与序列化
-- `compiler-zig/src/link_index.zig`：构建期生成的符号索引的二进制格式
-- `compiler-zig/src/win_defs.zig`：Windows provider（Zig 自带 MinGW `.def` 数据）
-- `compiler-zig/src/libc_defs.zig`：Linux provider（Zig 自带 glibc `abilists` 数据）
-- `compiler-zig/src/link_wrappers.zig` + `src/data/link_wrappers.json`：target 级 ABI 别名（`snprintf -> _snprintf`）
-- `compiler-zig/tools/gen_link_index.zig`：构建期索引生成器
+- `compiler/src/main.zig`：`CIPKG`、CIPM、CIPI 写入
+- `compiler/src/lower_ast.zig`：CIVM、opcode、globals 初始化
+- `compiler/src/abi.zig`：CIPL、`Loc`/`ArgPlan`/`CallPlan`
+- `compiler/src/imports.zig`：CIPI 结构与序列化
+- `compiler/src/link_index.zig`：构建期生成的符号索引的二进制格式
+- `compiler/src/win_defs.zig`：Windows provider（Zig 自带 MinGW `.def` 数据）
+- `compiler/src/libc_defs.zig`：Linux provider（Zig 自带 glibc `abilists` 数据）
+- `compiler/src/link_wrappers.zig` + `src/data/link_wrappers.json`：target 级 ABI 别名（`snprintf -> _snprintf`）
+- `compiler/tools/gen_link_index.zig`：构建期索引生成器
 - `runtime/src/vm.zig`：CIVM 解析、opcode 执行、C ABI、provider 解析
 - `runtime/src/ffi/plan_loader.zig`：CIPL 解析
 - `runtime/src/ffi/link_loader.zig`：CIPM/CIPI 解析
@@ -159,11 +159,11 @@ provider[]:
 
 ### 2.6 外部符号索引（构建期生成）
 
-编译器按 target 自动生成 CIPI，只写实际使用的外部符号。符号 → provider 的映射不再来自签入的数据库，而是在构建期由 `compiler-zig/tools/gen_link_index.zig` 从已安装的 Zig 工具链生成，并以二进制表内嵌进 `cinterp-cc`：
+编译器按 target 自动生成 CIPI，只写实际使用的外部符号。符号 → provider 的映射不再来自签入的数据库，而是在构建期由 `compiler/tools/gen_link_index.zig` 从已安装的 Zig 工具链生成，并以二进制表内嵌进 `cinterp-cc`：
 
-- **Linux**（`compiler-zig/src/libc_defs.zig`，`glibc-abilists@<zig version>`）：解析 `<zig lib>/libc/glibc/abilists`，只保留 `x86_64-linux-gnu` 与 `aarch64-linux-gnu`；库名映射 `c → libc.so.6`、`m → libm.so.6`、`pthread → libpthread.so.0`、`dl → libdl.so.2`、`rt → librt.so.1`、`util → libutil.so.1`、`resolv → libresolv.so.2`，`ld`（动态 loader）不作为 provider。`printf`/`qsort` → `libc.so.6`，`sin` → `libm.so.6`，`pthread_create` → `libc.so.6` + `libpthread.so.0`。
-- **Windows**（`compiler-zig/src/win_defs.zig`，`mingw-defs@<zig version>`）：解析 `<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def` 与 `lib-common/*.def.in`（用 `zig cc -E` 预处理），得到 DLL、实际导出符号、`arch_mask` 与调用约定。具体 DLL（`kernel32.dll`/`user32.dll`）优先于 `api-ms-win-*`；`ucrtbase` 优先于 `msvcrt`；PE 可执行文件（`*.exe`）永不作为 provider。
-- **别名**：`compiler-zig/src/data/link_wrappers.json` 是唯一保留的签入链接元数据，提供同签名 target 别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）；`atexit -> __cxa_atexit` 仍由 `lower_ast.zig` 处理。
+- **Linux**（`compiler/src/libc_defs.zig`，`glibc-abilists@<zig version>`）：解析 `<zig lib>/libc/glibc/abilists`，只保留 `x86_64-linux-gnu` 与 `aarch64-linux-gnu`；库名映射 `c → libc.so.6`、`m → libm.so.6`、`pthread → libpthread.so.0`、`dl → libdl.so.2`、`rt → librt.so.1`、`util → libutil.so.1`、`resolv → libresolv.so.2`，`ld`（动态 loader）不作为 provider。`printf`/`qsort` → `libc.so.6`，`sin` → `libm.so.6`，`pthread_create` → `libc.so.6` + `libpthread.so.0`。
+- **Windows**（`compiler/src/win_defs.zig`，`mingw-defs@<zig version>`）：解析 `<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def` 与 `lib-common/*.def.in`（用 `zig cc -E` 预处理），得到 DLL、实际导出符号、`arch_mask` 与调用约定。具体 DLL（`kernel32.dll`/`user32.dll`）优先于 `api-ms-win-*`；`ucrtbase` 优先于 `msvcrt`；PE 可执行文件（`*.exe`）永不作为 provider。
+- **别名**：`compiler/src/data/link_wrappers.json` 是唯一保留的签入链接元数据，提供同签名 target 别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）；`atexit -> __cxa_atexit` 仍由 `lower_ast.zig` 处理。
 - **运行期 fallback**：索引未收录的符号不写 plan entry，运行期从进程符号、`--lib` 库、默认 CRT 库（Linux `libc.so.6`/`libm.so.6`/`libdl.so.2`/`libpthread.so.0`/`librt.so.1`/`libutil.so.1`/`libresolv.so.2`，Windows `msvcrt.dll`/`ucrtbase.dll`/`ntdll.dll`）继续解析。Windows plan entry 的 provider 允许失败后 fallback（flag bit2）。
 - **`min_os`**：MinGW defs 没有最低 OS 版本信息，新包的 plan entry 一律写 `min_os=0`；旧包仍按其原字段校验。
 - `--no-auto-link` 关闭生成；自定义符号继续使用 `--lib`/运行期 fallback。

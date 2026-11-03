@@ -30,7 +30,7 @@
 ### 3.1 编译器（Zig，build-time）
 
 - **前端**：调用 `zig cc -S -emit-llvm -O0 -g0` 生成 LLVM IR，不依赖 Python 或外部 clang。
-- **IR 生成**：`compiler-zig/src/ir/` 解析为 typed AST，`lower_ast.zig` 将其降为基于栈的字节码。
+- **IR 生成**：`compiler/src/ir/` 解析为 typed AST，`lower_ast.zig` 将其降为基于栈的字节码。
 - **FFI ABI 计划**：为每个外部调用/callback 生成寄存器/栈位置、结构体分类、varargs 信息和反向计划。
 - **输出格式**：二进制字节码为主；文本格式仅用于调试 dump。
 - **错误报告**：带源文件/行号的编译错误；不支持的 LLVM IR 模式明确报错。
@@ -54,7 +54,7 @@
 - **语言版本**：Zig 0.13（与运行时同一 pin）
 - **C 前端**：`zig cc`（Zig 捆绑 clang 18），通过 subprocess 调用
 - **实现**：typed IR lexer/parser/AST、subset verifier、CIVM lowering、CIPL/CIPM/CIPI writer
-- **链接元数据**：构建期由 `compiler-zig/tools/gen_link_index.zig` 从已安装 Zig 工具链生成 Windows（MinGW `.def`）与 Linux（glibc `abilists`）符号索引，二进制内嵌；保留的运行期 ABI 别名只有 `link_wrappers.json`。无 `--link-db`，无签入的 cstdapi/winmd 数据库（见 §23）。
+- **链接元数据**：构建期由 `compiler/tools/gen_link_index.zig` 从已安装 Zig 工具链生成 Windows（MinGW `.def`）与 Linux（glibc `abilists`）符号索引，二进制内嵌；保留的运行期 ABI 别名只有 `link_wrappers.json`。无 `--link-db`，无签入的 cstdapi/winmd 数据库（见 §23）。
 
 不依赖 libclang/LLVM 进程内 API，也不依赖 Python 编译器包。
 
@@ -147,7 +147,7 @@ clang -S -emit-llvm -O0 -g -fno-discard-value-names -o program.ll program.c
 - 不需要实现 mem2reg、SSA 构造、复杂优化 pass。
 - 后续可选 `-O1`，但需要补 phi 处理，不作为 v1 必需项。
 
-Zig 侧用 `compiler-zig/src/ir/` 的 typed lexer/parser 解析文本 LLVM IR，并在 lowering 前执行 subset verifier。
+Zig 侧用 `compiler/src/ir/` 的 typed lexer/parser 解析文本 LLVM IR，并在 lowering 前执行 subset verifier。
 
 支持的 LLVM IR 子集：
 
@@ -451,7 +451,7 @@ ci_abi_call_sysv64:
 
 ```text
 cl/
-├── compiler-zig/                      # Zig 编译器（build-time）
+├── compiler/                      # Zig 编译器（build-time）
 │   ├── build.zig
 │   ├── tools/                         # 构建期链接元数据生成器
 │   │   └── gen_link_index.zig         # MinGW defs -> win_defs / glibc abilists -> libc_defs
@@ -513,7 +513,7 @@ cl/
 └── README.md
 ```
 
-> **当前实现（2026-11-03 更新）**：Zig 编译器 `compiler-zig/` 是唯一编译器；Python `compiler/` 已删除。当前编译器/运行时支持 SysV x64、Win64、Win32 与 AArch64 AAPCS64：标量/控制流、线性内存、globals/字符串、float32/double、bitfield、标量/指针/varargs FFI、MEMORY/register/mixed struct、Win64/Win32 sret/byval、AAPCS64 HFA；callback trampoline 覆盖全部四种 ABI。`long double` 使用 x86 f80 / AArch64 f128 精确表示并接入 FFI/printf；c-testsuite 支持集 217/217（3 skip）；fuzz/CI/自动链接已接入。
+> **当前实现（2026-11-03 更新）**：Zig 编译器 `compiler/` 是唯一编译器；Python 编译器已删除。当前编译器/运行时支持 SysV x64、Win64、Win32 与 AArch64 AAPCS64：标量/控制流、线性内存、globals/字符串、float32/double、bitfield、标量/指针/varargs FFI、MEMORY/register/mixed struct、Win64/Win32 sret/byval、AAPCS64 HFA；callback trampoline 覆盖全部四种 ABI。`long double` 使用 x86 f80 / AArch64 f128 精确表示并接入 FFI/printf；c-testsuite 支持集 217/217（3 skip）；fuzz/CI/自动链接已接入。
 
 ## 12. 关键代码结构
 
@@ -656,7 +656,7 @@ ci_cb_sysv_entry:
 
 ### 12.6 计划模型的唯一实现
 
-`compiler-zig/src/abi.zig` 的 `Loc`/`ArgPlan`/`Plan` 是唯一计划模型；`main.zig` 将其序列化为 CIPL，`lower_ast.zig` 通过 `buildPlanForAbi` 构造计划。原 Python 计划模型已随 `compiler/` 删除，不再有第二份实现。
+`compiler/src/abi.zig` 的 `Loc`/`ArgPlan`/`Plan` 是唯一计划模型；`main.zig` 将其序列化为 CIPL，`lower_ast.zig` 通过 `buildPlanForAbi` 构造计划。原 Python 计划模型已随 Python 编译器删除，不再有第二份实现。
 
 ## 13. 体积、性能与错误处理
 
@@ -689,7 +689,7 @@ ci_cb_sysv_entry:
 当前测试入口：
 
 ```bash
-make test            # runtime 单测 + compiler-zig 单测 + 端到端用例 + 错误路径
+make test            # runtime 单测 + compiler 单测 + 端到端用例 + 错误路径
 make c-testsuite     # 本地 C 子集（10/10）
 python3 scripts/c_testsuite_upstream.py  # 上游支持集 217/217，3 skip
 make fuzz            # load-only package/plan 变异
@@ -703,7 +703,7 @@ HOST=user@windows ./scripts/test_cross.sh   # 60 个跨 ABI 用例
 
 测试分层：
 
-- 前端单测：`compiler-zig` 的 LLVM IR 解析、AST/verifier、降级、ABI 计划、二进制 round-trip（`cd compiler-zig && zig build test`）。
+- 前端单测：`compiler` 的 LLVM IR 解析、AST/verifier、降级、ABI 计划、二进制 round-trip（`cd compiler && zig build test`）。
 - 运行时单测：CIVM、栈/帧、内存/计划校验、错误路径。
 - 端到端：hello/arrays/structs/malloc/puts/printf/snprintf、float/double/long double、struct FFI、HFA、packed、qsort/callback、ABI 边界。
 - 交叉矩阵：Win64 19、Win32 20（含 stdcall）、ARM64 19；真实 Windows SSH + qemu。
@@ -960,7 +960,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 - **`_Complex`**：明确不支持，已列入非目标；不为 complex ABI 增加实现。
 - **可增长线性内存与配额**：明确放弃。运行时继续使用固定 `MAX_MEM`/`MAX_STACK`/`MAX_FRAMES`/`MAX_MODULE` 上限，超出时返回现有 OOM/资源错误码；不实现可增长内存或 per-package 配额。
-- **`atexit`**：作为普通 libc 符号处理，不实现 VM 级退出栈。glibc 的 `atexit` 来自 `libc_nonshared.a` 包装对象，最终调用 `__cxa_atexit(func, arg, dso)`；`libc.so.6` 只动态导出 `__cxa_atexit`。`compiler-zig/src/lower_ast.zig` 在 lowering 阶段直接生成 `__cxa_atexit(cb, 0, 0)`，不再需要运行时 `atexit` 特化。CLI 在 VM 仍存活时调用 libc `exit`，保证回调可执行。`examples/ffi_atexit.c` 输出 `result: 42` 后执行 `bye`。类似“头文件声明名 ≠ 动态导出名/参数形态”的符号应继续放入 link wrapper 元数据，而不是散落 runtime shim。
+- **`atexit`**：作为普通 libc 符号处理，不实现 VM 级退出栈。glibc 的 `atexit` 来自 `libc_nonshared.a` 包装对象，最终调用 `__cxa_atexit(func, arg, dso)`；`libc.so.6` 只动态导出 `__cxa_atexit`。`compiler/src/lower_ast.zig` 在 lowering 阶段直接生成 `__cxa_atexit(cb, 0, 0)`，不再需要运行时 `atexit` 特化。CLI 在 VM 仍存活时调用 libc `exit`，保证回调可执行。`examples/ffi_atexit.c` 输出 `result: 42` 后执行 `bye`。类似“头文件声明名 ≠ 动态导出名/参数形态”的符号应继续放入 link wrapper 元数据，而不是散落 runtime shim。
 - **`signal`**：作为普通 callback 使用，复用现有 trampoline，不新增 VM signal 机制。`examples/ffi_signal.c` 注册内部 handler、`raise(SIGUSR1)` 后返回 42。
 - **GCC builtins**：明确放弃，移出计划；不新增 builtin lowering。
 - 回归已加入 `scripts/test.sh`。
@@ -968,10 +968,10 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 20.7 外部符号 alias/wrapper 的通用处理（2026-10-31）
 
 - **信息位置**：头文件只给声明，LLVM IR 也只有声明名；glibc/MSVC 的包装和别名来自链接期的 linker script、`libc_nonshared.a`、导入库或导出名规则，因此仅凭头文件/IR 无法知道 `atexit -> __cxa_atexit` 或 `snprintf -> _snprintf`。
-- **统一元数据**：`compiler-zig/src/data/link_wrappers.json` 同时描述：
+- **统一元数据**：`compiler/src/data/link_wrappers.json` 同时描述：
   - `targets.<os>.<symbol>`：真实符号、provider、额外参数（argument adapter，如 atexit 的两个零参数）。
   - `aliases.<os>.<symbol>`：同签名符号改名（如 Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）。
-- **编译期使用**：`compiler-zig/src/link_wrappers.zig` 从 `data/link_wrappers.json` 读取 `aliases`；`compiler-zig/src/lower_ast.zig` 处理 `atexit -> __cxa_atexit` 的参数适配；真实符号的 CIPI provider 由构建期生成的 `win_defs.zig`（Windows）和 `libc_defs.zig`（Linux）给出（§23）。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
+- **编译期使用**：`compiler/src/link_wrappers.zig` 从 `data/link_wrappers.json` 读取 `aliases`；`compiler/src/lower_ast.zig` 处理 `atexit -> __cxa_atexit` 的参数适配；真实符号的 CIPI provider 由构建期生成的 `win_defs.zig`（Windows）和 `libc_defs.zig`（Linux）给出（§23）。CIB 的 `--dump-imports` 显示的是真实符号，运行时不再猜测。
 - **runtime 简化**：删除 `runtime/src/ffi/native.zig` 的 `alias()`、`vm.resolveNative()` 的 alias fallback、`strtol/wcstol` shim，以及 `_`/`@` 名称猜测。运行时现在只按 CIB provider、显式 `--lib` 和系统 fallback 查找，不再包含具体函数名分支。
 - **验证**：Windows `snprintf` plan 为 `_snprintf`，import 同时保留 ucrtbase/msvcrt 的真实符号；`make test`、full 4292/4519、standard 394/495、跨 ABI csuite 17/17 均通过。新增同类符号应改 `link_wrappers.json`，不要加 runtime 特判。
 
@@ -1132,7 +1132,7 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 20.26 发布与生产质量收口（2026-11-02）
 
 - **许可证/声明**：`LICENSE`（MIT）随每个 tarball 发布；mingw-w64 `.def` 派生索引的 ZPL 2.1 归属与 glibc `abilists` 派生索引的 LGPL-2.1-or-later 归属记录在每目标 SPDX SBOM 中（`scripts/gen_sbom.py`）。
-- **单一版本源**：根 `VERSION` 为唯一来源；`compiler-zig/build.zig` 读取并注入 `cinterp-cc --version` 与 CIPM producer，runtime `build_options.version`、`cinterp-run --version`、`ci_version()`、共享库 SONAME 均由它派生。`docs/compatibility.md` 固化 CIPKG/CIVM/CIPL/CIPM/CIPI、`runtime_version`、C ABI 与 N−1 读取保证。
+- **单一版本源**：根 `VERSION` 为唯一来源；`compiler/build.zig` 读取并注入 `cinterp-cc --version` 与 CIPM producer，runtime `build_options.version`、`cinterp-run --version`、`ci_version()`、共享库 SONAME 均由它派生。`docs/compatibility.md` 固化 CIPKG/CIVM/CIPL/CIPM/CIPI、`runtime_version`、C ABI 与 N−1 读取保证。
 - **发布链**：`scripts/package_release.sh` 生成四个目标 tarball + 每目标 SPDX 2.3 SBOM + `SHA256SUMS`，支持 `CINTERP_GPG_KEY` 分离签名；`split_debug` 用 objcopy 生成 `.debug` 和 `.gnu_debuglink`。`.github/workflows/release.yml` 在 tag 上跑集成/差分测试、版本校验、构建、可选签名并发布。GPG 路径已用临时 key 实测 `Good signature`；生产 key 由 release secret 提供。Python wheel 已随 Python 编译器删除。
 - **绑定**：tarball 内含 `pkgconfig/cinterp.pc`、`cmake/cinterpConfig.cmake`、`rust/cinterp-sys`（raw FFI + 小 safe wrapper）。已验证 `pkg-config` + C host、CMake `find_package`、cargo 消费者运行 `result=42`。
 - **内存**：plan store 改为按包内 plan 数分配（旧固定 6.5 MB）；VM 的 value stack、线性内存、module buffer 改为按配置/包分配。`ci_vm_config.memory_size`（默认 1 MiB，最大 16 MiB）与旧 `struct_size` 兼容。实测空 VM ≈ 0.9 MiB（imports 上限从 256 提升到 512 后），原结构约 10 MiB。
@@ -1161,7 +1161,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 ### 21.2 实现与构建
 
-- `compiler-zig/src/main.zig`：CLI、`zig cc` 驱动、target 映射、CIPM/CIPI/
+- `compiler/src/main.zig`：CLI、`zig cc` 驱动、target 映射、CIPM/CIPI/
   CIB v2 写入；`src/ir/` + `src/lower_ast.zig`：IR 解析与 CIVM lowering；
   `src/abi.zig`：`CompileResult`/`Plan` 等序列化类型与 SysV/Win64/Win32/AAPCS64
   plan、byval/sret 构造。lowering 仍覆盖 varargs、callback、setjmp、f80/fp128、
@@ -1174,7 +1174,7 @@ zig build -Dtarget=aarch64-linux-gnu
 - target 映射：`x86_64-pc-linux-gnu → x86_64-linux-gnu`、
   `x86_64-pc-windows-gnu → x86_64-windows-gnu`、
   `i686-pc-windows-gnu → x86-windows-gnu`、`aarch64-linux-gnu` 不变。
-- `make compiler-zig` 构建并复制到 `build/cinterp-cc`；默认 `make test`/
+- `make compiler` 构建并复制到 `build/cinterp-cc`；默认 `make test`/
   `test-suites*`/`size` 使用它。发射 IR 的临时文件名带随机后缀，避免 suite
   并发时同名 `.ll` 竞态。
 
@@ -1182,7 +1182,7 @@ zig build -Dtarget=aarch64-linux-gnu
 
 > P0/P1/P4/P5 中涉及 Python 编译器的记录是迁移阶段的历史证据；2026-11-03 后 Python 编译器已删除，见 §22。
 
-- **P0/P1**：Python 编译器 `--cc zig` 验证、`compiler-zig/` 骨架与完整 lowerer；
+- **P0/P1**：Python 编译器 `--cc zig` 验证、`compiler/` 骨架与完整 lowerer；
   examples/FFI/HFA/callback/long double/sret 全部通过。
 - **P2**：standard **396/495（99 skip）**、full **4323/4521（198 skip）**，
   与 Python+clang 基线一致。
@@ -1200,7 +1200,7 @@ zig build -Dtarget=aarch64-linux-gnu
 ### 21.4 质量门禁与验证
 
 ```bash
-make compiler-zig runtime
+make compiler runtime
 make test
 make lint
 make test-suites-smoke
@@ -1224,7 +1224,7 @@ make release-artifacts
 
 ### 21.6 IR 解析器重构与旧解析器删除（2026-11-03）
 
-- **唯一前端**：`compiler-zig/src/ir/{lexer,ast,parser,verify,tests}.zig` 提供 no-copy
+- **唯一前端**：`compiler/src/ir/{lexer,ast,parser,verify,tests}.zig` 提供 no-copy
   token、typed `Module/Function/Instruction/Type/Value/Attr` AST、多行 switch、
   constexpr、byval/sret、f80/fp128、alias/ifunc opaque record 和 `line:column`
   诊断；`src/lower_ast.zig` 从 AST 生成 CIVM。旧字符串解析器 `src/lower.zig`
@@ -1259,8 +1259,8 @@ make release-artifacts
 
 ### 22.1 范围
 
-- 删除 `compiler/`（`pyproject.toml`、`src/cinterp/**`、`tests/**`）；`cinterp-cc` 是唯一编译器。
-- 链接元数据改为 Zig 侧自持：当时迁移到 `compiler-zig/src/data/`（`cstdapi.generated.json`、`link_wrappers.json`、`winmd.generated.json.gz`）并 `@embedFile` 内嵌。**该状态已被 §23 取代**：cstdapi/winmd 数据与 `--link-db` 已删除，只剩 `link_wrappers.json`，其余索引由 `compiler-zig/tools/gen_link_index.zig` 在构建期从 Zig 工具链生成。
+- 删除 Python 编译器（`pyproject.toml`、`src/cinterp/**`、`tests/**`）；`cinterp-cc` 是唯一编译器。
+- 链接元数据改为 Zig 侧自持：当时迁移到 `compiler/src/data/`（`cstdapi.generated.json`、`link_wrappers.json`、`winmd.generated.json.gz`）并 `@embedFile` 内嵌。**该状态已被 §23 取代**：cstdapi/winmd 数据与 `--link-db` 已删除，只剩 `link_wrappers.json`，其余索引由 `compiler/tools/gen_link_index.zig` 在构建期从 Zig 工具链生成。
 - Python 保留在测试/验证链路：`scripts/test_suites.py`、fuzz、benchmark、differential、`minimize_failure.py`。它们不参与 `cinterp-cc` 的编译路径，也不再有任何离线链接元数据生成脚本。
 
 ### 22.2 CLI 对等
@@ -1272,20 +1272,20 @@ make release-artifacts
 - `--link-db DIR`：**已删除**（§23.2）；符号索引在构建期内嵌，不再有运行期数据库覆盖选项。
 - `--dump-imports`：直接遍历结构化 CIPI 表，输出 `import[plan N] name: lib:symbol, ...`。
 
-导入表由 `compiler-zig/src/imports.zig` 统一构建和序列化；Linux provider 来自 `compiler-zig/src/libc_defs.zig`（Zig 自带 glibc abilists），Windows provider 来自 `compiler-zig/src/win_defs.zig`（Zig 自带 MinGW defs），同签名别名来自 `compiler-zig/src/link_wrappers.zig` + `data/link_wrappers.json`（Windows `snprintf -> _snprintf`）。
+导入表由 `compiler/src/imports.zig` 统一构建和序列化；Linux provider 来自 `compiler/src/libc_defs.zig`（Zig 自带 glibc abilists），Windows provider 来自 `compiler/src/win_defs.zig`（Zig 自带 MinGW defs），同签名别名来自 `compiler/src/link_wrappers.zig` + `data/link_wrappers.json`（Windows `snprintf -> _snprintf`）。
 
 ### 22.3 测试与发布链
 
 - `scripts/test_suites.py` 删除 `--inprocess`/`--batch`/`--compiler python`，始终调用 `--compiler-path`（默认 `build/cinterp-cc`）；CIB 缓存指纹改按编译器可执行文件计算。
 - 所有 fuzz/差分/benchmark/cross 脚本改用 `build/cinterp-cc`。
-- `make test` 运行 `compiler-zig` 单测（`zig build test`）和端到端测试；`make test-py`、`test-suites-*-py` 删除。
+- `make test` 运行 `compiler` 单测（`zig build test`）和端到端测试；`make test-py`、`test-suites-*-py` 删除。
 - 发布链移除 Python wheel 和 `bin/cinterp` 的 Python 回退；Linux tarball 仍提供 `bin/cinterp-cc` + `bin/cinterp` wrapper。
 
 ### 22.4 验证
 
 ```bash
-make compiler-zig runtime
-cd compiler-zig && zig build test
+make compiler runtime
+cd compiler && zig build test
 make test
 make lint
 make c-testsuite
@@ -1311,15 +1311,15 @@ make test-suites-smoke
   - Windows：`<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def`（含用 `zig cc -E` 预处理的 `*.def.in`）。
   - Linux：`<zig lib>/libc/glibc/abilists`（Zig 链接 glibc 使用的符号/版本表）。
 - 运行期仍保留 `--lib`、进程符号和默认 CRT 库 fallback，覆盖索引未收录的符号、`--no-auto-link` 和 v1 包。
-- `compiler-zig/src/data/link_wrappers.json` 是唯一保留的签入链接元数据，只描述同签名别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）；`atexit -> __cxa_atexit` 仍在 `lower_ast.zig` 中处理。
+- `compiler/src/data/link_wrappers.json` 是唯一保留的签入链接元数据，只描述同签名别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）；`atexit -> __cxa_atexit` 仍在 `lower_ast.zig` 中处理。
 
 ### 23.2 实现
 
-- `compiler-zig/tools/gen_link_index.zig`：host 工具，构建期由 `build.zig` 运行两次，生成 `win_defs` 与 `libc_defs` 的二进制表和 wrapper 模块；`zig build gen-link-index` 可单独重新生成并打印大小。
-- `compiler-zig/src/link_index.zig`：共享二进制格式（magic `CILI`、字符串池、库表、排序 entry、arch_mask/conv/priority）。
-- `compiler-zig/src/win_defs.zig`：解析 MinGW `LIBRARY`/`EXPORTS`/别名/`@N`；具体 DLL 优先于 `api-ms-win-*`，`ucrtbase` 优先于 `msvcrt`，`*.exe` 永不作为 provider；x86 `@N` 推断 stdcall，其他为 cdecl；`min_os=0`。
-- `compiler-zig/src/libc_defs.zig`：读取 abilists 的 libs/versions/targets/functions inclusion；保留 `x86_64-linux-gnu`/`aarch64-linux-gnu`；`c/m/pthread/dl/rt/util/resolv` 映射到 soname，`ld` 跳过；同符号多库保留多个 provider，`libc` 优先。
-- `compiler-zig/src/link_wrappers.zig`：只读 `data/link_wrappers.json` 的 aliases。
+- `compiler/tools/gen_link_index.zig`：host 工具，构建期由 `build.zig` 运行两次，生成 `win_defs` 与 `libc_defs` 的二进制表和 wrapper 模块；`zig build gen-link-index` 可单独重新生成并打印大小。
+- `compiler/src/link_index.zig`：共享二进制格式（magic `CILI`、字符串池、库表、排序 entry、arch_mask/conv/priority）。
+- `compiler/src/win_defs.zig`：解析 MinGW `LIBRARY`/`EXPORTS`/别名/`@N`；具体 DLL 优先于 `api-ms-win-*`，`ucrtbase` 优先于 `msvcrt`，`*.exe` 永不作为 provider；x86 `@N` 推断 stdcall，其他为 cdecl；`min_os=0`。
+- `compiler/src/libc_defs.zig`：读取 abilists 的 libs/versions/targets/functions inclusion；保留 `x86_64-linux-gnu`/`aarch64-linux-gnu`；`c/m/pthread/dl/rt/util/resolv` 映射到 soname，`ld` 跳过；同符号多库保留多个 provider，`libc` 优先。
+- `compiler/src/link_wrappers.zig`：只读 `data/link_wrappers.json` 的 aliases。
 - `main.zig` 的 `buildImportTable`：Windows 命中 `win_defs`、Linux 命中 `libc_defs` 时写 CIPI plan provider；未命中不写 entry，交给运行期 fallback；`--no-auto-link` 仍跳过 plan entry。
 - `runtime/src/{ffi/native.zig,vm.zig}`：`libc_handle` 改为按需加载的默认库列表（Linux libc/libm/dl/pthread/rt/util/resolv；Windows msvcrt/ucrtbase/ntdll），`searchSymbol`/`loadImportedData` 在 `--lib` 之后搜索它们。
 - `CIPM.link_db` 记录构建期索引来源：`mingw-defs@<zig version>` 或 `glibc-abilists@<zig version>`；没有 plan import 时可以为空。
@@ -1335,8 +1335,8 @@ make test-suites-smoke
 ### 23.4 验证
 
 ```bash
-make compiler-zig runtime
-cd compiler-zig && zig build test
+make compiler runtime
+cd compiler && zig build test
 make test
 make test-winapi
 make lint

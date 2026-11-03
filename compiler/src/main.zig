@@ -453,7 +453,7 @@ pub fn main() !void {
                 std.process.exit(2);
             }
             if (!std.mem.eql(u8, argv[i], "zig")) {
-                std.debug.print("compiler-zig currently supports --cc zig only\n", .{});
+                std.debug.print("compiler currently supports --cc zig only\n", .{});
                 std.process.exit(2);
             }
         } else if (std.mem.eql(u8, a, "--keep-ir")) {

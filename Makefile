@@ -1,11 +1,11 @@
-.PHONY: all test compiler-zig runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross test-winapi fetch-suites generate-diff
+.PHONY: all test compiler runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-exec-strict fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross test-winapi fetch-suites generate-diff
 
 all: test
 
-compiler-zig:
-	cd compiler-zig && zig build
+compiler:
+	cd compiler && zig build
 	mkdir -p build
-	cp compiler-zig/zig-out/bin/cinterp-cc build/cinterp-cc
+	cp compiler/zig-out/bin/cinterp-cc build/cinterp-cc
 
 runtime:
 	cd runtime && zig build -Doptimize=ReleaseSmall
@@ -15,24 +15,24 @@ debug-runtime:
 	cd runtime && zig build -Doptimize=Debug
 
 compiler-test:
-	cd compiler-zig && zig build test
+	cd compiler && zig build test
 
 integration:
 	./scripts/test.sh
 
-lint: compiler-zig runtime
+lint: compiler runtime
 	build/cinterp-cc compile examples/hello.c -o build/lint-hello.cib
 	build/cinterp-cc compile examples/ffi_qsort.c -o build/lint-qsort.cib
 	build/cinterp-cc compile examples/ffi_callback.c -o build/lint-callback.cib
 	python3 scripts/civm_lint.py build/lint-hello.cib build/lint-qsort.cib build/lint-callback.cib
 
-test-winapi: compiler-zig
+test-winapi: compiler
 	python3 scripts/test_winapi.py
 
-test: compiler-zig
+test: compiler
 	./scripts/test.sh
 
-size: runtime compiler-zig
+size: runtime compiler
 	mkdir -p build
 	@printf 'runtime ReleaseSmall: '; du -h runtime/zig-out/bin/cinterp-run | cut -f1
 	@build/cinterp-cc compile examples/hello.c -o build/hello.cib >/dev/null
@@ -44,32 +44,32 @@ size: runtime compiler-zig
 
 release-check: test size
 
-cross-test: compiler-zig
+cross-test: compiler
 	./scripts/test_cross.sh
 
-c-testsuite: compiler-zig runtime
+c-testsuite: compiler runtime
 	./scripts/c_testsuite.sh
 
 fetch-suites:
 	python3 scripts/fetch_suites.py --all --support
 
-test-suites-smoke: compiler-zig runtime
+test-suites-smoke: compiler runtime
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier smoke --cib-cache build/cib-cache-zig-ast --report build/test-suites-smoke.json
 
-test-suites: compiler-zig runtime
+test-suites: compiler runtime
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier standard --cib-cache build/cib-cache-zig-ast --report build/test-suites.json
 
-test-suites-full: compiler-zig runtime
+test-suites-full: compiler runtime
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier full --cib-cache build/cib-cache-zig-ast --report build/test-suites-full.json
 
-test-suites-nightly: compiler-zig runtime
+test-suites-nightly: compiler runtime
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier nightly --cib-cache build/cib-cache-zig-ast --report build/test-suites-nightly.json
 	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
 
 test-suites-report: test-suites-full
 	@test -s build/test-suites-full.json
 
-test-suites-cross: compiler-zig runtime
+test-suites-cross: compiler runtime
 	cd runtime && zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run.exe build/cross/cinterp-run64.exe
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite csuite --target x86_64-windows --jobs 4 --report build/test-suites-win64.json
@@ -93,37 +93,37 @@ test-suites-cross: compiler-zig runtime
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite compcert-smoke --target aarch64-linux --jobs 4 --report build/test-suites-compcert-arm64.json
 	cd runtime && zig build -Doptimize=ReleaseSmall
 
-generate-diff: compiler-zig runtime
+generate-diff: compiler runtime
 	python3 scripts/generate_diff.py --generator yarpgen --iterations 20 --report build/generate-diff-report.json
 
-generate-diff-nightly: compiler-zig runtime
+generate-diff-nightly: compiler runtime
 	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
 
-generate-diff-csmith: compiler-zig runtime
+generate-diff-csmith: compiler runtime
 	python3 scripts/generate_diff.py --generator csmith --iterations 3 --report build/generate-diff-csmith.json
 
-fuzz: compiler-zig runtime
+fuzz: compiler runtime
 	python3 scripts/fuzz.py --iterations 1000
 
-fuzz-exec: compiler-zig runtime
+fuzz-exec: compiler runtime
 	python3 scripts/fuzz_exec.py --iterations 500 --tolerate-faults
 
-fuzz-exec-strict: compiler-zig runtime
+fuzz-exec-strict: compiler runtime
 	python3 scripts/fuzz_exec.py --iterations 500
 
-fuzz-ffi-exec: compiler-zig runtime
+fuzz-ffi-exec: compiler runtime
 	python3 scripts/fuzz_exec.py --iterations 300 --ffi --tolerate-faults
 
-fuzz-bytecode: compiler-zig runtime
+fuzz-bytecode: compiler runtime
 	python3 scripts/fuzz_bytecode.py --iterations 500
 
-fuzz-cross: compiler-zig runtime
+fuzz-cross: compiler runtime
 	python3 scripts/fuzz_cross.py --iterations 100
 
-fuzz-capi-asan: compiler-zig runtime
+fuzz-capi-asan: compiler runtime
 	python3 scripts/fuzz_capi_sanitizer.py --iterations 200
 
-fuzz-sanitizer: compiler-zig
+fuzz-sanitizer: compiler
 	mkdir -p build/fuzz-sanitizer
 	cd runtime && zig build -Doptimize=ReleaseSafe
 	cp runtime/zig-out/bin/cinterp-run build/fuzz-sanitizer/cinterp-run
@@ -131,10 +131,10 @@ fuzz-sanitizer: compiler-zig
 	python3 scripts/fuzz_exec.py --iterations 200 --tolerate-faults --runtime build/fuzz-sanitizer/cinterp-run
 	python3 scripts/fuzz_bytecode.py --iterations 300 --runtime build/fuzz-sanitizer/cinterp-run
 
-differential: compiler-zig runtime
+differential: compiler runtime
 	./scripts/differential.sh
 
-bench: compiler-zig runtime
+bench: compiler runtime
 	python3 scripts/benchmark.py
 
 release-artifacts:
@@ -145,5 +145,5 @@ size-cross:
 
 clean:
 	rm -rf build
-	cd compiler-zig && rm -rf .zig-cache zig-out
+	cd compiler && rm -rf .zig-cache zig-out
 	cd runtime && rm -rf .zig-cache zig-out

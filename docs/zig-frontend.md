@@ -45,7 +45,7 @@ triple/OS/pointer-width and little-endian consistency are checked before lowerin
 
 ## External symbol resolution (build-time indexes)
 
-`cinterp-cc` does not ship a checked-in link database. `compiler-zig/build.zig`
+`cinterp-cc` does not ship a checked-in link database. `compiler/build.zig`
 builds `tools/gen_link_index.zig` as a host tool and runs it twice; the outputs
 are a compact binary table plus a wrapper module that `@embedFile`s it, injected
 as the `win_defs_generated` / `libc_defs_generated` anonymous imports.
@@ -71,7 +71,7 @@ entry/library/blob sizes) without building the rest of the compiler.
 ## Build and use
 
 ```bash
-make compiler-zig
+make compiler
 ./build/cinterp-cc compile examples/hello.c -o build/hello.cib
 ./runtime/zig-out/bin/cinterp-run build/hello.cib
 ```

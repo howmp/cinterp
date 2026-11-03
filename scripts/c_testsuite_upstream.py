@@ -44,7 +44,7 @@ def main() -> int:
     args = ap.parse_args()
     compiler = Path(args.compiler_path)
     if not compiler.is_file():
-        print(f"missing compiler: {compiler} (run make compiler-zig)", file=sys.stderr)
+        print(f"missing compiler: {compiler} (run make compiler)", file=sys.stderr)
         return 2
     directory = Path(args.dir)
     skip = set()

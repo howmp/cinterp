@@ -15,8 +15,8 @@ parser would have meant reproducing the bug. `src/lower.zig` was therefore
 removed without copying those behaviours.
 
 The 10 former cases are still covered as AST correctness tests in
-`compiler-zig/src/lower_ast.zig`, with expected `CompileResult` goldens under
-`compiler-zig/src/testdata/lower_ast/golden/`. A regression now shows up as a
+`compiler/src/lower_ast.zig`, with expected `CompileResult` goldens under
+`compiler/src/testdata/lower_ast/golden/`. A regression now shows up as a
 failing golden or property assertion rather than as a parity diff.
 
 ## 1. Global `inttoptr` constant image (2 cases)
@@ -32,7 +32,7 @@ AST behavior: the data image contains the little-endian pointer-sized value from
 the `inttoptr` constant (`40960` / `8`).
 
 Tests: `global inttoptr initializer is materialized` in
-`compiler-zig/src/lower_ast.zig` (data image bytes plus golden
+`compiler/src/lower_ast.zig` (data image bytes plus golden
 `inttoptr_global.golden`).
 
 ## 2. `external constant` declarations (6 cases)
@@ -56,7 +56,7 @@ compile-only, so executable behavior is unchanged; the generated code is the
 correct representation.
 
 Tests: `external constant declarations are imported and addressed` in
-`compiler-zig/src/lower_ast.zig` (external-symbol list, `OP_ADDR_EXTERN`, golden
+`compiler/src/lower_ast.zig` (external-symbol list, `OP_ADDR_EXTERN`, golden
 `external_constant.golden`).
 
 ## 3. Global initializer mentioning another global (1 case)
@@ -74,7 +74,7 @@ AST layout: `@test.const_test` at 0, `@global_int` at 8, `@flag` at 12,
 `@global_int`.
 
 Tests: `initializer mentioning a global name keeps the global allocated` in
-`compiler-zig/src/lower_ast.zig` (layout, relocation, `OP_ADDR_CONST 12`, golden
+`compiler/src/lower_ast.zig` (layout, relocation, `OP_ADDR_CONST 12`, golden
 `global_name_in_initializer.golden`).
 
 ## 4. Callee name ending in `null` (1 case)
@@ -93,7 +93,7 @@ call and only a bare `null` callee is dropped. `CALL @getnull`, the result store
 and `CALL @foo` with that result are all emitted.
 
 Tests: `call result is kept when the callee name ends in null` and
-`null callee calls lower to no instructions` in `compiler-zig/src/lower_ast.zig`
+`null callee calls lower to no instructions` in `compiler/src/lower_ast.zig`
 (goldens `null_suffix_callee.golden`, `null_callee.golden`,
 `null_callee_args.golden`).
 
@@ -107,13 +107,13 @@ program objects and must not reserve VM storage, so the string parser was fixed
 to skip `@llvm.*`/`@.llvm.*` globals too before it was removed.
 
 Test: `llvm metadata globals do not reserve VM storage` in
-`compiler-zig/src/lower_ast.zig` (data-image length plus golden
+`compiler/src/lower_ast.zig` (data-image length plus golden
 `metadata_global.golden`).
 
 ## Tests and gates
 
 ```bash
-cd compiler-zig && zig build test   # unit tests incl. golden CIVM/CIPL comparisons
+cd compiler && zig build test   # unit tests incl. golden CIVM/CIPL comparisons
 make test-suites                    # standard suite, AST frontend
 make test-suites-full               # full suite, AST frontend
 make c-testsuite                    # four-target csuite
@@ -125,7 +125,7 @@ reaches CIVM/CIPL/CIPI. Regenerate them only for an intentional codegen change,
 and review the diff:
 
 ```bash
-cd compiler-zig && CINTERP_WRITE_GOLDEN=1 \
+cd compiler && CINTERP_WRITE_GOLDEN=1 \
   zig test src/lower_ast.zig --test-filter "write golden files"
 ```
 

@@ -3,7 +3,7 @@ const std = @import("std");
 fn readVersion(b: *std.Build) []const u8 {
     const path = b.pathFromRoot("../VERSION");
     const text = std.fs.cwd().readFileAlloc(b.allocator, path, 1024) catch
-        @panic("missing VERSION next to compiler-zig/ (or pass -Dversion)");
+        @panic("missing VERSION next to compiler/ (or pass -Dversion)");
     return std.mem.trim(u8, text, " \t\r\n");
 }
 
@@ -149,7 +149,7 @@ pub fn build(b: *std.Build) void {
     });
     const run_lower_ast_tests = b.addRunArtifact(lower_ast_tests);
 
-    const test_step = b.step("test", "Run compiler-zig unit tests (main, abi, ir, lower_ast, imports, link_index, link_wrappers, win_defs, libc_defs)");
+    const test_step = b.step("test", "Run compiler unit tests (main, abi, ir, lower_ast, imports, link_index, link_wrappers, win_defs, libc_defs)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_imports_tests.step);
     test_step.dependOn(&run_link_index_tests.step);

@@ -28,7 +28,7 @@ for the test/fuzz/benchmark harnesses.
 
 ```bash
 # build the Zig compiler and release runtime
-make compiler-zig runtime
+make compiler runtime
 
 # compile and run a C file
 ./build/cinterp-cc compile examples/hello.c -o build/hello.cib
@@ -103,7 +103,7 @@ Build profiles:
   drop `.eh_frame`/`.eh_frame_hdr`. Concise error codes and CLI messages remain.
 - Current sizes: Debug ≈ 8.8 MiB, ReleaseSmall ≈ 99 KiB (Linux x64).
 
-`make test` runs runtime and compiler-zig unit tests, all end-to-end examples,
+`make test` runs runtime and compiler unit tests, all end-to-end examples,
 and negative paths (missing input, corrupt/truncated packages, unknown symbol).
 `make c-testsuite` runs the local 10-case C subset. The upstream
 c-testsuite supported set currently passes 217/217 with 3 explicitly skipped
@@ -166,10 +166,10 @@ APIs; no `--lib` is required for those. The symbol -> provider tables are
 generated at build time from the installed Zig toolchain, so there is no
 checked-in link database and no `--link-db` override:
 
-- **Linux** (`compiler-zig/src/libc_defs.zig`): Zig's bundled glibc `abilists`
+- **Linux** (`compiler/src/libc_defs.zig`): Zig's bundled glibc `abilists`
   give the exporting soname (`printf` -> `libc.so.6`, `sin` -> `libm.so.6`,
   `pthread_create` -> `libc.so.6`/`libpthread.so.0`).
-- **Windows** (`compiler-zig/src/win_defs.zig`): Zig's bundled MinGW `.def`
+- **Windows** (`compiler/src/win_defs.zig`): Zig's bundled MinGW `.def`
   files give the DLL, x86 stdcall decoration and call convention
   (`GetTickCount64` -> `kernel32.dll`, `GetSystemMetrics` -> `user32.dll`,
   `MessageBoxA@16` -> `user32.dll` with `conv=1`).
@@ -291,7 +291,7 @@ with `UnsupportedOs`/`UnsupportedLibc`.
 ## Repository layout
 
 ```text
-compiler-zig/          Zig compiler (build-time)
+compiler/          Zig compiler (build-time)
   src/main.zig         cinterp-cc CLI, CIPKG/CIPM/CIPI writer
   src/ir/              typed LLVM IR lexer/parser/AST/verifier
   src/lower_ast.zig    AST -> CIVM lowering

@@ -18,7 +18,7 @@ echo "== runtime unit tests"
 (cd runtime && zig build test --summary all)
 
 echo "== compiler unit tests"
-(cd compiler-zig && zig build test --summary all)
+(cd compiler && zig build test --summary all)
 
 echo "== build runtime"
 (cd runtime && zig build -Doptimize=ReleaseSmall)
@@ -213,7 +213,7 @@ echo "== CIB v2 target/import metadata"
 compile examples/ffi_printf.c -o "$OUT/ffi_printf.cib" --dump-imports >"$OUT/imports.txt"
 grep -Fq "target=x86_64-linux" "$OUT/imports.txt"
 # Linux providers come from the build-time glibc abilists index
-# (compiler-zig/src/libc_defs.zig), so printf must resolve to libc.so.6.
+# (compiler/src/libc_defs.zig), so printf must resolve to libc.so.6.
 grep -Fq "import[plan 0] printf: libc.so.6:printf" "$OUT/imports.txt"
 "$RUNTIME" --dump-target --dump-imports --load-only "$OUT/ffi_printf.cib" >"$OUT/imports-runtime.txt" 2>&1
 grep -Fq "target: x86_64-pc-linux-gnu" "$OUT/imports-runtime.txt"
@@ -221,7 +221,7 @@ grep -Fq "printf: libc.so.6:printf" "$OUT/imports-runtime.txt"
 echo "OK CIPM/CIPI metadata"
 
 # Windows API providers come from the build-time MinGW .def index
-# (compiler-zig/src/win_defs.zig). Compile-only: no Wine needed here, the
+# (compiler/src/win_defs.zig). Compile-only: no Wine needed here, the
 # actual Win64/Win32 execution lives in `make test-winapi`.
 echo "== Windows API import metadata (MinGW defs)"
 compile examples/winapi.c --target x86_64-windows -o "$OUT/winapi64-meta.cib" --dump-imports >"$OUT/winapi64.txt"

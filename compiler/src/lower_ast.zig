@@ -2596,7 +2596,7 @@ fn parseFixture(allocator: Allocator, text: []const u8) !ast.Module {
 // it protects code bytes, plan ordering and sizes without a second frontend.
 //
 // Regenerate after an intentional codegen change (review the diff!):
-//   cd compiler-zig && CINTERP_WRITE_GOLDEN=1 \
+//   cd compiler && CINTERP_WRITE_GOLDEN=1 \
 //     zig test src/lower_ast.zig --test-filter "write golden files"
 
 const GoldenCase = struct {
