@@ -61,6 +61,16 @@ fn expectAttr(attrs: []const ast.Attr, comptime which: std.meta.Tag(ast.Attr.Kin
     return null;
 }
 
+fn findOpaqueCall(attrs: []const ast.Attr, name: []const u8) ?ast.Attr {
+    for (attrs) |attr| {
+        switch (attr.kind) {
+            .opaque_call => |c| if (std.mem.eql(u8, c.name, name)) return attr,
+            else => {},
+        }
+    }
+    return null;
+}
+
 // --------------------------------------------------------------------- module
 
 test "module header, type definitions and globals" {
@@ -315,6 +325,49 @@ test "function parameters: byval, sret, align, noundef, signext, zeroext, vararg
     // `ptr noundef` parameter with no name.
     try std.testing.expect(decl.sig.params[0].name == null);
     try std.testing.expect(expectAttr(decl.sig.params[0].attrs, .noundef) != null);
+}
+
+test "parameter attributes: parenthesised payload (AArch64 alignstack)" {
+    var ctx = Ctx.init();
+    defer ctx.deinit();
+
+    // Shape of the AArch64 IR that used to fail with
+    // `38:60: error: expected '(', found integer literal (found '8')`: the
+    // attribute parser consumed the `(` of `alignstack(8)` and then expected a
+    // second one. `deref` is valueless, `nofpclass(...)` carries a list and
+    // unknown `name(...)` attributes must keep their payload without eating the
+    // parameter name that follows.
+    const module = try parseOk(&ctx,
+        \\define double @user(ptr %d) {
+        \\entry:
+        \\  %6 = load [2 x double], ptr %d, align 8
+        \\  %call4 = call double @c_take_d16([2 x double] alignstack(8) %6)
+        \\  ret double %call4
+        \\}
+        \\declare double @c_take_d16([2 x double] alignstack(8))
+        \\declare void @sink(ptr deref alignstack(8) %p, ptr nofpclass(nan inf) %q, ptr futureattr(1, 2) %r)
+    );
+
+    const call = module.functions[0].blocks[0].instructions[1].op.call;
+    try std.testing.expectEqual(@as(usize, 1), call.args.len);
+    try std.testing.expectEqualStrings("(8)", findOpaqueCall(call.args[0].attrs, "alignstack").?.kind.opaque_call.raw);
+    // The argument value survived the attribute payload.
+    try std.testing.expectEqual(ast.Value.local, tag(ast.Value, call.args[0].val));
+
+    const decl = module.findDecl("c_take_d16").?;
+    try std.testing.expectEqualStrings("(8)", findOpaqueCall(decl.sig.params[0].attrs, "alignstack").?.kind.opaque_call.raw);
+
+    const sink = module.findDecl("sink").?;
+    try std.testing.expectEqual(@as(usize, 3), sink.sig.params.len);
+    // Valueless attribute consumes only its word.
+    try std.testing.expectEqualStrings("deref", expectAttr(sink.sig.params[0].attrs, .opaque_).?.kind.opaque_);
+    try std.testing.expectEqualStrings("(8)", findOpaqueCall(sink.sig.params[0].attrs, "alignstack").?.kind.opaque_call.raw);
+    try std.testing.expectEqualStrings("(nan inf)", findOpaqueCall(sink.sig.params[1].attrs, "nofpclass").?.kind.opaque_call.raw);
+    // Unknown `word(...)` attribute is skipped verbatim.
+    try std.testing.expectEqualStrings("(1, 2)", findOpaqueCall(sink.sig.params[2].attrs, "futureattr").?.kind.opaque_call.raw);
+    try std.testing.expectEqualStrings("p", sink.sig.params[0].name.?.name);
+    try std.testing.expectEqualStrings("q", sink.sig.params[1].name.?.name);
+    try std.testing.expectEqualStrings("r", sink.sig.params[2].name.?.name);
 }
 
 // --------------------------------------------------------------- instructions

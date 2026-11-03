@@ -131,3 +131,50 @@ test "plan validation rejects bad ABI locations" {
     arg_locs[0].offset = 250;
     try std.testing.expectError(error.BadPlan, platform.validate(plan));
 }
+
+test "Win32 decorated names retry the PE export spelling" {
+    var out: [vm.MAX_SYMBOL_CANDIDATES][]const u8 = undefined;
+
+    // stdcall: the PE export keeps `@N` but drops the stdcall leading underscore.
+    var count = vm.symbolCandidates("\\01_c_std_add3@12", true, &out);
+    try std.testing.expectEqual(@as(usize, 3), count);
+    try std.testing.expectEqualStrings("\\01_c_std_add3@12", out[0]);
+    try std.testing.expectEqualStrings("_c_std_add3@12", out[1]);
+    try std.testing.expectEqualStrings("c_std_add3@12", out[2]);
+
+    // fastcall: the export is the asm name without the escape.
+    count = vm.symbolCandidates("\\01@fast_add@12", true, &out);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqualStrings("@fast_add@12", out[1]);
+
+    // A raw control byte, for a frontend that does not escape it.
+    count = vm.symbolCandidates("\x01_fast@8", true, &out);
+    try std.testing.expectEqual(@as(usize, 3), count);
+    try std.testing.expectEqualStrings("_fast@8", out[1]);
+    try std.testing.expectEqualStrings("fast@8", out[2]);
+
+    // Plain and underscored names keep working everywhere.
+    count = vm.symbolCandidates("printf", true, &out);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    count = vm.symbolCandidates("_exit", false, &out);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqualStrings("_exit", out[0]);
+    try std.testing.expectEqualStrings("exit", out[1]);
+
+    // Outside Windows the escape is part of the name: only the underscore retry applies.
+    count = vm.symbolCandidates("\\01_c_std_add3@12", false, &out);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqualStrings("\\01_c_std_add3@12", out[0]);
+}
+
+test "Win32 decoration selects the i686 calling convention" {
+    try std.testing.expectEqual(@as(u8, 0), vm.win32ConvFromName("printf"));
+    try std.testing.expectEqual(@as(u8, 1), vm.win32ConvFromName("\\01_c_std_add3@12"));
+    try std.testing.expectEqual(@as(u8, 1), vm.win32ConvFromName("_c_std_add3@12"));
+    try std.testing.expectEqual(@as(u8, 1), vm.win32ConvFromName("c_std_add3@12"));
+    try std.testing.expectEqual(@as(u8, 2), vm.win32ConvFromName("\\01@fast_add@12"));
+    try std.testing.expectEqual(@as(u8, 2), vm.win32ConvFromName("@fast_add@12"));
+    // A `@` that is not a trailing byte count is not a decoration.
+    try std.testing.expectEqual(@as(u8, 0), vm.win32ConvFromName("@fast_add"));
+    try std.testing.expectEqual(@as(u8, 0), vm.win32ConvFromName("names@sys"));
+}

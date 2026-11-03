@@ -72,6 +72,51 @@ fn renderType(allocator: Allocator, ty: *const ast.Type) ![]const u8 {
     return list.toOwnedSlice();
 }
 
+/// Render a type for ABI plan construction.
+///
+/// `abi.zig` classifies a plan from the rendered spelling alone (it has no
+/// access to the module's type table), so named aggregates are expanded to
+/// their literal body here: `%struct.D16` becomes `{ double, double }` and
+/// `[2 x %struct.D16]` becomes `[2 x { double, double }]`. The canonical IR
+/// spelling (`renderType`) is still what the function metadata records, so
+/// emitted CIBs keep their previous type strings.
+fn renderPlanType(allocator: Allocator, layout: *const Layout, ty: *const ast.Type) ![]const u8 {
+    return renderPlanTypeDepth(allocator, layout, ty, 0);
+}
+
+fn renderPlanTypeDepth(allocator: Allocator, layout: *const Layout, ty: *const ast.Type, depth: u32) ![]const u8 {
+    if (depth > 32) return error.BadType;
+    switch (ty.*) {
+        .named => |n| {
+            // An unknown or opaque name keeps its `%name` spelling; `abi.zig`
+            // then reports UnsupportedFfi instead of misclassifying it.
+            const target = layout.named.get(n.name) orelse return renderType(allocator, ty);
+            return renderPlanTypeDepth(allocator, layout, target, depth + 1);
+        },
+        .struct_ => |s| {
+            if (s.is_opaque) return renderType(allocator, ty);
+            var list = std.ArrayList(u8).init(allocator);
+            errdefer list.deinit();
+            try list.appendSlice(if (s.is_packed) "<{" else "{");
+            for (s.fields, 0..) |field, i| {
+                try list.appendSlice(if (i == 0) " " else ", ");
+                try list.appendSlice(try renderPlanTypeDepth(allocator, layout, field, depth + 1));
+            }
+            try list.appendSlice(if (s.is_packed) " }>" else " }");
+            return list.toOwnedSlice();
+        },
+        .array => |a| {
+            var list = std.ArrayList(u8).init(allocator);
+            errdefer list.deinit();
+            try list.writer().print("[{d} x ", .{a.count});
+            try list.appendSlice(try renderPlanTypeDepth(allocator, layout, a.elem, depth + 1));
+            try list.append(']');
+            return list.toOwnedSlice();
+        },
+        else => return renderType(allocator, ty),
+    }
+}
+
 /// Value of an integer literal as an `i64` when representable. Mirrors the
 /// legacy `parseI64` domain (decimal and `0x` spellings up to i64 range) and
 /// additionally accepts u64-range literals via a bit cast.
@@ -1186,6 +1231,11 @@ const Lowerer = struct {
     fn typeStoreSize(self: *Lowerer, ty: *const ast.Type) !u32 {
         return self.ctx.layout.storeSize(ty);
     }
+    /// Plan spelling: named aggregates are expanded so the ABI classifier can
+    /// see their members (see `renderPlanType`).
+    fn planType(self: *Lowerer, ty: *const ast.Type) ![]const u8 {
+        return renderPlanType(self.allocator, &self.ctx.layout, ty);
+    }
 
     // ------------------------------------------------------------ control flow
 
@@ -1989,7 +2039,7 @@ const Lowerer = struct {
         var sret_idx: ?usize = null;
         var sret_size: u16 = 0;
         for (call.args, 0..) |arg, arg_index| {
-            try plan_types.append(try renderType(self.allocator, arg.ty));
+            try plan_types.append(try self.planType(arg.ty));
             if (byvalType(arg.attrs)) |bt| {
                 byval_sizes[arg_index] = @intCast(try self.typeSize(bt));
             }
@@ -2007,7 +2057,7 @@ const Lowerer = struct {
         }
         try self.emitValue(call.callee.indirect);
 
-        const plan_ret = if (sret_idx != null) "void" else try renderType(self.allocator, call.ret);
+        const plan_ret = if (sret_idx != null) "void" else try self.planType(call.ret);
         const plan = try abi.buildPlanForAbi(
             self.allocator,
             self.ctx.abi,
@@ -2042,7 +2092,7 @@ const Lowerer = struct {
         var sret_idx: ?usize = null;
         var sret_size: u16 = 0;
         for (call.args, 0..) |arg, arg_index| {
-            try plan_types.append(try renderType(self.allocator, arg.ty));
+            try plan_types.append(try self.planType(arg.ty));
             if (byvalType(arg.attrs)) |bt| {
                 byval_sizes[arg_index] = @intCast(try self.typeSize(bt));
             }
@@ -2056,7 +2106,7 @@ const Lowerer = struct {
             const decl = self.ctx.decls.get(name) orelse break :blk false;
             break :blk decl.sig.is_varargs;
         };
-        const plan_ret = if (sret_idx != null) "void" else try renderType(self.allocator, call.ret);
+        const plan_ret = if (sret_idx != null) "void" else try self.planType(call.ret);
 
         var call_name = name;
         const atexit_shim = eql(name, "atexit");
@@ -2142,7 +2192,7 @@ const Lowerer = struct {
         var sret_size: u16 = 0;
         var plan_types = std.ArrayList([]const u8).init(self.allocator);
         for (params, 0..) |param, param_index| {
-            try plan_types.append(try renderType(self.allocator, param.ty));
+            try plan_types.append(try self.planType(param.ty));
             if (byvalType(param.attrs)) |bt| {
                 byval_sizes[param_index] = @intCast(try self.typeSize(bt));
             }
@@ -2152,7 +2202,7 @@ const Lowerer = struct {
             }
         }
         const callee = &self.ctx.module.functions[func_index];
-        const plan_ret = if (sret_idx != null) "void" else try renderType(self.allocator, callee.sig.ret);
+        const plan_ret = if (sret_idx != null) "void" else try self.planType(callee.sig.ret);
         const plan_name = try std.fmt.allocPrint(self.allocator, "callback:{s}", .{key});
         const plan = try abi.buildPlanForAbi(
             self.allocator,
@@ -2972,6 +3022,81 @@ test "call result is kept when the callee name ends in null" {
     try testing.expect(std.mem.indexOf(u8, main_func.code.items, &.{ op.OP_CALL, 1, 0 }) != null);
 
     try expectGolden(allocator, goldenCase("null_suffix_callee"));
+}
+
+/// AArch64 IR for a call that returns a named aggregate and forwards another
+/// one as an argument (the shape clang emits for `D16`).
+const aapcs64_named_struct_ir =
+    \\%struct.D16 = type { double, double }
+    \\
+    \\define i32 @main() {
+    \\entry:
+    \\  %call = call %struct.D16 @c_make_d16(double 1.500000e+00, double 2.500000e+00)
+    \\  %a = extractvalue %struct.D16 %call, 0
+    \\  %b = extractvalue %struct.D16 %call, 1
+    \\  %s = fadd double %a, %b
+    \\  %t = call double @c_take_d16(%struct.D16 %call)
+    \\  %u = fadd double %s, %t
+    \\  %r = fptosi double %u to i32
+    \\  ret i32 %r
+    \\}
+    \\
+    \\declare %struct.D16 @c_make_d16(double, double)
+    \\
+    \\declare double @c_take_d16(%struct.D16)
+    \\
+;
+
+test "AAPCS64 plans expand named structs to their literal body" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator, aapcs64_named_struct_ir);
+    const result = try compile(allocator, &module, 4, 8);
+
+    // Function metadata keeps the canonical IR spelling.
+    try testing.expectEqualStrings("i32", result.functions[0].ret);
+    try testing.expectEqualStrings("main", result.functions[0].name);
+
+    try testing.expectEqual(@as(usize, 2), result.plans.len);
+
+    // `%struct.D16` is expanded to `{ double, double }`: an HFA returning in
+    // v0/v1 and taking its two scalar doubles in v0/v1.
+    const make = result.plans[0];
+    try testing.expectEqualStrings("c_make_d16", make.name);
+    try testing.expectEqual(@as(usize, 2), make.ret_locs.len);
+    try testing.expectEqual(@as(u8, 6), make.ret_locs[0].kind);
+    try testing.expectEqual(@as(u8, 7), make.ret_locs[1].kind);
+    try testing.expectEqual(@as(u16, 16), make.ret_size);
+    try testing.expectEqual(@as(u8, 1), make.args[0].locs[0].kind);
+    try testing.expectEqual(@as(u8, 1), make.args[1].locs[0].kind);
+
+    // The `%struct.D16` argument is expanded too: one two-register HFA.
+    const take = result.plans[1];
+    try testing.expectEqualStrings("c_take_d16", take.name);
+    try testing.expect(take.args[0].is_struct);
+    try testing.expectEqual(@as(u16, 16), take.args[0].size);
+    try testing.expectEqual(@as(usize, 2), take.args[0].locs.len);
+    try testing.expectEqual(@as(u8, 1), take.args[0].locs[0].kind);
+    try testing.expectEqual(@as(u16, 0), take.args[0].locs[0].index);
+    try testing.expectEqual(@as(u16, 1), take.args[0].locs[1].index);
+
+    // A name the module never defines stays unexpanded and is reported as an
+    // unsupported ABI shape instead of being misclassified.
+    var unknown = try parseFixture(allocator,
+        \\%struct.Unknown = type opaque
+        \\
+        \\declare i32 @c_take_unknown(%struct.Unknown)
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  %r = call i32 @c_take_unknown(%struct.Unknown zeroinitializer)
+        \\  ret i32 %r
+        \\}
+        \\
+    );
+    try testing.expectError(error.UnsupportedFfi, compile(allocator, &unknown, 4, 8));
 }
 
 test "write golden files" {

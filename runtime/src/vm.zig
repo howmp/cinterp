@@ -317,6 +317,81 @@ fn compareFloats(a: f64, b: f64, pred: u8) bool {
     };
 }
 
+/// Upper bound on the spellings `symbolCandidates` can produce for one name.
+pub const MAX_SYMBOL_CANDIDATES: usize = 4;
+
+/// Fill `out` with the spellings to try for a native external symbol, in
+/// priority order, and return how many were written.
+///
+/// Every candidate is a suffix of `name` (or `name` itself), so the caller can
+/// null-terminate the slices as they are without allocating.
+///
+/// Win32 stdcall/fastcall names reach the runtime in the spelling the IR
+/// frontend printed: the LLVM asm name keeps the textual `\01` marker
+/// (`\01_c_std_add3@12`, `\01@fast_add@12`), and MinGW's PE export table then
+/// drops the stdcall leading underscore while keeping the `@N` byte count
+/// (`c_std_add3@12`, `@fast_add@12`). Lookup therefore retries the name without
+/// the escape marker and without the leading underscore; the `@N` suffix is
+/// preserved because it is part of the export name. `decorated` enables the
+/// Win32 escape stripping; the leading-underscore retry applies on every
+/// platform so `_snprintf`/`snprintf` style aliases stay reachable.
+pub fn symbolCandidates(name: []const u8, decorated: bool, out: *[MAX_SYMBOL_CANDIDATES][]const u8) usize {
+    var count = addCandidate(out, 0, name);
+    var bare = name;
+    if (decorated) {
+        const undecorated = stripSymbolEscape(name);
+        if (undecorated.len != name.len) {
+            bare = undecorated;
+            count = addCandidate(out, count, undecorated);
+        }
+    }
+    if (bare.len > 1 and bare[0] == '_') count = addCandidate(out, count, bare[1..]);
+    return count;
+}
+
+/// Drop the Win32 decoration prefix the IR frontend prints: the textual `\01`
+/// escape (the frontend escapes control bytes as `\XX`) and any raw control
+/// byte. Returns a suffix of `name`; nothing is copied.
+fn stripSymbolEscape(name: []const u8) []const u8 {
+    var value = name;
+    if (value.len >= 3 and value[0] == '\\' and std.ascii.isHex(value[1]) and std.ascii.isHex(value[2]))
+        value = value[3..];
+    while (value.len > 0 and (value[0] == 1 or value[0] == 0x1f)) value = value[1..];
+    return value;
+}
+
+fn isByteCount(text: []const u8) bool {
+    if (text.len == 0) return false;
+    for (text) |char| {
+        if (!std.ascii.isDigit(char)) return false;
+    }
+    return true;
+}
+
+/// i686 Windows calling convention carried by a decorated external name:
+/// 2 = fastcall (`@name@N`), 1 = stdcall (`_name@N`, or the MinGW export
+/// spelling `name@N`), 0 = cdecl/unknown.
+///
+/// The COFF decoration is the only ABI marker an i686 import carries, and the
+/// compiler fills `CallPlan.conv` only for symbols it indexes from the MinGW
+/// `.def` tables, so the runtime recovers the convention from the name rather
+/// than special-casing individual symbols.
+pub fn win32ConvFromName(name: []const u8) u8 {
+    const bare = stripSymbolEscape(name);
+    const at = std.mem.lastIndexOfScalar(u8, bare, '@') orelse return 0;
+    if (at == 0 or !isByteCount(bare[at + 1 ..])) return 0;
+    return if (bare[0] == '@') 2 else 1;
+}
+
+fn addCandidate(out: *[MAX_SYMBOL_CANDIDATES][]const u8, count: usize, value: []const u8) usize {
+    if (value.len == 0 or count == out.len) return count;
+    for (out[0..count]) |existing| {
+        if (existing.ptr == value.ptr and existing.len == value.len) return count;
+    }
+    out[count] = value;
+    return count + 1;
+}
+
 pub const VM = struct {
     module_buf: []u8 = &.{},
     module_len: usize = 0,
@@ -548,8 +623,15 @@ pub const VM = struct {
         return self.default_handles[0..self.default_count];
     }
 
-    fn searchSymbol(self: *VM, cname: [*:0]const u8) ?*const anyopaque {
-        if (native.symbol(null, cname)) |sym| return sym;
+    /// Search tiers in order: process namespace, explicit `--lib` handles,
+    /// platform default libraries. `.libraries` stops after the `--lib`
+    /// handles, for callers where they are the user's override.
+    const SearchTier = enum { libraries, all };
+
+    fn searchSymbolAt(self: *VM, cname: [*:0]const u8, tier: SearchTier) ?*const anyopaque {
+        if (tier == .all) {
+            if (native.symbol(null, cname)) |sym| return sym;
+        }
         var li: usize = self.library_count;
         while (li > 0) {
             li -= 1;
@@ -557,10 +639,32 @@ pub const VM = struct {
                 if (native.symbol(handle, cname)) |sym| return sym;
             }
         }
-        for (self.defaultHandles()) |maybe_handle| {
-            if (maybe_handle) |handle| {
-                if (native.symbol(handle, cname)) |sym| return sym;
+        if (tier == .all) {
+            for (self.defaultHandles()) |maybe_handle| {
+                if (maybe_handle) |handle| {
+                    if (native.symbol(handle, cname)) |sym| return sym;
+                }
             }
+        }
+        return null;
+    }
+
+    /// Resolve `name` against the requested tiers, retrying the spellings
+    /// `symbolCandidates` derives (Win32 stdcall/fastcall exports, the stdcall
+    /// leading underscore). Keeping one entry point makes the fallback apply to
+    /// `--lib` handles, the process namespace and the default libraries alike.
+    /// `name` must not point into `symbol_buf`, which holds the candidates.
+    fn searchSymbol(self: *VM, name: []const u8, tier: SearchTier) ?*const anyopaque {
+        var candidates: [MAX_SYMBOL_CANDIDATES][]const u8 = undefined;
+        const count = symbolCandidates(name, platform.os_id == 2, &candidates);
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            const candidate = candidates[i];
+            if (candidate.len >= self.symbol_buf.len) continue;
+            @memcpy(self.symbol_buf[0..candidate.len], candidate);
+            self.symbol_buf[candidate.len] = 0;
+            const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
+            if (self.searchSymbolAt(cname, tier)) |sym| return sym;
         }
         return null;
     }
@@ -604,18 +708,8 @@ pub const VM = struct {
 
     fn loadImportedData(self: *VM, entry_index: usize, entry: *const link_loader.ImportEntry) !?*const anyopaque {
         const name = entry.name[0..entry.name_len];
-        var li: usize = self.library_count;
-        while (li > 0) {
-            li -= 1;
-            if (self.libraries[li]) |handle| {
-                if (name.len < self.symbol_buf.len) {
-                    @memcpy(self.symbol_buf[0..name.len], name);
-                    self.symbol_buf[name.len] = 0;
-                    const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
-                    if (native.symbol(handle, cname)) |sym| return sym;
-                }
-            }
-        }
+        // Explicit --lib libraries first, including the decorated spellings.
+        if (self.searchSymbol(name, .libraries)) |sym| return sym;
         var pi: usize = 0;
         while (pi < entry.provider_count) : (pi += 1) {
             const provider = &entry.providers[pi];
@@ -631,12 +725,7 @@ pub const VM = struct {
             if (native.symbol(handle, cname)) |sym| return sym;
         }
         // Fallback: process/global namespace and CRT.
-        if (name.len < self.symbol_buf.len) {
-            @memcpy(self.symbol_buf[0..name.len], name);
-            self.symbol_buf[name.len] = 0;
-            const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
-            if (self.searchSymbol(cname)) |sym| return sym;
-        }
+        if (self.searchSymbol(name, .all)) |sym| return sym;
         return null;
     }
 
@@ -669,39 +758,18 @@ pub const VM = struct {
 
     fn resolveNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
         if (name.len >= self.symbol_buf.len) return error.SymbolTooLong;
-        @memcpy(self.symbol_buf[0..name.len], name);
-        self.symbol_buf[name.len] = 0;
-        const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
 
         if (self.imports.indexOfPlan(plan_index)) |entry_index| {
             const entry = &self.imports.entries[entry_index];
             // Explicit --lib libraries are the user's override and win over CIB providers.
             if ((entry.flags & 0x8) != 0) {
-                var li: usize = self.library_count;
-                while (li > 0) {
-                    li -= 1;
-                    if (self.libraries[li]) |handle| {
-                        if (native.symbol(handle, cname)) |sym| return sym;
-                    }
-                }
+                if (self.searchSymbol(name, .libraries)) |sym| return sym;
             }
             if (try self.loadImported(plan_index, entry_index, entry)) |sym| return sym;
             if ((entry.flags & 0x4) == 0) return error.SymbolNotFound;
-            // loadImported reuses symbol_buf; restore the logical name for fallback.
-            @memcpy(self.symbol_buf[0..name.len], name);
-            self.symbol_buf[name.len] = 0;
         }
 
-        if (self.searchSymbol(cname)) |sym| return sym;
-        if (name.len > 1 and name[0] == '_') {
-            const bare = name[1..];
-            if (bare.len < self.symbol_buf.len) {
-                @memcpy(self.symbol_buf[0..bare.len], bare);
-                self.symbol_buf[bare.len] = 0;
-                const bare_c: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
-                if (self.searchSymbol(bare_c)) |sym| return sym;
-            }
-        }
+        if (self.searchSymbol(name, .all)) |sym| return sym;
         return error.SymbolNotFound;
     }
 
@@ -754,7 +822,12 @@ pub const VM = struct {
             const loc = plan.ret_locs[0];
             const off: usize = @intCast(loc.offset);
             const n: usize = @intCast(loc.size);
-            if (loc.kind == .st0 or n > 8) {
+            // A result that fits in one machine word travels as the value
+            // itself; wide results (an `st0`/`long double` return, aggregates)
+            // stay in `ret_buf` and are surfaced as a pointer the bytecode
+            // loads from. Note `st0` is also the i686 return file for narrow
+            // `float`/`double` values, which are plain words.
+            if (n > 8) {
                 const rs: usize = @intCast(plan.ret_size);
                 if (rs > self.ret_buf.len) return error.ReturnTooLarge;
                 @memcpy(self.ret_buf[0..rs], ret_block[off..][0..rs]);
@@ -1474,9 +1547,17 @@ pub const VM = struct {
                     const store = self.plan_store orelse return error.NoPlans;
                     const i: usize = idx;
                     const p = store.planAt(i) orelse return error.BadPlan;
-                    const plan = store.callPlan(p);
+                    var plan = store.callPlan(p);
                     const n: usize = p.name_len;
-                    const target = try self.resolveNative(idx, p.name[0..n]);
+                    const name = p.name[0..n];
+                    // i686 carries its calling convention in the export
+                    // decoration (`_name@N`, `@name@N`); the plan only knows it
+                    // for symbols the compiler indexes from the MinGW `.def`s.
+                    // Varargs calls stay cdecl: stdcall/fastcall cannot describe
+                    // a callee that does not know the argument count.
+                    if (plan.conv == 0 and op == OP_CALL_NATIVE and platform.abi_kind == .win32)
+                        plan.conv = win32ConvFromName(name);
+                    const target = try self.resolveNative(idx, name);
                     self.recordNativeTarget(@intFromPtr(target));
                     try self.invokeFfi(plan, target);
                 },
@@ -1957,7 +2038,7 @@ pub const VM = struct {
                         }
                         ip = 0;
                     } else {
-                            const store = self.plan_store orelse return error.NoPlans;
+                        const store = self.plan_store orelse return error.NoPlans;
                         const p = store.planAt(plan_idx) orelse return error.BadPlan;
                         const plan = store.callPlan(p);
                         const target_addr = addressFromBits(tag.i);

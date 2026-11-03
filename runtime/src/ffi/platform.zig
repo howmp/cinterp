@@ -226,16 +226,75 @@ fn configureWin64(frame: *Win64Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, st
     if (plan.sret) frame.sret = sret_ptr orelse @ptrCast(ret_buf);
 }
 
+/// i686 `__fastcall` takes its first two 4-byte scalar arguments in ECX and
+/// EDX; aggregates, wider values and the hidden sret pointer stay on the stack,
+/// which the callee pops. Returns the register slot for `arg`, or null when the
+/// argument belongs to the stack.
+fn win32FastSlot(arg: abi.ArgPlan, gpr: *u8) ?u8 {
+    if (gpr.* >= 2 or arg.is_struct or arg.size != 4 or arg.locs.len != 1) return null;
+    const slot = gpr.*;
+    gpr.* += 1;
+    return slot;
+}
+
+const Win32FastLayout = struct {
+    stack_size: u32 = 0,
+    sret_offset: u32 = 0,
+};
+
+/// Bytes `arg` occupies in the outgoing stack area, on a 4-byte grid.
+fn win32StackBytes(arg: abi.ArgPlan) u32 {
+    var total: u32 = 0;
+    for (arg.locs) |loc| total += loc.size;
+    return std.mem.alignForward(u32, total, 4);
+}
+
+/// The outgoing argument area `__fastcall` needs: everything `win32FastSlot`
+/// leaves out, laid out in argument order on a 4-byte grid.
+fn win32FastLayout(plan: abi.CallPlan) Win32FastLayout {
+    var layout = Win32FastLayout{};
+    var gpr: u8 = 0;
+    for (plan.args) |arg| {
+        const loc = arg.locs[0];
+        if (loc.kind == .sret) {
+            layout.sret_offset = layout.stack_size;
+            layout.stack_size += 4;
+            continue;
+        }
+        if (win32FastSlot(arg, &gpr) != null) continue;
+        layout.stack_size += win32StackBytes(arg);
+    }
+    return layout;
+}
+
 fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
-    _ = ret_buf;
-    _ = sret_ptr;
     frame.stack = stack_buf;
-    frame.stack_size = plan.stack_size;
+    frame.stack_size = if (plan.conv == 2) win32FastLayout(plan).stack_size else plan.stack_size;
     frame.conv = plan.conv;
     frame.ret_x87 = 0;
     for (plan.ret_locs) |loc| {
-        if (loc.kind == .xmm0) frame.ret_x87 = 1;
-        if (loc.kind == .st0) frame.ret_x87 = 2;
+        // i686 returns every floating point value in ST0. A narrow loc
+        // (`float`/`double`, <= 8 bytes) carries an f64 image in the frame,
+        // while `long double` keeps its 10-byte x87 image, so the asm stub has
+        // to know which form the plan expects.
+        switch (loc.kind) {
+            .xmm0 => frame.ret_x87 = 1,
+            .st0 => frame.ret_x87 = if (loc.size > 8) 2 else 1,
+            else => {},
+        }
+    }
+    if (plan.sret) {
+        // The hidden return pointer is an ordinary stack argument on i686; the
+        // `sret` loc's `index` is its offset in the outgoing argument area
+        // (`__fastcall` re-lays the area, so its slot moves with it).
+        const ptr: u32 = @truncate(if (sret_ptr) |p| @intFromPtr(p) else @intFromPtr(ret_buf));
+        for (plan.args) |arg| {
+            for (arg.locs) |loc| {
+                if (loc.kind != .sret) continue;
+                const idx: usize = if (plan.conv == 2) win32FastLayout(plan).sret_offset else @intCast(loc.index);
+                @as(*align(1) u32, @ptrCast(&stack_buf[idx])).* = ptr;
+            }
+        }
     }
 }
 
@@ -301,6 +360,7 @@ fn marshalWin64(frame: *Win64Frame, plan: abi.CallPlan, args: *const [4096]u8, s
 }
 
 fn marshalWin32(frame: *Win32Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
+    if (plan.conv == 2) return marshalWin32Fast(frame, plan, args, stack_buf);
     for (plan.args) |arg| {
         for (arg.locs) |loc| {
             const off: usize = @intCast(loc.offset);
@@ -315,13 +375,42 @@ fn marshalWin32(frame: *Win32Frame, plan: abi.CallPlan, args: *const [4096]u8, s
                     @memcpy(stack_buf[idx..][0..n], args[off..][0..n]);
                 },
                 .sret => {
-                    const idx: usize = @intCast(loc.index);
-                    const ptr = readU64(args, off);
-                    @as(*align(1) u32, @ptrCast(&stack_buf[idx])).* = @truncate(ptr);
+                    // `configureWin32` already stored the caller's pointer at
+                    // the stack slot; the arg block never holds it.
                 },
                 else => unreachable,
             }
         }
+    }
+}
+
+/// `__fastcall` marshalling: `win32FastSlot` arguments load ECX/EDX and the
+/// rest fill the outgoing stack area `win32FastLayout` sized, in argument order.
+fn marshalWin32Fast(frame: *Win32Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
+    var stack_off: usize = 0;
+    var gpr: u8 = 0;
+    for (plan.args) |arg| {
+        if (arg.locs[0].kind == .sret) {
+            // `configureWin32` already stored the caller's pointer at the slot.
+            stack_off += 4;
+            continue;
+        }
+        if (win32FastSlot(arg, &gpr)) |slot| {
+            const off: usize = @intCast(arg.locs[0].offset);
+            const n: usize = @intCast(arg.locs[0].size);
+            var word: [4]u8 = [_]u8{0} ** 4;
+            @memcpy(word[0..@min(n, 4)], args[off..][0..@min(n, 4)]);
+            const value = std.mem.readInt(u32, &word, .little);
+            if (slot == 0) frame.eax = value else frame.edx = value;
+            continue;
+        }
+        for (arg.locs) |loc| {
+            const off: usize = @intCast(loc.offset);
+            const n: usize = @intCast(loc.size);
+            @memcpy(stack_buf[stack_off..][0..n], args[off..][0..n]);
+            stack_off += n;
+        }
+        stack_off = std.mem.alignForward(usize, stack_off, 4);
     }
 }
 
@@ -407,7 +496,19 @@ fn readRetWin32(frame: *const Win32Frame, plan: abi.CallPlan, ret: *[4096]u8) vo
                     @memcpy(ret[off..][0..@min(n, 8)], std.mem.asBytes(&frame.st0)[0..@min(n, 8)]);
                 }
             },
-            .st0 => @memcpy(ret[off..][0..n], frame.ret_st0_f80[0..n]),
+            .st0 => {
+                // `float`/`double` results arrive as an f64 image in `st0`
+                // (see `configureWin32`); `long double` keeps the raw x87
+                // image the asm stub stored.
+                if (n == 4) {
+                    const f: f32 = @floatCast(frame.st0);
+                    @memcpy(ret[off..][0..4], std.mem.asBytes(&f)[0..4]);
+                } else if (n <= 8) {
+                    @memcpy(ret[off..][0..n], std.mem.asBytes(&frame.st0)[0..n]);
+                } else {
+                    @memcpy(ret[off..][0..n], frame.ret_st0_f80[0..n]);
+                }
+            },
             else => {},
         }
     }
@@ -712,6 +813,20 @@ fn callbackWriteWin32(frame: *Win32CbFrame, loc: abi.Loc, bits: u64) void {
                 frame.ret_st0 = @bitCast(bits);
             }
             frame.ret_x87 = 1;
+        },
+        .st0 => {
+            // Narrow `float`/`double` results travel back through ST0 exactly
+            // like `xmm0`; a `long double` result is handed over as raw bytes
+            // by `callbackWriteBytes` and keeps the 10-byte x87 image.
+            if (loc.size <= 8) {
+                if (loc.size == 4) {
+                    const f: f32 = @bitCast(@as(u32, @truncate(bits)));
+                    frame.ret_st0 = @floatCast(f);
+                } else {
+                    frame.ret_st0 = @bitCast(bits);
+                }
+                frame.ret_x87 = 1;
+            }
         },
         else => {},
     }

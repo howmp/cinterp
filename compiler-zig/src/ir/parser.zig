@@ -2332,9 +2332,21 @@ pub const Parser = struct {
             try out.append(.{ .span = tok.span, .kind = kind });
             return true;
         }
-        if (argAttrFromWord(word)) {
+        // A recognised parameterised attribute, or an unknown word directly
+        // followed by `(...)`. In both cases the word alone is consumed first
+        // and the payload keeps its parentheses verbatim. An attribute word
+        // without a payload is valueless (e.g. `deref`) and must only consume
+        // the word, never the value that follows it.
+        if (argAttrFromWord(word) or
+            (self.checkNext(.l_paren) and !startsValueWithParens(word) and !startsTypeWord(word)))
+        {
             try self.advance();
-            _ = try self.expect(.l_paren, "'(' after attribute");
+            if (!self.check(.l_paren)) {
+                try out.append(.{ .span = tok.span, .kind = .{ .opaque_ = word } });
+                return true;
+            }
+            // `skipBalancedRaw` consumes the opening `(` itself; eating it here
+            // first made every `attr(payload)` fail on the payload's first token.
             const raw = try self.skipBalancedRaw(.l_paren, .r_paren);
             try out.append(.{ .span = tok.span, .kind = .{ .opaque_call = .{ .name = word, .raw = raw } } });
             return true;
@@ -2539,7 +2551,7 @@ fn simpleAttrFromWord(word: []const u8) ?ast.Attr.Kind {
         .{ "swifterror", ast.Attr.Kind{ .opaque_ = "swifterror" } },
         .{ "allocalign", ast.Attr.Kind{ .opaque_ = "allocalign" } },
         .{ "allocptr", ast.Attr.Kind{ .opaque_ = "allocptr" } },
-        .{ "nofpclass", ast.Attr.Kind{ .opaque_ = "nofpclass" } },
+        .{ "deref", ast.Attr.Kind{ .opaque_ = "deref" } },
         .{ "immarg", ast.Attr.Kind{ .immarg = {} } },
         .{ "readonly", ast.Attr.Kind{ .readonly = {} } },
         .{ "readnone", ast.Attr.Kind{ .readnone = {} } },
@@ -2562,8 +2574,30 @@ fn simpleAttrFromWord(word: []const u8) ?ast.Attr.Kind {
 fn argAttrFromWord(word: []const u8) bool {
     const table = [_][]const u8{
         "captures", "range", "nofpclass", "allocsize", "alignstack",
-        "allockind", "initializes", "annotate", "memory", "deref",
+        "allockind", "initializes", "annotate", "memory",
     };
+    for (table) |entry| {
+        if (std.mem.eql(u8, word, entry)) return true;
+    }
+    return false;
+}
+
+/// Words that may start a *value* which is followed by `(...)`: constant
+/// expressions, `blockaddress` and inline `asm`. They must not be mistaken for
+/// parameterised attributes while scanning a value's attribute list.
+fn startsValueWithParens(word: []const u8) bool {
+    return isConstExprWord(word) or
+        std.mem.eql(u8, word, "blockaddress") or
+        std.mem.eql(u8, word, "asm");
+}
+
+/// Words that may start a type. `call i32 (ptr, ...) @f` spells the callee's
+/// function type right after the return type, so a type word followed by `(`
+/// is a type, never an attribute.
+fn startsTypeWord(word: []const u8) bool {
+    if (floatKindFromWord(word) != null) return true;
+    if (word.len > 1 and word[0] == 'i' and allDigits(word[1..])) return true;
+    const table = [_][]const u8{ "void", "metadata", "token", "label", "opaque", "ptr" };
     for (table) |entry| {
         if (std.mem.eql(u8, word, entry)) return true;
     }
