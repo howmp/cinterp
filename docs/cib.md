@@ -142,7 +142,9 @@ provider[]:
 - `plan_index` 绑定 CIPL；`0xffff` 表示 data entry，`ADDR_EXTERN` 使用 entry 索引解析地址。同一符号多次调用可以有多条 entry。
 - provider 按顺序尝试；成功后缓存库 handle 和符号地址。
 - 自动生成的 provider 只能是系统库名/allowlist；运行时会拒绝包含 `/`、`\` 或 `:` 的自动 provider 名，避免 CIB 指定任意路径。显式 `--lib` 仍允许用户路径。
-- 一个 VM 实例同一时间只持有一个包（再次 `load_package` 会整体替换）；CIPI 不提供 CIB-to-CIB 链接/包间导出表，跨包请合并源码后重新生成。
+- 一个 VM 实例同一时间只持有一个包（再次 `load_package` 会整体替换）；一个进程可以用
+  `ci_process_*` 持有多个各自独立的 VM。CIPI 不提供 CIB-to-CIB 链接/包间导出表，
+  跨包请合并源码后重新生成。
 - `arch_mask` 与 `min_os` 在加载时校验；不匹配返回 `ImportArchMismatch` / `ImportUnavailable`。
 - `kind=data` 已支持 `stdout`/`errno` 类 external data：编译器为未知外部全局生成 data entry，运行时按 provider/`--lib` 解析地址；`ordinal` 解析在 Windows 已支持。
 
@@ -224,10 +226,13 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
   2. 对每个 8 字节 chunk 生成 `LOAD_CONST chunk; ADDR_CONST off; STORE_MEM size`
   3. 对 global 指针/函数指针重定位生成 `ADDR_CONST/FUNC_ADDR; ADDR_CONST field; STORE_MEM ptr_size`
 - 因此 `.cib` 中的全局地址是**运行期 VM 内存地址**，不是可重定位文件地址；同一包应在兼容的运行时进程中执行。
+- 每次 `ci_vm_run*` 都会先清零线性内存/值栈/帧/`setjmp` 目标。`main` 开头的全局安装
+  代码会随每次运行重新执行，因此重复运行 `main` 会重新安装 globals；从非 `main` 入口
+  运行不会执行该安装代码，只能看到清零后的全局区域（已知限制）。
 
 ## 4. Opcode
 
-> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xA2 的全部常量，唯一例外是 `POP`（0x15）/`SWAP`（0x16）——它们只在运行时有解码实现，当前编译器不发出。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。
+> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xA4 的全部常量，唯一例外是 `POP`（0x15）/`SWAP`（0x16）——它们只在运行时有解码实现，当前编译器不发出。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。
 
 栈效果按“先压入的值在下面”描述，例如 `a, b -> result` 表示先压 `a`、再压 `b`，opcode 弹 `b` 再弹 `a`。
 
@@ -288,7 +293,7 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 | 0x66 | `SET_MEM_TOP` | u32 size | 设置 `mem_top` |
 | 0x70 | `CALL_NATIVE` | u16 plan | 按计划调用原生函数 |
 | 0x71 | `CALL_VARARG` | u16 plan | 按计划调用 varargs 原生函数 |
-| 0x72 | `CREATE_CALLBACK` | u16 slot,u16 func,u16 plan | 注册静态 callback slot，压 trampoline 地址 |
+| 0x72 | `CREATE_CALLBACK` | u16 slot,u16 func,u16 plan | 注册自动静态 callback slot（绑定当前 VM，跨 run 复用），压 trampoline 地址 |
 | 0x73 | `F80_CONST` | 10 bytes | x87 80-bit little-endian；压 f80 对象地址 |
 | 0x74-0x77 | `F80_ADD/SUB/MUL/DIV` | — | `a,b -> result`（指针） |
 | 0x78 | `F80_CMP` | pred u8 | f80 比较 |
@@ -323,6 +328,8 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 | 0xA0 | `ALLOCA_DYN_ALIGN` | u8 align | 对齐的动态 alloca（size 在栈顶） |
 | 0xA1 | `CALL_VARIADIC_TYPED` | u16 func,u16 total,per-extra code/size | 内部 varargs 调用，携带 overflow 布局描述 |
 | 0xA2 | `FPCLASS` | u8 kind | `value,mask -> 0/1`；LLVM `is.fpclass`，kind 选择分类、mask 是测试位图 |
+| 0xA3 | `CALLBACK_ACQUIRE` | u16 plan,u16 func | 为 `func`/`plan` 分配一个进程级 trampoline 槽并压入地址；池耗尽时压入 NULL |
+| 0xA4 | `CALLBACK_RELEASE` | — | `ptr -> status`；释放该 VM 拥有的槽，返回 0/`CI_E_BUSY`/负值 |
 
 ### 4.1 浮点谓词
 
@@ -347,6 +354,30 @@ f80/f128 **不是** 8 字节栈值本身：
 - 算术/比较 opcode 读取这些对象地址，结果再分配一个新对象并压地址。
 - `store/load` 对 f80/f128 使用 `MEMCPY`/指针别名语义；全局/内存布局由 C 类型大小决定。
 - FFI 返回 `st0`/多寄存器聚合时，`invokeFfi` 会把结果复制到运行时返回缓冲区并压入地址。
+
+### 4.3 显式 callback acquire/release
+
+`CALLBACK_ACQUIRE`/`CALLBACK_RELEASE` 服务于 `ci_callback_acquire(fn)`/
+`ci_callback_release(fn)` 宏。`cinterp-cc` 会把内嵌的
+`compiler/src/data/cinterp_callbacks.h` 写入临时目录并通过 `zig cc -include` 强制
+包含，因此 CIB 源码不需要 `#include` 或 include path。编译器把
+`__ci_callback_acquire`/`__ci_callback_release` 当作内部 builtin，不生成 CIPI import。
+
+- `CALLBACK_ACQUIRE u16 plan,u16 func`：校验 `func`/`plan` 及其 ABI 后，从进程级
+  **256 个静态 trampoline 槽**中取一个空闲槽，绑定到当前 VM，压入 trampoline 地址；
+  池耗尽时压入 NULL。acquire 的参数必须是直接函数引用（可带 cast），运行期函数指针
+  变量会在编译期被拒绝。
+- `CALLBACK_RELEASE`：弹出 acquire 返回的地址，释放当前 VM 拥有的槽并压入状态：
+  `0` 成功；`CI_E_BUSY` 表示该 callback 仍在 dispatch，槽未释放；负值/`CI_E_INVALID_ARGUMENT`
+  表示该 VM 不拥有此指针或已经释放。
+- 释放后的槽回到可复用集合；释放后的旧指针不得再次调用（可能被新 acquire 复用并进入
+  另一个 VM，属于调用方违约）。没有动态可执行内存，也没有代际检查。
+- VM 销毁或计划重载会退休所有**仍未释放**的槽（自动和显式），已释放的槽不受影响。
+  自动 `OP_CREATE_CALLBACK` 槽在 VM 生命周期内保留并跨重复运行复用，不会每次运行消耗
+  一个新槽。
+- `ci_callback_pool_stats(total, live, free_slots, retired)` 查询池状态；
+  `ci_vm_callback_error(vm)` 记录被跳过的 dispatch（例如另一线程正在运行该 VM 时的
+  `CI_E_BUSY`）。详见 [`multi-cib.md`](multi-cib.md)。
 
 ## 5. CIPL 计划表
 
@@ -546,7 +577,7 @@ xxd -g1 build/hello.cib
 
 ### 7.1 C ABI 错误码
 
-`ci_vm_load_module`/`ci_vm_load_plans`/`ci_vm_load_package`/`ci_vm_load_library`/`ci_vm_run`/`ci_vm_run_args` 返回 `CI_OK`（0）或下列稳定负值。**返回值本身就是类别**：失败时返回对应的 `CI_E_*`；只有 `errorCode` 无法归类的错误才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别，`ci_vm_last_error` 返回具体错误名（如 `BadPackageMagic`）。成功的调用（以及 `ci_vm_clear_error`）清空错误文本与类别；`ci_vm_result` 返回上次成功运行的 `main` 返回值，不是状态码。
+`ci_vm_load_module`/`ci_vm_load_plans`/`ci_vm_load_package`/`ci_vm_load_library`/`ci_vm_run`/`ci_vm_run_args` 返回 `CI_OK`（0）或下列稳定负值。`ci_vm_destroy_ex`、`ci_process_load_package`、`ci_process_unload_package` 和 `ci_process_last_error_code` 也使用同一套 `CI_E_*` 类别。**返回值本身就是类别**：失败时返回对应的 `CI_E_*`；只有 `errorCode` 无法归类的错误才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别，`ci_vm_last_error` 返回具体错误名（如 `BadPackageMagic`）。成功的调用（以及 `ci_vm_clear_error`）清空错误文本与类别；`ci_vm_result` 返回上次成功运行的 `main` 返回值，不是状态码。
 
 | 值 | 名称 | 覆盖的错误名 |
 | ---: | --- | --- |
@@ -558,9 +589,10 @@ xxd -g1 build/hello.cib
 | -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`TooManyPlans`、`TooManyLocs`、`BadLocKind` |
 | -7 | `CI_E_LINK` | `SymbolNotFound`、`LibraryNotFound`、`SymbolTooLong`、`PathTooLong`、`TooManyLibraries`、`TooManyNativeTargets` |
 | -8 | `CI_E_ENTRY` | `EntryNotFound` |
-| -9 | `CI_E_RESOURCE` | `StackOverflow`、`FrameOverflow`、`ReturnTooLarge` |
-| -10 | `CI_E_RUNTIME` | `BadAddress`、`BadOpcode`、`BadFunction`、`BadArgCount`、`BadJump`、`BadCallbackSlot`、`UnsupportedCallback`、`TooManyCallbacks`、`DivisionByZero`、`BadLocal`、`BadLongjmp`、`TooManyJumps`、`TruncatedCode`、`StackUnderflow`、`BadMemorySize`、`NullStruct`、`UnsupportedVaList` |
+| -9 | `CI_E_RESOURCE` | `StackOverflow`、`FrameOverflow`、`ReturnTooLarge`、`ProcessFull`（超过 64 个进程级 VM） |
+| -10 | `CI_E_RUNTIME` | `BadAddress`、`BadOpcode`、`BadFunction`、`BadArgCount`、`BadJump`、`BadCallbackSlot`、`UnsupportedCallback`、`TooManyCallbacks`、`DivisionByZero`、`BadLocal`、`BadLongjmp`、`TooManyJumps`、`TruncatedCode`、`StackUnderflow`、`BadMemorySize`、`NullStruct`、`UnsupportedVaList`、`NestedRun`（同一线程嵌套运行） |
 | -11 | `CI_E_DESTROYED` | `VmDestroyed`（VM 正在销毁时注册/执行 callback） |
+| -12 | `CI_E_BUSY` | `Busy`（另一线程正在执行该 VM；loader/`ci_vm_destroy_ex(CI_DESTROY_TRY)` 遇到 busy） |
 
 该表与 `runtime/include/cinterp.h` 的枚举及 `runtime/src/vm.zig` 的 `errorCode`（当前 `CI_ABI_VERSION = 2`）一一对应；新增类别只能追加新的负值，不得复用既有数值。
 
@@ -568,9 +600,12 @@ xxd -g1 build/hello.cib
 
 - `CIVM` 当前 v1；`CIPKG` 当前 v2（接受 v1）；`CIPL` 当前 v3（接受 v2）；`CIPM`/`CIPI` 当前 v1。
 - `CIVM` 函数数上限 512、函数名有效上限 128、模块上限 2097152 字节；槽栈默认/上限 8192（`ci_vm_config.stack_size` 只能下调，`0` 表示默认 8192）、帧 512、线性内存默认 1 MiB（`memory_size=0`；上限 16 MiB，32 字节对齐）。
+- 每个进程最多 64 个 VM（`MAX_PROCESS_VMS`）；第 65 个 `ci_process_load_package` 返回 `ProcessFull`（`CI_E_RESOURCE`）。每个 VM 默认约 2 MiB（VM 记录 + 8192 槽值栈 + 1 MiB 线性内存）。
+- callback trampoline 是进程级固定的 256 个静态槽（不生成可执行内存）：自动 `OP_CREATE_CALLBACK` 槽在 VM 生命周期内保留、跨重复运行复用，VM 销毁/计划重载后退休；显式 `OP_CALLBACK_ACQUIRE` 槽在 `OP_CALLBACK_RELEASE` 后回到可复用集合，未释放的显式槽在 VM 销毁/重载时退休。释放后的旧指针不得再次调用。
 - `CIPL` 计划上限 1024、每计划参数 64、每计划返回 loc 8、每参数 loc 8、名称有效上限 128；FFI arg/stack/ret 缓冲区各 4096 字节（`stack_size` 也受 4096 限制）。
 - CIPM 目标必须匹配运行时；v1 包没有目标 triple，只能依赖 CIPL ABI 和调用方正确选择运行时。macOS/未知 OS 与 musl 运行时在 load 阶段显式返回 `UnsupportedOs`/`UnsupportedLibc`，不会回退到 Linux glibc。
 - CIPI 上限 512 entry、每 entry 8 provider、名称/符号 64 字节、版本 32 字节；自动 provider 只允许库名，不允许 CIB 携带任意路径。
 - `CIVM` 函数名、CIPL 计划名、CIPI 名称都按字节计数，不是 Unicode 字符数；超限在解析阶段返回 `NameTooLong`。
 - 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。运行时不提供进程内沙箱或 Safe 模式。
+- 运行时共享宿主 libc/stdio；`malloc` 的宿主堆分配跨 run 累积，`dlopen`/`LoadLibrary` 句柄永不卸载，`atexit`/`signal` 是进程全局状态。非 `main` 入口不会执行全局安装代码。
 - 自动链接覆盖函数符号和基础 external data（`stdout`/`t_status` 等，`CIPI.kind=data` + `ADDR_EXTERN`）；向量、复杂聚合全局初始化仍不在范围内。`CIPKG` 本身不携带 `.so`/`.dll` 二进制。

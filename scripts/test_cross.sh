@@ -106,19 +106,20 @@ assert_conv() {
 }
 
 win_run() {
-    local exe="$1" package="$2" lib="${3:-}" expected="$4" out
+    local exe="$1" package="$2" lib="${3:-}" expected="$4" repeat="${5:-1}" out
     if [ -n "$HOST" ]; then
         [ -n "$REMOTE" ] || { echo "REMOTE must be set with HOST" >&2; exit 2; }
         local prefix="C:\\Users\\admin\\AppData\\Local\\Temp\\cinterp_test"
         local cmd="$prefix\\$exe"
         if [[ -n "$lib" ]]; then cmd="$cmd --lib $prefix\\$lib"; fi
+        if [ "$repeat" != 1 ]; then cmd="$cmd --repeat $repeat"; fi
         cmd="$cmd $prefix\\$package"
         out="$(ssh "$HOST" "cmd /c \"$cmd\"" 2>&1)"
     elif is_windows_shell; then
         if [[ -n "$lib" ]]; then
-            out="$(cd "$OUT" && "./$exe" --lib "$lib" "$package" 2>&1)"
+            out="$(cd "$OUT" && "./$exe" --lib "$lib" --repeat "$repeat" "$package" 2>&1)"
         else
-            out="$(cd "$OUT" && "./$exe" "$package" 2>&1)"
+            out="$(cd "$OUT" && "./$exe" --repeat "$repeat" "$package" 2>&1)"
         fi
     else
         local runner
@@ -142,18 +143,20 @@ win_run() {
         fi
         if [[ -n "$lib" ]]; then
             out="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
-                WINEDEBUG=-all "$runner" "$exe" --lib "$lib" "$package" 2>&1)"
+                WINEDEBUG=-all "$runner" "$exe" --lib "$lib" --repeat "$repeat" "$package" 2>&1)"
         else
             out="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
-                WINEDEBUG=-all "$runner" "$exe" "$package" 2>&1)"
+                WINEDEBUG=-all "$runner" "$exe" --repeat "$repeat" "$package" 2>&1)"
         fi
     fi
-    if ! printf '%s\n' "$out" | grep -Fq "result: $expected"; then
-        echo "FAIL $package (expected $expected)" >&2
+    local got
+    got="$(printf '%s\n' "$out" | grep -cF "result: $expected" || true)"
+    if [ "$got" != "$repeat" ]; then
+        echo "FAIL $package (expected $expected x$repeat, got $got)" >&2
         printf '%s\n' "$out" >&2
         exit 1
     fi
-    echo "OK $package -> $expected"
+    echo "OK $package -> $expected x$repeat"
 }
 
 USUAL=(hello arrays structs ffi_malloc ffi_printf ffi_snprintf math ffi_float ffi_structs ffi_regstruct ffi_mixedstruct ffi_qsort ffi_callback ffi_callback_big ffi_longdouble ffi_edges ffi_hfa ffi_hfa_stack packed)
@@ -185,6 +188,7 @@ if want win64; then
     win_run cinterp-run64.exe ffi_regstruct-x86_64-windows.cib libffi_regstruct_helper64.dll 102
     win_run cinterp-run64.exe ffi_mixedstruct-x86_64-windows.cib libffi_mixedstruct_helper64.dll 11
     win_run cinterp-run64.exe ffi_qsort-x86_64-windows.cib "" 1
+    win_run cinterp-run64.exe ffi_qsort-x86_64-windows.cib "" 1 2
     win_run cinterp-run64.exe ffi_callback-x86_64-windows.cib libffi_callback_helper64.dll 256
     win_run cinterp-run64.exe ffi_callback_big-x86_64-windows.cib libffi_callback_big_helper64.dll 246
     win_run cinterp-run64.exe ffi_longdouble-x86_64-windows.cib libffi_longdouble_helper64.dll 60
@@ -238,6 +242,7 @@ if want win32; then
     win_run cinterp-run32.exe ffi_regstruct-i686-windows.cib libffi_regstruct_helper32.dll 102
     win_run cinterp-run32.exe ffi_mixedstruct-i686-windows.cib libffi_mixedstruct_helper32.dll 11
     win_run cinterp-run32.exe ffi_qsort-i686-windows.cib "" 1
+    win_run cinterp-run32.exe ffi_qsort-i686-windows.cib "" 1 2
     win_run cinterp-run32.exe ffi_callback-i686-windows.cib libffi_callback_helper32.dll 256
     win_run cinterp-run32.exe ffi_callback_big-i686-windows.cib libffi_callback_big_helper32.dll 246
     win_run cinterp-run32.exe ffi_longdouble-i686-windows.cib libffi_longdouble_helper32.dll 60
@@ -260,19 +265,20 @@ if want arm64; then
         aarch64-linux-gnu-gcc -shared -fPIC -O0 -o "$OUT/lib${h}-arm64.so" "examples/$h.c"
     done
     arm_run() {
-        local name="$1" expected="$2" lib="${3:-}"
-        local out
+        local name="$1" expected="$2" lib="${3:-}" repeat="${4:-1}"
+        local out got
         if [[ -n "$lib" ]]; then
-            out="$("$QEMU" -L "$SYSROOT" "$OUT/cinterp-run-arm64" --lib "$OUT/$lib" "$OUT/$name-aarch64-linux.cib" 2>&1)"
+            out="$("$QEMU" -L "$SYSROOT" "$OUT/cinterp-run-arm64" --lib "$OUT/$lib" --repeat "$repeat" "$OUT/$name-aarch64-linux.cib" 2>&1)"
         else
-            out="$("$QEMU" -L "$SYSROOT" "$OUT/cinterp-run-arm64" "$OUT/$name-aarch64-linux.cib" 2>&1)"
+            out="$("$QEMU" -L "$SYSROOT" "$OUT/cinterp-run-arm64" --repeat "$repeat" "$OUT/$name-aarch64-linux.cib" 2>&1)"
         fi
-        if ! printf '%s\n' "$out" | grep -Fq "result: $expected"; then
-            echo "FAIL $name-arm64 (expected $expected)" >&2
+        got="$(printf '%s\n' "$out" | grep -cF "result: $expected" || true)"
+        if [ "$got" != "$repeat" ]; then
+            echo "FAIL $name-arm64 (expected $expected x$repeat, got $got)" >&2
             printf '%s\n' "$out" >&2
             exit 1
         fi
-        echo "OK $name-arm64 -> $expected"
+        echo "OK $name-arm64 -> $expected x$repeat"
     }
     arm_run hello 42
     arm_run arrays 10
@@ -286,6 +292,7 @@ if want arm64; then
     arm_run ffi_regstruct 102 libffi_regstruct_helper-arm64.so
     arm_run ffi_mixedstruct 11 libffi_mixedstruct_helper-arm64.so
     arm_run ffi_qsort 1
+    arm_run ffi_qsort 1 "" 2
     arm_run ffi_callback 256 libffi_callback_helper-arm64.so
     arm_run ffi_callback_big 246 libffi_callback_big_helper-arm64.so
     arm_run ffi_longdouble 60 libffi_longdouble_helper-arm64.so

@@ -8,6 +8,7 @@ fscanf	mismatch: libc reference difference (musl scanf semantics; native glibc r
 fwscanf	mismatch: libc reference difference (musl wide scanf semantics; native glibc reproduces)
 mbc	mismatch: libc reference difference (musl multibyte/locale; native glibc reproduces)
 pthread_cancel	stdout mismatch
+pthread_tsd	foreign-thread callback while the VM is executing (fail-fast thread policy; use idle-VM or same-thread callbacks)
 pthread_cancel-points	exit -11 != 0
 pthread_cond	exit -11 != 0
 pthread_mutex	exit -11 != 0

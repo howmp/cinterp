@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 try:
@@ -192,7 +193,10 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--max-source-bytes", type=int, default=8_000_000)
     ap.add_argument("--failures-dir", default=str(ROOT / "build/generate-failures"))
+    ap.add_argument("--jobs", type=int, default=1, help="concurrent generated seeds (default 1)")
     ap.add_argument("--minimize", action="store_true", help="reduce each failure preserving native/cinterp divergence")
+    ap.add_argument("--minimize-jobs", type=int, default=1,
+                    help="concurrent failure minimizations when --minimize is set (default 1)")
     ap.add_argument("--minimize-calls", type=int, default=120, help="max native/cinterp oracle calls per failure")
     ap.add_argument(
         "--allow-compile-skip",
@@ -209,16 +213,25 @@ def main() -> int:
     known = {}
     if known_path.is_file():
         known = json.loads(known_path.read_text()).get(args.generator, {})
-    results = []
-    temp = Path(tempfile.mkdtemp(prefix=f"cinterp-{args.generator}-"))
-    for seed in range(args.seed_start, args.seed_start + args.iterations):
+    def run_seed(seed: int) -> dict:
         if args.generator == "csmith":
             item = case_csmith(seed, generator, temp, args.allow_compile_skip)
         else:
             item = case(seed, generator, temp, args.max_source_bytes, args.allow_compile_skip)
         if item["status"] == "failure" and str(seed) in known:
             item.update(status="skip", reason="known: " + str(known[str(seed)]), known_hit=True)
-        results.append(item)
+        return item
+
+    results = []
+    temp = Path(tempfile.mkdtemp(prefix=f"cinterp-{args.generator}-"))
+    seeds = list(range(args.seed_start, args.seed_start + args.iterations))
+    if max(1, args.jobs) == 1:
+        results = [run_seed(seed) for seed in seeds]
+    else:
+        with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
+            futures = [ex.submit(run_seed, seed) for seed in seeds]
+            results = [fut.result() for fut in as_completed(futures)]
+        results.sort(key=lambda item: item["seed"])
     counts: dict[str, int] = {}
     for item in results:
         counts[item["status"]] = counts.get(item["status"], 0) + 1
@@ -245,34 +258,46 @@ def main() -> int:
     fail_root = Path(args.failures_dir)
     if fail_root:
         fail_root.mkdir(parents=True, exist_ok=True)
+        import shutil
+
+        minimize_tasks = []
         for item in results:
             src = item.pop("artifact_source", None)
             if item["status"] in ("failure", "skip") and src and Path(src).is_dir():
                 dst = fail_root / args.generator / f"seed-{item['seed']}"
                 if dst.exists():
-                    import shutil
-
                     shutil.rmtree(dst)
-                import shutil
-
                 shutil.copytree(src, dst)
                 (dst / "failure.json").write_text(json.dumps(item, indent=2) + "\n")
                 if args.minimize and item["status"] in ("failure", "skip"):
-                    source = dst / ("test.c" if args.generator == "csmith" else "combined.c")
-                    includes = _csmith_includes(generator) if args.generator == "csmith" else []
-                    try:
-                        meta = minimize_file(
-                            source,
-                            includes,
-                            clang="clang",
-                            timeout=30,
-                            max_calls=args.minimize_calls,
-                            output=dst / "minimized.c",
-                        )
-                        item["minimized"] = meta
-                        (dst / "failure.json").write_text(json.dumps(item, indent=2) + "\n")
-                    except Exception as exc:
-                        print(f"minimize seed {item['seed']}: {exc}", file=sys.stderr)
+                    minimize_tasks.append((item, dst))
+
+        def minimize_one(task: tuple[dict, Path]) -> None:
+            item, dst = task
+            source = dst / ("test.c" if args.generator == "csmith" else "combined.c")
+            includes = _csmith_includes(generator) if args.generator == "csmith" else []
+            try:
+                meta = minimize_file(
+                    source,
+                    includes,
+                    clang="clang",
+                    timeout=30,
+                    max_calls=args.minimize_calls,
+                    output=dst / "minimized.c",
+                )
+                item["minimized"] = meta
+                (dst / "failure.json").write_text(json.dumps(item, indent=2) + "\n")
+            except Exception as exc:
+                print(f"minimize seed {item['seed']}: {exc}", file=sys.stderr)
+
+        if max(1, args.minimize_jobs) == 1:
+            for task in minimize_tasks:
+                minimize_one(task)
+        else:
+            with ThreadPoolExecutor(max_workers=max(1, args.minimize_jobs)) as ex:
+                futures = [ex.submit(minimize_one, task) for task in minimize_tasks]
+                for fut in as_completed(futures):
+                    fut.result()
     report = {
         "generator": args.generator,
         "iterations": args.iterations,

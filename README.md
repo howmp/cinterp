@@ -10,11 +10,12 @@
   `CIPKG` v2 包。AST 是唯一的 IR 前端；原先的字符串解析器和最初的 Python 编译器已被
   移除。Python 仅用于测试、fuzz 和基准测试框架；外部符号链接元数据在构建期从已安装的
   Zig 工具链生成（见下文）。
-- **运行时**（Zig 0.13）：带线性内存的栈式 VM、C ABI（`ci_vm_*`）、编译期 ABI 选择、
-  面向 SysV x86-64、Win64、Win32 cdecl/stdcall/fastcall 和 AArch64 AAPCS64 的固定汇编
-  引擎、原生符号解析（Unix 上的 `dlopen`/`dlsym`，Windows 上的
-  `LoadLibraryA`/`GetProcAddress`）、从 `CIPI` 自动加载 provider，以及每个 ABI 上的静态
-  回调池。
+- **运行时**（Zig 0.13）：带线性内存的栈式 VM、C ABI（`ci_vm_*` 和进程级
+  `ci_process_*`）、编译期 ABI 选择、面向 SysV x86-64、Win64、Win32
+  cdecl/stdcall/fastcall 和 AArch64 AAPCS64 的固定汇编引擎、原生符号解析（Unix 上的
+  `dlopen`/`dlsym`，Windows 上的 `LoadLibraryA`/`GetProcAddress`）、从 `CIPI` 自动
+  加载 provider，以及每个 ABI 上的静态回调池。一个 VM 持有一个 CIB；一个进程可以
+  持有多个 VM 并在不同线程上运行它们。
 - **目标平台**：Linux x64、Windows x64、Windows x86、Linux AArch64。用编译器的
   `--target` 和运行时的 `-Dtarget` 构建。
 
@@ -42,6 +43,18 @@ cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so
 ./build/cinterp-cc compile examples/ffi_structs.c -o build/ffi_structs.cib
 ./runtime/zig-out/bin/cinterp-run --lib build/libstruct_helpers.so build/ffi_structs.cib
 # result: 28
+
+# repeat runs on one VM; one VM per package with --run-all; --jobs N for parallel workers
+./runtime/zig-out/bin/cinterp-run --repeat 3 build/hello.cib
+./build/cinterp-cc compile examples/math.c -o build/math.cib
+./runtime/zig-out/bin/cinterp-run --run-all build/hello.cib build/math.cib build/printf.cib
+# per-package headers, then result: 42 / 8 / 0
+./runtime/zig-out/bin/cinterp-run --run-all --repeat 2 --jobs 2 build/hello.cib build/math.cib
+
+# explicit callback lifetime; the header is force-included by cinterp-cc
+./build/cinterp-cc compile examples/ffi_callback_scope.c -o build/ffi_callback_scope.cib
+./runtime/zig-out/bin/cinterp-run build/ffi_callback_scope.cib
+# result: 1
 
 # inspect target/import metadata
 ./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib
@@ -102,7 +115,7 @@ make release-artifacts
 - `-Doptimize=ReleaseSmall`（`make runtime` 的默认值）：剥离 unwind 表、帧指针、panic
   跟踪和符号；ELF 发布产物还会额外去掉 `.eh_frame`/`.eh_frame_hdr`。简洁的错误码和 CLI
   消息仍然保留。
-- 当前体积：Debug ≈ 8.8 MiB，ReleaseSmall 102,336 B ≈ 100 KiB（Linux x64）。
+- 当前体积：Debug ≈ 8.8 MiB，ReleaseSmall 115,600 B ≈ 113 KiB（Linux x64）。
 
 `make test` 会运行运行时与编译器的单元测试、所有端到端示例、C 嵌入 API（静态库和共享
 库）以及负向路径（缺失输入、损坏/截断的包、未知符号、目标不匹配）。`make c-testsuite`
@@ -142,13 +155,20 @@ make generate-diff          # YARPGen differential smoke
 make test-winapi            # Windows API imports; needs Wine + cross runtimes
 ```
 
+测试并发：`test_suites.py` 的 `--jobs` 默认是 CPU 核数，并且所有选中 suite 的
+用例共享一个全局 worker 池（不是每个 suite 单独建池），因此 suite 边界和小 suite
+不会留下空闲核。可用 `SUITE_JOBS=N` 覆盖；`make test-suites-nightly` 会并行执行
+nightly suite 与 100-seed 生成式差分（`GEN_JOBS`/`MINIMIZE_JOBS` 控制），日志在
+`build/nightly-suite.log` 和 `build/nightly-diff.log`。需要顺序执行时用
+`make test-suites-nightly-serial`；`NIGHTLY_MINIMIZE=0` 可跳过差分最小化。
+
 当前原生基线（`build/test-suites-full.json`）：在 4521 个 manifest 用例中
-**4319 个通过 / 202 个显式跳过**，另有 1034 个被刻意排除的非目标用例。标准层级
-（`build/test-suites.json`）则是 495 个用例中 **396 个通过 / 99 个跳过**。
+**4318 个通过 / 203 个显式跳过**，另有 1034 个被刻意排除的非目标用例。标准层级
+（`build/test-suites.json`）则是 495 个用例中 **395 个通过 / 100 个跳过**。
 
 通过用例中约 55% 是**仅编译**（gcc-torture-compile 1408 + llvm-regression-c 934 +
 compcert-compile 30 = 2372）：它们只检查编译器是否接受源码并产出一个包，而不检查程序的
-输出是否与原生执行一致。可执行基线是其余 1862 个通过用例（4319 − 2457 个编译模式通过）。
+输出是否与原生执行一致。可执行基线是其余 1861 个通过用例（4318 − 2457 个编译模式通过）。
 现在有四个仅编译的压力用例以显式的 `compiler limit:` 原因跳过，因为产出的包会超出运行时
 512 个 import、64 个参数或 2 MiB 模块的限制。跳过文件记录不受支持的特性和已知失败；它们
 从不由 CI 自动更新。见 [`tests/manifests/README.md`](tests/manifests/README.md)。
@@ -223,8 +243,9 @@ provider 版本，以及 2 MiB 的 CIVM 模块。
   `msvcrt.dll`/`ucrtbase.dll`/`ntdll.dll`）解析。
 
 由于 Windows 索引不再携带最低 OS 字段，新包声明 `min_os=0`；调用在较旧 Windows 上缺失的
-API 会在运行时而非加载时失败。自定义库仍然使用 `--lib`，并优先于 CIB provider。一次只执行
-一个 CIB；CIB 到 CIB 的链接被明确判定为不支持。
+API 会在运行时而非加载时失败。自定义库仍然使用 `--lib`，并优先于 CIB provider。一个 VM
+一次只持有一个 CIB；进程可以通过 `ci_process_*` 加载多个 VM，但 CIB 到 CIB 的链接仍明确
+不支持。
 
 编译器目前支持：
 
@@ -287,7 +308,17 @@ GCC builtin、外部 inline/weak 地址语义以及可增长的线性内存同�
 
 ```bash
 ./runtime/zig-out/bin/cinterp-run <package.cib> [entry] [-- arg...]
+./runtime/zig-out/bin/cinterp-run --repeat N [--entry NAME] [--jobs N] <package.cib> [entry] [-- arg...]
+./runtime/zig-out/bin/cinterp-run --repeat N [--entry NAME] [--jobs N] --run-all <package.cib>... [-- arg...]
 ```
+
+单包单次运行保持旧输出（一行 `result: <i32>`）。`--repeat N` 在同一个 VM 上重复运行
+N 次，每次都是全新镜像；`--run-all` 为每个包创建一个 VM；`--jobs N` 用 N 个 worker
+线程并行运行不同 VM（默认 1，输出可能交错）。多包或重复模式下每次运行前打印
+`package: <path> run: <i>/<N>`。`--load-only`/`--dump-target`/`--dump-imports`
+对每个包生效。所有 VM 保持存活直到 libc 退出，以便 CIB 的 `atexit` 处理函数仍能
+访问自己的 VM。进程/VM 模型、线程规则和 callback 生命周期见
+[`docs/multi-cib.md`](docs/multi-cib.md)。
 
 `cinterp-run` 成功时退出码为 0，加载/运行失败为 1，用法或 I/O 错误为 2；C `main` 的返回值
 会以 `result: N` 打印，不会成为进程退出码。
@@ -315,10 +346,16 @@ C ABI 版本是 `CI_ABI_VERSION = 2`；`ci_abi_version()` 返回它，`ci_versio
 版本字符串。`ci_vm_run`/`ci_vm_run_args` 返回的是状态，而不是 C `main` 的结果：`CI_OK`
 或一个**负数、按类别划分的 `CI_E_*` 码**（`CI_E_INVALID_ARGUMENT`、`CI_E_BAD_PACKAGE`、
 `CI_E_TARGET`、`CI_E_PLANS`、`CI_E_LINK`、`CI_E_ENTRY`、`CI_E_RESOURCE`、
-`CI_E_RUNTIME`、`CI_E_OUT_OF_MEMORY`、`CI_E_DESTROYED`）。只有当失败无法归类时才会返回
-`CI_ERROR`（-1）。同一类别可通过 `ci_vm_last_error_code()` 获取，文本则来自
-`ci_vm_last_error()`；`ci_vm_clear_error()` 会重置两者并返回 `CI_OK`。`CI_E_DESTROYED`
-与其他运行时错误不同。加载器是事务性的。
+`CI_E_RUNTIME`、`CI_E_OUT_OF_MEMORY`、`CI_E_DESTROYED`、`CI_E_BUSY`）。只有当失败无法
+归类时才会返回 `CI_ERROR`（-1）。同一类别可通过 `ci_vm_last_error_code()` 获取，文本
+则来自 `ci_vm_last_error()`；`ci_vm_clear_error()` 会重置两者（以及 callback dispatch
+错误）并返回 `CI_OK`。加载器是事务性的。
+
+需要在一个进程里加载多个 CIB 时，使用 `ci_process_create` 和
+`ci_process_load_package`：每个包获得一个独立的新 VM，返回的 `ci_vm *` 是**借出的**
+句柄，必须用 `ci_process_unload_package` 而不是 `ci_vm_destroy` 释放。进程内最多 64 个
+VM（`MAX_PROCESS_VMS`）；busy VM 上的卸载/销毁返回 `CI_E_BUSY`。完整签名和 pthread
+示例见 [`docs/multi-cib.md`](docs/multi-cib.md)。
 
 `ci_vm_create(stack_size)` 接受一个值栈槽位上限：`0` 选择默认的 8192 个槽位（同时也是
 最大值）。`ci_vm_create_ex` 还额外接受 `memory_size`（`0` = 默认 1 MiB，最大 16 MiB）以及
@@ -330,17 +367,28 @@ C ABI 版本是 `CI_ABI_VERSION = 2`；`ci_abi_version()` 返回它，`ci_versio
 FFI 计划存储按加载的包分配，而不是固定的 6.5 MiB 计划表。对小包可以调低 `memory_size`。
 不同的 VM 实例不共享解释器状态。
 
-VM 每个实例是单线程的，并在宿主回调边界处可重入。回调 trampoline 位于进程级、共 256 个
-固定槽位的池中。当所属 VM 被销毁或其计划被重新加载时，槽位会被永久退役，且**永不重用**
-（宿主可能仍持有该函数指针），因此该池是每进程 256 次回调注册的一次性预算；之后的
-`CREATE_CALLBACK` 操作会以 `TooManyCallbacks`（`CI_E_RUNTIME`）失败。
+每个 VM 同一时间只允许一个执行上下文，但不同 VM 可以在不同线程上并行运行。
+`ci_vm_run` 在另一线程正在运行同一 VM 时返回 `CI_E_BUSY`，同一线程嵌套调用返回
+`CI_E_RUNTIME`；loader/`ci_vm_load_library` 在 busy 时也返回 `CI_E_BUSY`；
+`ci_vm_busy()` 查询状态，`ci_vm_destroy_ex(vm, CI_DESTROY_TRY)` 提供非阻塞销毁尝试。
+
+回调 trampoline 位于进程级、共 **256 个静态槽位**的池中，不生成可执行内存。自动
+`CREATE_CALLBACK`（把 `@cb` 传给原生调用）的槽位绑定到所属 VM，跨重复运行保留，直到
+VM 销毁或计划重载时退休。CIB 也可以用 `ci_callback_acquire(fn)`/`ci_callback_release(fn)`
+显式管理生命周期：acquire 返回 trampoline 或 NULL（池耗尽），release 成功返回 0 并把
+槽位放回可复用集合；callback 仍在执行时 release 返回 `CI_E_BUSY`，指针不属于当前 VM
+或已释放时返回 `CI_E_INVALID_ARGUMENT`。这两个宏由 `cinterp-cc` 强制包含的头文件提供，
+CIB 源码不需要 `#include`。释放后的旧指针不得再次调用（复用槽位后可能进入新的 VM，
+属于调用方违约）；未释放的显式槽在 VM 销毁/计划重载时退休。`ci_callback_pool_stats()`
+报告 total/live/free/retired，`ci_vm_callback_error()` 报告被跳过的 callback dispatch。
 
 对于 v2 包，运行时通过 CIPI provider 解析原生符号（`--lib` 作为用户覆盖）；未列出的自定义
 符号回退到进程、已加载的 `--lib` 库和平台 C 运行时。解析出的目标在首次调用时按 plan 索引
 缓存，当包或计划表被替换时会清空 provider/target 缓存（显式的 `--lib` 句柄在包替换后仍然
 有效）。一个 VM 中超过 256 个不同的原生目标会返回 `TooManyNativeTargets`（`CI_E_LINK`）。
 库句柄永不卸载：`--lib` 和 provider 库会一直保持映射直到进程退出。静态回调 trampoline 可用于
-SysV x64、Win64、Win32 和 AArch64。
+SysV x64、Win64、Win32 和 AArch64。VM 正在执行时，来自另一线程的 callback 默认 fail-fast
+（返回零值并记录 `CI_E_BUSY`）；需要异步回调的库应等待 VM 空闲或改用同步设计。
 
 运行时执行受信任的 CIB 包，不提供进程内沙箱；`--load-only` 在不解执行的情况下校验包。
 不受支持的运行时（macOS/未知 OS 和 musl）会在加载时以 `UnsupportedOs`/`UnsupportedLibc`
@@ -362,7 +410,7 @@ compiler/          Zig compiler (build-time)
   src/link_wrappers.zig  target link-ABI aliases (snprintf -> _snprintf)
   src/data/link_wrappers.json  the only checked-in link metadata
   tools/gen_link_index.zig     build-time generator for win_defs/libc_defs
-docs/                  format, embedding, compatibility, IR subset, Zig frontend
+docs/                  format, embedding, multi-CIB/threads, compatibility, IR subset, Zig frontend
 runtime/               Zig VM/runtime (shipped)
   src/vm.zig           VM, linear memory, C ABI, callback dispatcher
   src/vm_test.zig      runtime unit tests
@@ -389,6 +437,7 @@ spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
 - [docs/README.md](docs/README.md) — 文档索引
 - [docs/cib.md](docs/cib.md) — CIB 包格式、链接元数据、状态码
 - [docs/embedding.md](docs/embedding.md) — 在 C 宿主中嵌入运行时
+- [docs/multi-cib.md](docs/multi-cib.md) — 单进程多 CIB、重复运行、每 VM 线程与 callback acquire/release
 - [docs/compatibility.md](docs/compatibility.md) — ABI、SONAME 与版本策略
 - [docs/ir-subset.md](docs/ir-subset.md) — 可接受的 LLVM IR 子集
 - [docs/ir-parser-differences.md](docs/ir-parser-differences.md) — 原字符串解析器的差异

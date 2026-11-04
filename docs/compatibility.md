@@ -39,10 +39,11 @@
 
 - `CI_ABI_VERSION` 与包格式版本相互独立；当前为 **2**，由 `ci_abi_version()` 返回。头文件同时提供 `ci_vm_clear_error()`、`ci_abi_version()` 和 `ci_version()`。
 - 在同一 ABI 主版本内，只允许**追加**函数、状态码和配置字段。带 `struct_size` 的结构体按传入大小读取，旧调用方可以继续使用较小的结构体。`ci_vm_config.memory_size` 是 append-only 字段：`struct_size` 只覆盖到 `stack_size` 的旧调用方获得默认 1 MiB 线性内存。
+- 多 CIB 与每 VM 线程模型同样按追加方式扩展 C ABI 2：新增 `ci_process_create`/`ci_process_destroy`/`ci_process_load_package`/`ci_process_unload_package`/`ci_process_last_error*`、`ci_vm_busy`、`ci_vm_destroy_ex`、`ci_vm_callback_error`、`ci_callback_pool_stats`，以及状态码 `CI_E_BUSY = -12`。既有函数、参数、返回类型、结构体字段顺序和 `CI_E_*` 数值均未改变，因此**不提升** `CI_ABI_VERSION`。
 - 状态码是稳定合同：`ci_vm_*` 成功返回 `CI_OK`，失败返回**具体的 `CI_E_*` 类别**；`CI_ERROR`（-1）只在错误无法归类时返回。`ci_vm_last_error_code()` 返回同一类别，`ci_vm_last_error()` 返回具体错误名（如 `BadPackageMagic`）；成功的调用会清空两者。`CI_E_*` 数值不得复用；新增错误类别只能追加新负数。
 - 删除/重命名函数、改变参数或返回类型、改变结构体字段顺序属于破坏性变更，必须提升 `CI_ABI_VERSION`。
 - 共享库文件名跟随 `VERSION`（当前产物为 `libcinterp.so.0.1.0`），SONAME 为 `libcinterp.so.<VERSION 主版本>`（当前 `libcinterp.so.0`），并保留未版本化的 `libcinterp.so` 链接名。**0.x 阶段 SONAME 主版本取 `VERSION` 主版本（当前 0），`CI_ABI_VERSION`（当前 2）是独立编号**：`CI_ABI_VERSION` 提升不必然立即改变 SONAME，只有 `VERSION` 主版本提升时 SONAME 主版本才随之变化。嵌入方应通过 `ci_abi_version()` 检查 ABI，而不是从 `.so` 文件名推断兼容性。
-- 回调 trampoline 的进程级生命周期属于 ABI 合同：固定 **256** 个进程级槽；VM 销毁或计划重载后，槽**永久退役且永不复用**。因此整个进程最多注册 256 次 callback，之后 `CREATE_CALLBACK` 返回 `TooManyCallbacks`（`CI_E_RUNTIME`）。Win32 `__stdcall` callback 受支持；Win32 `__fastcall` callback 返回 `UnsupportedCallback`（`CI_E_RUNTIME`）。
+- 回调 trampoline 的进程级生命周期属于 ABI 合同：固定 **256** 个进程级静态槽，不生成可执行内存。自动 `CREATE_CALLBACK` 槽绑定到其 VM，并在 VM 销毁或计划重载后**永久退休、永不复用**；显式 `ci_callback_acquire`/`ci_callback_release` 槽在释放后回到可复用集合，未释放的显式槽在 VM 销毁/重载时退休。释放后的旧指针不得再次调用（复用后可能进入另一个 VM，属于调用方违约）。`ci_callback_pool_stats` 可查询 live/free/retired 数量。Win32 `__stdcall` callback 受支持；Win32 `__fastcall` callback 返回 `UnsupportedCallback`（`CI_E_RUNTIME`）。
 
 ## 编译器与运行时
 

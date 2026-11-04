@@ -65,6 +65,17 @@ fn isTag(value: ast.Value, comptime tag: std.meta.Tag(ast.Value)) bool {
     return std.meta.activeTag(value) == tag;
 }
 
+/// Internal symbols declared by the header `cinterp-cc` force-includes
+/// (`src/data/cinterp_callbacks.h`). `ci_callback_acquire`/`_release` are
+/// macros over these names; the lowerer turns calls into dedicated CIVM
+/// opcodes, so they must never reach CIPI (the runtime does not export them).
+pub const callback_acquire_symbol = "__ci_callback_acquire";
+pub const callback_release_symbol = "__ci_callback_release";
+
+pub fn isCallbackBuiltin(name: []const u8) bool {
+    return eql(name, callback_acquire_symbol) or eql(name, callback_release_symbol);
+}
+
 fn renderType(allocator: Allocator, ty: *const ast.Type) ![]const u8 {
     var list = std.ArrayList(u8).init(allocator);
     errdefer list.deinit();
@@ -762,6 +773,7 @@ const Context = struct {
             const name = target[1..];
             if (globals.map.contains(name)) continue;
             if (func_indices.contains(name)) continue;
+            if (isCallbackBuiltin(name)) continue;
             if (globals.external.contains(target)) continue;
             if (external_names.items.len > std.math.maxInt(u16)) continue;
             const idx: u16 = @intCast(external_names.items.len);
@@ -773,6 +785,10 @@ const Context = struct {
             const decl_name = decl_name_ptr.*;
             if (startsWith(decl_name, "llvm.")) continue;
             if (func_indices.contains(decl_name)) continue;
+            // The forced-include callback header declares these builtins in
+            // every translation unit that references them; they lower to
+            // opcodes, not CIPI imports.
+            if (isCallbackBuiltin(decl_name)) continue;
             const key = try std.fmt.allocPrint(allocator, "@{s}", .{decl_name});
             if (globals.external.contains(key)) continue;
             if (external_names.items.len > std.math.maxInt(u16)) continue;
@@ -1922,6 +1938,10 @@ const Lowerer = struct {
                 try self.emitU8(if (is_memcpy) op.OP_MEMCPY else op.OP_MEMSET);
                 return;
             }
+            if (isCallbackBuiltin(raw_name)) {
+                try self.lowerCallbackBuiltin(call, result, raw_name);
+                return;
+            }
             try self.lowerDirectCall(call, result, renameIntrinsic(raw_name));
             return;
         }
@@ -2132,6 +2152,48 @@ const Lowerer = struct {
         }
     }
 
+    /// `__ci_callback_acquire` / `__ci_callback_release`, i.e. the expanded
+    /// `ci_callback_acquire` / `ci_callback_release` macros from the header
+    /// `cinterp-cc` force-includes (`src/data/cinterp_callbacks.h`).
+    ///
+    /// Acquire takes exactly one *direct function reference* (casts and
+    /// constant expressions are stripped, so `ci_callback_acquire(&my_fn)`
+    /// reaches the lowerer as `ptr noundef @my_fn`) and emits
+    /// `OP_CALLBACK_ACQUIRE plan_index func_index`. Unlike `emitCallback` it
+    /// reserves no compile-time callback slot: the runtime allocates one
+    /// global trampoline per execution and the C code decides when to release
+    /// it.
+    ///
+    /// Release evaluates its argument to the trampoline pointer and emits
+    /// `OP_CALLBACK_RELEASE`, which yields the status.
+    ///
+    /// Neither symbol ever becomes a CIPI import (see `isCallbackBuiltin`).
+    fn lowerCallbackBuiltin(self: *Lowerer, call: ast.Call, result: ?ast.NamedRef, name: []const u8) anyerror!void {
+        if (eql(name, callback_acquire_symbol)) {
+            if (call.args.len != 1) return error.CallbackAcquireRequiresFunctionRef;
+            const target = valueGlobalRef(call.args[0].val) orelse
+                return error.CallbackAcquireRequiresFunctionRef;
+            const func_index = self.ctx.func_indices.get(target) orelse
+                return error.CallbackAcquireRequiresFunctionRef;
+            const plan_index = try self.planCallback(target, func_index);
+            try self.emitU8(op.OP_CALLBACK_ACQUIRE);
+            try self.emitU16(plan_index);
+            try self.emitU16(func_index);
+        } else {
+            if (call.args.len != 1) return error.BadCall;
+            try self.emitValue(call.args[0]);
+            try self.emitU8(op.OP_CALLBACK_RELEASE);
+        }
+        if (!call.ret.isVoid()) {
+            const res = result orelse return error.NoResult;
+            const slot = try self.slotFor(res.name);
+            try self.emitStoreSlot(slot);
+            if (intBitsOf(call.ret)) |bits| {
+                if (bits < 64) try self.normalizeLoadedInt(slot, bits);
+            }
+        }
+    }
+
     /// Call to an external symbol: build the ABI plan, then the call itself.
     fn lowerNativeCall(self: *Lowerer, call: ast.Call, result: ?ast.NamedRef, name: []const u8) anyerror!void {
         var plan_types = std.ArrayList([]const u8).init(self.allocator);
@@ -2234,6 +2296,24 @@ const Lowerer = struct {
             try self.emitU16(entry.plan_index);
             return;
         }
+        const plan_index = try self.planCallback(key, func_index);
+        if (self.ctx.callbacks.next_slot == std.math.maxInt(u16)) return error.TooManyCallbacks;
+        const slot = self.ctx.callbacks.next_slot;
+        self.ctx.callbacks.next_slot += 1;
+        try self.ctx.callbacks.by_func.put(key, .{ .slot = slot, .func_index = func_index, .plan_index = plan_index });
+        try self.emitU8(op.OP_CREATE_CALLBACK);
+        try self.emitU16(slot);
+        try self.emitU16(func_index);
+        try self.emitU16(plan_index);
+    }
+
+    /// Build (or dedup into an existing) CIPL plan describing how native code
+    /// calls `func_index`, named `callback:<key>`.
+    ///
+    /// Shared by `OP_CREATE_CALLBACK` (compile-time slot, automatic) and
+    /// `OP_CALLBACK_ACQUIRE` (runtime slot, explicit); only the former reserves
+    /// a slot, so the caller owns slot allocation.
+    fn planCallback(self: *Lowerer, key: []const u8, func_index: u16) anyerror!u16 {
         const params = self.ctx.func_params[func_index];
         var byval_sizes = try self.allocator.alloc(u16, params.len);
         @memset(byval_sizes, 0);
@@ -2269,15 +2349,7 @@ const Lowerer = struct {
         // calling convention is authoritative (Win32 `__stdcall` callback ->
         // conv=1; the runtime dispatches it accordingly).
         plan.conv = abi.convFromName(callee.sig.cc);
-        const plan_index = try self.ctx.internPlan(plan);
-        if (self.ctx.callbacks.next_slot == std.math.maxInt(u16)) return error.TooManyCallbacks;
-        const slot = self.ctx.callbacks.next_slot;
-        self.ctx.callbacks.next_slot += 1;
-        try self.ctx.callbacks.by_func.put(key, .{ .slot = slot, .func_index = func_index, .plan_index = plan_index });
-        try self.emitU8(op.OP_CREATE_CALLBACK);
-        try self.emitU16(slot);
-        try self.emitU16(func_index);
-        try self.emitU16(plan_index);
+        return try self.ctx.internPlan(plan);
     }
 };
 
@@ -2390,6 +2462,11 @@ const fixture_hello = @embedFile("testdata/lower_ast/hello.ll");
 const fixture_structs = @embedFile("testdata/lower_ast/structs.ll");
 const fixture_ffi_qsort = @embedFile("testdata/lower_ast/ffi_qsort.ll");
 const fixture_ffi_callback = @embedFile("testdata/lower_ast/ffi_callback.ll");
+/// Clang 18 IR for `examples/ffi_callback_scope.c` (compiled with the exact
+/// `cinterp-cc` flags plus the forced-include callback header): the explicit
+/// `ci_callback_acquire`/`ci_callback_release` macros lower to
+/// `OP_CALLBACK_ACQUIRE`/`OP_CALLBACK_RELEASE` and one `callback:cmp` plan.
+const fixture_ffi_callback_scope = @embedFile("testdata/lower_ast/ffi_callback_scope.ll");
 /// Clang IR for a synthetic C file covering the paths the example corpus does
 /// not hit: VLA (dynamic alloca), stacksave/restore, memcpy/memset intrinsics,
 /// indirect calls, pointer `select`, all integer arithmetic/shift opcodes, the
@@ -2640,6 +2717,33 @@ fn parseFixture(allocator: Allocator, text: []const u8) !ast.Module {
     return p.parse();
 }
 
+/// Hand-written shape of the forced-include callback macros: one explicit
+/// acquire, a native call that receives the trampoline and one release. Kept
+/// minimal so opcode encoding and plan selection can be asserted on exact
+/// bytes; `fixture_ffi_callback_scope` covers the real clang output.
+const callback_scope_ir =
+    \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+    \\target triple = "x86_64-unknown-linux-gnu"
+    \\
+    \\declare ptr @__ci_callback_acquire(ptr)
+    \\declare i32 @__ci_callback_release(ptr)
+    \\declare void @take(ptr)
+    \\
+    \\define i32 @cb(i32 %a, i32 %b) {
+    \\entry:
+    \\  %r = add i32 %a, %b
+    \\  ret i32 %r
+    \\}
+    \\
+    \\define i32 @main() {
+    \\entry:
+    \\  %tramp = call ptr @__ci_callback_acquire(ptr @cb)
+    \\  call void @take(ptr %tramp)
+    \\  %status = call i32 @__ci_callback_release(ptr %tramp)
+    \\  ret i32 %status
+    \\}
+;
+
 // --------------------------------------------------------------------- goldens
 //
 // A golden file is the canonical text image of everything `main.zig`
@@ -2664,6 +2768,7 @@ const golden_hello = @embedFile("testdata/lower_ast/golden/hello.golden");
 const golden_structs = @embedFile("testdata/lower_ast/golden/structs.golden");
 const golden_ffi_qsort = @embedFile("testdata/lower_ast/golden/ffi_qsort.golden");
 const golden_ffi_callback = @embedFile("testdata/lower_ast/golden/ffi_callback.golden");
+const golden_ffi_callback_scope = @embedFile("testdata/lower_ast/golden/ffi_callback_scope.golden");
 const golden_misc = @embedFile("testdata/lower_ast/golden/misc.golden");
 const golden_control_flow = @embedFile("testdata/lower_ast/golden/control_flow.golden");
 const golden_globals = @embedFile("testdata/lower_ast/golden/globals.golden");
@@ -2684,6 +2789,7 @@ const golden_cases = [_]GoldenCase{
     .{ .name = "structs", .text = fixture_structs, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_structs },
     .{ .name = "ffi_qsort", .text = fixture_ffi_qsort, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_ffi_qsort },
     .{ .name = "ffi_callback", .text = fixture_ffi_callback, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_ffi_callback },
+    .{ .name = "ffi_callback_scope", .text = fixture_ffi_callback_scope, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_ffi_callback_scope },
     .{ .name = "misc", .text = fixture_misc, .abis = &.{ 1, 2, 3, 4 }, .golden = golden_misc },
     .{ .name = "control_flow", .text = control_flow_ir, .abis = &.{ 1, 2 }, .golden = golden_control_flow },
     .{ .name = "globals", .text = globals_ir, .abis = &.{1}, .golden = golden_globals },
@@ -2819,6 +2925,217 @@ test "ffi_callback fixture lowers to the golden CIVM/CIPL (all ABIs)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     try expectGolden(arena.allocator(), goldenCase("ffi_callback"));
+}
+
+test "ffi_callback_scope fixture lowers to the golden CIVM/CIPL (all ABIs)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try expectGolden(arena.allocator(), goldenCase("ffi_callback_scope"));
+}
+
+// ------------------------------------------------- explicit callback builtins
+
+fn functionIndexByName(result: abi.CompileResult, name: []const u8) ?u16 {
+    for (result.functions, 0..) |func, index| {
+        if (eql(func.name, name)) return @intCast(index);
+    }
+    return null;
+}
+
+fn planIndexByName(result: abi.CompileResult, name: []const u8) ?u16 {
+    for (result.plans, 0..) |plan, index| {
+        if (eql(plan.name, name)) return @intCast(index);
+    }
+    return null;
+}
+
+fn codeOf(result: abi.CompileResult, name: []const u8) []const u8 {
+    for (result.functions) |func| {
+        if (eql(func.name, name)) return func.code.items;
+    }
+    return &.{};
+}
+
+fn callbackPlanCount(result: abi.CompileResult) usize {
+    var count: usize = 0;
+    for (result.plans) |plan| {
+        if (startsWith(plan.name, "callback:")) count += 1;
+    }
+    return count;
+}
+
+test "ci_callback_acquire/release lower to dedicated opcodes with one callback plan" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator, callback_scope_ir);
+    const result = try compile(allocator, &module, 1, 8);
+
+    // Both builtins stay out of CIPI: no plan for them and no external-data
+    // entry (`take` is the only declared symbol that reaches the table).
+    try testing.expectEqual(@as(?u16, null), planIndexByName(result, callback_acquire_symbol));
+    try testing.expectEqual(@as(?u16, null), planIndexByName(result, callback_release_symbol));
+    for (result.external_data) |name| {
+        try testing.expect(!eql(name, "@" ++ callback_acquire_symbol));
+        try testing.expect(!eql(name, "@" ++ callback_release_symbol));
+    }
+
+    // One callback plan for the callee definition (`cb(i32, i32)` -> two
+    // integer args on SysV), plus the `take` native plan.
+    try testing.expectEqual(@as(usize, 1), callbackPlanCount(result));
+    const cb_func = functionIndexByName(result, "cb").?;
+    const cb_plan = planIndexByName(result, "callback:cb").?;
+    try testing.expectEqual(@as(usize, 2), result.plans[cb_plan].args.len);
+    try testing.expectEqual(@as(u8, 0), result.plans[cb_plan].conv);
+
+    // OP_CALLBACK_ACQUIRE plan_index func_index, little-endian u16 operands.
+    const code = codeOf(result, "main");
+    var acquire_bytes: [5]u8 = undefined;
+    acquire_bytes[0] = op.OP_CALLBACK_ACQUIRE;
+    std.mem.writeInt(u16, acquire_bytes[1..3], cb_plan, .little);
+    std.mem.writeInt(u16, acquire_bytes[3..5], cb_func, .little);
+    const acquire_at = std.mem.indexOf(u8, code, &acquire_bytes);
+    try testing.expect(acquire_at != null);
+
+    // The release comes after it and takes no operands.
+    const release_at = std.mem.indexOfScalar(u8, code, op.OP_CALLBACK_RELEASE);
+    try testing.expect(release_at != null);
+    try testing.expect(acquire_at.? < release_at.?);
+
+    // The automatic path is untouched: acquire/release never allocate a
+    // compile-time callback slot (`OP_CREATE_CALLBACK` is not emitted).
+    try testing.expect(std.mem.indexOfScalar(u8, code, op.OP_CREATE_CALLBACK) == null);
+}
+
+test "ci_callback_acquire strips casts around the direct function reference" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\declare ptr @__ci_callback_acquire(ptr)
+        \\declare i32 @__ci_callback_release(ptr)
+        \\
+        \\define i32 @cb(i32 %a, i32 %b) {
+        \\entry:
+        \\  %r = add i32 %a, %b
+        \\  ret i32 %r
+        \\}
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  %tramp = call ptr @__ci_callback_acquire(ptr bitcast (ptr @cb to ptr))
+        \\  %status = call i32 @__ci_callback_release(ptr %tramp)
+        \\  ret i32 %status
+        \\}
+        \\
+    );
+    const result = try compile(allocator, &module, 1, 8);
+
+    const cb_func = functionIndexByName(result, "cb").?;
+    const cb_plan = planIndexByName(result, "callback:cb") orelse return error.TestExpectedCallbackPlan;
+    var acquire_bytes: [5]u8 = undefined;
+    acquire_bytes[0] = op.OP_CALLBACK_ACQUIRE;
+    std.mem.writeInt(u16, acquire_bytes[1..3], cb_plan, .little);
+    std.mem.writeInt(u16, acquire_bytes[3..5], cb_func, .little);
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "main"), &acquire_bytes) != null);
+}
+
+test "ci_callback_acquire requires a direct function reference" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // A function pointer value (not a direct reference).
+    var through_value = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\declare ptr @__ci_callback_acquire(ptr)
+        \\
+        \\define i32 @main(ptr %fn) {
+        \\entry:
+        \\  %tramp = call ptr @__ci_callback_acquire(ptr %fn)
+        \\  ret i32 0
+        \\}
+        \\
+    );
+    try testing.expectError(error.CallbackAcquireRequiresFunctionRef, compile(allocator, &through_value, 1, 8));
+
+    // A global that is not a function of this module.
+    var through_global = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\@table = global i32 0, align 4
+        \\
+        \\declare ptr @__ci_callback_acquire(ptr)
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  %tramp = call ptr @__ci_callback_acquire(ptr @table)
+        \\  ret i32 0
+        \\}
+        \\
+    );
+    try testing.expectError(error.CallbackAcquireRequiresFunctionRef, compile(allocator, &through_global, 1, 8));
+}
+
+test "explicit acquire and the automatic callback path share one plan" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\declare ptr @__ci_callback_acquire(ptr)
+        \\declare i32 @__ci_callback_release(ptr)
+        \\declare void @take(ptr)
+        \\
+        \\define i32 @cb(i32 %a, i32 %b) {
+        \\entry:
+        \\  %r = add i32 %a, %b
+        \\  ret i32 %r
+        \\}
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  call void @take(ptr @cb)
+        \\  %tramp = call ptr @__ci_callback_acquire(ptr @cb)
+        \\  %status = call i32 @__ci_callback_release(ptr %tramp)
+        \\  ret i32 %status
+        \\}
+        \\
+    );
+    const result = try compile(allocator, &module, 1, 8);
+
+    // `emitCallback` (automatic) and `planCallback` (explicit) intern the same
+    // `callback:cb` plan instead of emitting a second CIPL record.
+    try testing.expectEqual(@as(usize, 1), callbackPlanCount(result));
+    const cb_plan = planIndexByName(result, "callback:cb").?;
+    const cb_func = functionIndexByName(result, "cb").?;
+
+    const code = codeOf(result, "main");
+    // Automatic: OP_CREATE_CALLBACK slot func plan, slot 0 for the first use.
+    var create_bytes: [7]u8 = undefined;
+    create_bytes[0] = op.OP_CREATE_CALLBACK;
+    std.mem.writeInt(u16, create_bytes[1..3], 0, .little);
+    std.mem.writeInt(u16, create_bytes[3..5], cb_func, .little);
+    std.mem.writeInt(u16, create_bytes[5..7], cb_plan, .little);
+    try testing.expect(std.mem.indexOf(u8, code, &create_bytes) != null);
+
+    // Explicit: the same plan, no compile-time slot in the encoding.
+    var acquire_bytes: [5]u8 = undefined;
+    acquire_bytes[0] = op.OP_CALLBACK_ACQUIRE;
+    std.mem.writeInt(u16, acquire_bytes[1..3], cb_plan, .little);
+    std.mem.writeInt(u16, acquire_bytes[3..5], cb_func, .little);
+    try testing.expect(std.mem.indexOf(u8, code, &acquire_bytes) != null);
 }
 
 test "misc fixture lowers to the golden CIVM/CIPL (all ABIs)" {

@@ -9,6 +9,7 @@ cinterp 是一个 C 解释器系统：
 - **编译器（构建期）**：Zig 程序调用 `zig cc` 生成 LLVM IR 文本，将 IR 降为紧凑的栈式字节码 CIVM，并为每个外部调用/callback 生成 ABI 计划，打包为 CIPKG。
 - **运行时（发布物）**：Zig 字节码 VM，用固定汇编 ABI 引擎执行原生调用和 callback；不链接 libffi，不使用 `@call` 桩矩阵，不生成动态可执行内存。
 - **FFI 模型**：编译器知道完整签名，运行时只按计划搬运寄存器/栈/sret；结构体布局与宿主 ABI 一致，VM 指针就是宿主指针。
+- **进程模型**：一个 `ci_vm` 持有一个 CIB；进程通过 `ci_process_*` 持有多个 VM，不同 VM 可在不同线程并行；同一 CIB 可在其 VM 上重复运行，每次都是全新镜像。
 - **平台**：Linux x86-64（SysV）、Windows x86-64、Windows x86、Linux AArch64（AAPCS64）。
 
 ## 2. 已确认决策
@@ -17,9 +18,9 @@ cinterp 是一个 C 解释器系统：
 - **编译器**：Zig + `zig cc`（Zig 捆绑 clang 18），中间表示固定为 LLVM IR 文本（`-O0 -S -emit-llvm`）；typed AST 是唯一 IR 前端，不使用 libclang/LLVM 进程内 API。
 - **C 范围**：核心 C17 + C11 常用特性 + 结构体 FFI；以 clang `-O0` IR 的实际输出为契约。
 - **FFI**：编译期生成 ABI 计划，运行时用固定汇编引擎执行；callback 用静态 trampoline 池 + 反向计划。
-- **Callback 池**：进程级固定 256 槽；VM 销毁或 plan 重载后槽位**永久退休、永不复用**，累计注册超过 256 个 callback 返回 `TooManyCallbacks`。
+- **Callback 池**：进程级固定 256 个静态槽，不生成可执行内存。自动 `@cb`/`OP_CREATE_CALLBACK` 槽在 VM 生命周期内保留并跨重复运行复用，VM 销毁或 plan 重载后退休；`ci_callback_acquire`/`ci_callback_release` 允许 CIB 显式归还槽位以便复用，release 后旧指针不得再调用。
 - **发布方式**：编译器只在构建期使用；发布物是运行时库/可执行文件 + 字节码。Linux x86-64 tarball 额外包含 `cinterp-cc`，其余 tarball 为 runtime-only。
-- **执行模型**：一个 VM 同一时间只加载并执行一个 CIB；不支持 CIB-to-CIB 链接。运行时只执行可信构建产物，不提供进程内沙箱。
+- **执行模型**：一个 VM 同一时间只加载并执行一个 CIB，同一 VM 只允许一个执行上下文；进程可通过 `ci_process_*` 持有多个 VM，不同 VM 可并行。不支持 CIB-to-CIB 链接。运行时只执行可信构建产物，不提供进程内沙箱。
 
 ## 3. 平台与 ABI 矩阵
 
@@ -101,7 +102,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量�
 ### 6.1 值与 opcode
 
 - 栈槽固定 8 字节；`Value` 为 `extern union { i: i64, u: u64 }`，浮点按位存放，f32 仅在低 32 位有效，f80/f128 通过线性内存按指针传递。
-- **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xA2）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
+- **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xA4）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
 - 当前实现覆盖常量/局部变量、内存、整数/浮点/位运算/比较/转换、控制流、指针/GEP、varargs、setjmp/longjmp、VLA、f80/f128、`llvm.is.fpclass`、`MEMCPY/MEMSET`、原生调用/callback 等。
 - 操作数使用固定小端 `u8/u16/u32/u64` 编码；跳转目标是加载后的字节码偏移。CIVM/CIPL 的逐字节布局见 [`docs/cib.md`](./docs/cib.md)。
 
@@ -117,6 +118,16 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量�
 - 外部 varargs 的参数提升由 clang 完成；前端为实际参数生成 Loc（SysV `%al`、Win64 浮点 GPR 副本/栈 home、Win32 栈、AArch64 v0–v7/栈）。
 - 内部 varargs 调用携带每个额外参数的 layout code；VM 的 `va_start/va_arg/va_end/va_copy` 覆盖四个 ABI，支持 `long double` 和聚合参数。
 - `setjmp/longjmp` 是 VM 级实现（含 Windows `_setjmp3`/`__intrinsic_setjmpex`），保存/恢复 ip、栈基址、帧数、`mem_top`；slot 越界返回 `BadLocal`/`BadLongjmp`。
+
+### 6.4 重复运行、全新镜像与每 VM 线程
+
+- `ci_vm_run`/`ci_vm_run_args` 每次进入都调用 `resetRunImage`：清零值栈槽位/`sp`/`mem_top`/`arg_area_start`/`frame_count`，清零整块线性内存，清空 `jumps`（上一次运行的 `setjmp` 目标不能复活），清空按 run 收集的 `native_targets`；`native_plan_cache` 保留（plan 索引不变）。
+- `result` 不参与重置：只有成功运行才写入，`ci_vm_result` 始终返回最后一次成功结果。
+- 全局安装代码由编译器生成在 `main` 开头（`SET_MEM_TOP` + 全局镜像），因此重复运行 `main` 会重新安装 globals；非 `main` 入口不会执行安装代码，只看到清零区域，属已知限制。
+- 每 VM 有独立执行权（owner/depth/条件变量）：另一线程 `ci_vm_run` 返回 `CI_E_BUSY`；同一线程嵌套（callback 内再次 run）返回 `CI_E_RUNTIME`，避免清空外层镜像。
+- loader（`ci_vm_load_module`/`load_plans`/`load_package`/`load_library`）在执行期间返回 `CI_E_BUSY`。`ci_vm_busy` 查询状态；`ci_vm_destroy` 等待空闲，`ci_vm_destroy_ex(vm, CI_DESTROY_TRY)` 在 busy 时返回 `CI_E_BUSY`。
+- 不同 VM 使用不同锁，可并行；进程级只有 callback 槽位锁和 `ci_process` 注册表锁。
+- callback dispatch 的线程规则：同线程重入；空闲 VM 自行取得执行权；另一线程正在运行 VM 时 fail-fast，返回值置零并记录 `CI_E_BUSY`（`ci_vm_callback_error` 可读），不阻塞等待。
 
 ## 7. FFI
 
@@ -149,8 +160,11 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 
 - 每个 callback 函数生成反向计划；trampoline 把槽位号放入非参数寄存器，跳到公共入口，保存参数寄存器/栈后调用 `ci_callback_dispatch`。
 - dispatcher 按计划重建参数（含多 Loc 聚合/HFA）、运行 VM 函数、按 `ret_locs` 写回返回值；可重入，不要求外层帧展开。
+- 槽位是进程级固定 256 个静态 trampoline，不生成可执行内存。自动槽（`OP_CREATE_CALLBACK`，把 `@cb` 传给原生调用）绑定到所属 VM，跨重复运行复用，VM 销毁/plan 重载时退休，避免宿主保留的旧函数指针进入另一个 VM。
+- 显式槽使用 `ci_callback_acquire(fn)`/`ci_callback_release(fn)` 宏：`cinterp-cc` 通过 `zig cc -include` 强制包含内嵌的 `compiler/src/data/cinterp_callbacks.h`，CIB 源码不需要 `#include` 或 include path。编译器把 `__ci_callback_acquire`/`__ci_callback_release` 降为 CIVM 0xA3/0xA4，不生成 CIPI import。
+- acquire 只接受直接函数引用（可带 cast；运行期函数指针变量在编译期报 `ci_callback_acquire requires a direct function reference`），返回 trampoline 或 NULL（池耗尽）；release 成功返回 0、callback 仍在执行返回 `CI_E_BUSY`、指针不属于当前 VM/已释放返回 `CI_E_INVALID_ARGUMENT`。释放后的槽回到可复用集合，旧指针不得再调用；未释放的显式槽在 VM 销毁/plan 重载时退休。
+- `ci_callback_pool_stats(total, live, free_slots, retired)` 提供诊断；`ci_vm_callback_error` 记录因 VM 正被另一线程运行而跳过的 dispatch（`CI_E_BUSY`），`ci_vm_clear_error` 一并清除。
 - Win32 cdecl/stdcall callback 支持；stdcall 使用 `Win32CbFrame.cleanup` 在返回时跳过参数。fastcall callback 不支持（trampoline 不捕获 ECX/EDX），注册前返回 `UnsupportedCallback`。
-- 槽位永久退休，不复用；单进程累计上限 256。
 
 ### 7.4 结构体 FFI
 
@@ -213,12 +227,13 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 
 ### 10.2 C ABI
 
-公开头文件 `runtime/include/cinterp.h`；`zig build` 安装可执行文件、静态/共享库和头文件。`CI_ABI_VERSION=2`。
+公开头文件 `runtime/include/cinterp.h`；`zig build` 安装可执行文件、静态/共享库和头文件。`CI_ABI_VERSION=2`。多 CIB/线程/callback 扩展全部按 append-only 追加：新增函数、`CI_E_BUSY = -12`，既有签名与数值不变，不提升 ABI 版本。
 
 ```c
 ci_vm *ci_vm_create(size_t stack_size);
 ci_vm *ci_vm_create_ex(const ci_vm_config *config);
 void ci_vm_destroy(ci_vm *vm);
+int ci_vm_destroy_ex(ci_vm *vm, unsigned flags);          /* CI_DESTROY_TRY */
 int ci_vm_load_module(ci_vm *, const uint8_t *, size_t);
 int ci_vm_load_plans(ci_vm *, const uint8_t *, size_t);
 int ci_vm_load_package(ci_vm *, const uint8_t *, size_t);
@@ -226,23 +241,34 @@ int ci_vm_load_library(ci_vm *, const char *);
 int ci_vm_run(ci_vm *, const char *entry);
 int ci_vm_run_args(ci_vm *, const char *entry, int argc, const char *const *argv);
 int64_t ci_vm_result(const ci_vm *);
+int ci_vm_busy(const ci_vm *);
 const char *ci_vm_last_error(const ci_vm *);
 int ci_vm_last_error_code(const ci_vm *);
 int ci_vm_clear_error(ci_vm *vm);
+int ci_vm_callback_error(const ci_vm *vm);
+void ci_callback_pool_stats(uint32_t *total, uint32_t *live,
+                            uint32_t *free_slots, uint32_t *retired);
+ci_process *ci_process_create(const ci_vm_config *vm_config);
+void ci_process_destroy(ci_process *process);
+int ci_process_load_package(ci_process *, const uint8_t *, size_t, ci_vm **out);
+int ci_process_unload_package(ci_process *, ci_vm *vm);
+const char *ci_process_last_error(const ci_process *);
+int ci_process_last_error_code(const ci_process *);
 int ci_abi_version(void);
 const char *ci_version(void);
 ```
 
-- 返回 `int` 的接口成功返回 `CI_OK`，失败返回具体负值 `CI_E_*`；`CI_ERROR` (-1) 仅用于无法归类的错误。
-- `ci_vm_last_error_code()` 返回同一类别，`ci_vm_last_error()` 返回具体错误名，`ci_vm_clear_error()` 清除两者。
-- `ci_vm_run`/`ci_vm_run_args` 返回状态而不是 C `main` 返回值；结果用 `ci_vm_result` 读取。
-- loader 是事务性的；失败不会替换已加载包。
+- 返回 `int` 的接口成功返回 `CI_OK`，失败返回具体负值 `CI_E_*`；`CI_ERROR` (-1) 仅用于无法归类的错误。`CI_E_BUSY = -12` 是 ABI 2 的追加值，用于另一线程正在执行同一 VM、loader 遇到 busy、`CI_DESTROY_TRY` 等场景。
+- `ci_vm_last_error_code()` 返回同一类别，`ci_vm_last_error()` 返回具体错误名，`ci_vm_clear_error()` 清除两者（以及 callback dispatch 错误）。
+- `ci_vm_run`/`ci_vm_run_args` 返回状态而不是 C `main` 返回值；结果用 `ci_vm_result` 读取。另一线程运行中返回 `CI_E_BUSY`，同线程嵌套返回 `CI_E_RUNTIME`。
+- loader 是事务性的；失败不会替换已加载包。loader 和 `ci_vm_load_library` 在 VM 执行期间返回 `CI_E_BUSY`。
 - `ci_vm_config` 的 `struct_size` 兼容旧调用方；`stack_size=0` 使用默认 8192 槽，`memory_size=0` 使用默认 1 MiB（最大 16 MiB）。
-- 一个 VM 单线程使用；callback 边界可重入。callback 注册表按 VM 隔离，trampoline 槽进程级永久退休。
+- 每个 VM 单执行上下文；不同 VM 可在不同线程并行。`ci_vm_busy` 查询状态，`ci_vm_destroy` 等待空闲，`ci_vm_destroy_ex(vm, CI_DESTROY_TRY)` 在另一线程运行期间立即返回 `CI_E_BUSY`。
+- `ci_process_*` 是进程级注册表：每个 `ci_process_load_package` 创建独立 VM，返回的句柄是借出的，必须用 `ci_process_unload_package` 释放；busy VM 上的卸载和 `ci_process_destroy` 返回 `CI_E_BUSY`，宿主 join 线程后重试。
 
 ### 10.3 运行时上限
 
-`MAX_FUNCS=512`、`MAX_FRAMES=512`、`MAX_STACK=8192`、`MAX_MODULE=2 MiB`、`MAX_PLANS=1024`、`MAX_ARGS=64`、`MAX_LOCS=8`、`MAX_NAME=128`、`MAX_IMPORTS=512`、`MAX_PROVIDERS=8`；native target 注册表 256，超出返回 `TooManyNativeTargets`。
+`MAX_FUNCS=512`、`MAX_FRAMES=512`、`MAX_STACK=8192`、`MAX_MODULE=2 MiB`、`MAX_PLANS=1024`、`MAX_ARGS=64`、`MAX_LOCS=8`、`MAX_NAME=128`、`MAX_IMPORTS=512`、`MAX_PROVIDERS=8`；native target 注册表 256，超出返回 `TooManyNativeTargets`。进程级 `MAX_PROCESS_VMS=64`，超出返回 `ProcessFull`（`CI_E_RESOURCE`）。callback trampoline 池固定 256 个进程级静态槽。
 
 ## 11. 目录与关键文件
 
@@ -278,7 +304,7 @@ runtime/
   tests/                       # C API smoke/argv/fuzz host
 
 examples/                      # hello、FFI、HFA、callback、long double、Win32 约定等
-docs/                          # 格式、嵌入、兼容性、IR 子集、Zig 前端
+docs/                          # 格式、嵌入、多 CIB/线程、兼容性、IR 子集、Zig 前端
 packaging/                     # pkg-config、CMake、Rust binding、release README
 scripts/                       # test/fuzz/differential/release harness
 tests/                         # csuite、manifests、known failures
@@ -311,12 +337,14 @@ make check-version        # VERSION 单一来源校验
 
 当前基线：
 
-- `make test-suites-full`：**4319/4521 通过，202 skip**；其中 4 个 compile-only 压力用例因超过运行时上限显式 skip（512 imports / 64 args / 2 MiB module）。
-- `make test-suites`：396/495（99 skip）。
-- `make test-suites-nightly`：4447/4649（202 skip）；YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure。
+- `make test-suites-full`：**4318/4521 通过，203 skip**；其中 4 个 compile-only 压力用例因超过运行时上限显式 skip（512 imports / 64 args / 2 MiB module），另有 1 个 libc-test 用例因异步外部线程 callback 的 fail-fast 策略显式 skip。
+- `make test-suites`：395/495（100 skip）。
+- `make test-suites-nightly`：4446/4649（203 skip）；YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure。
+- 并发：`test_suites.py --jobs` 默认 CPU 核数，且所有选中 suite 共用一个全局 worker 池；`SUITE_JOBS` 可覆盖。nightly 由 `scripts/test_nightly.sh` 并行执行 suite 与 `generate_diff`，`GEN_JOBS`/`MINIMIZE_JOBS` 控制差分并发，日志为 `build/nightly-suite.log` 和 `build/nightly-diff.log`；顺序模式为 `make test-suites-nightly-serial`，`NIGHTLY_MINIMIZE=0` 跳过最小化。
 - `scripts/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行。
+- 多 CIB/线程：`scripts/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）以及 CLI `--repeat 300` 的自动/显式 callback 用例。
 - 本地 c-testsuite 17/17；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
-- ReleaseSmall：native Linux x64 102,336 B；size-cross static sysv 41,328 B、Win64 100,352 B、Win32 116,224 B、ARM64 101,968 B（均 < 128 KiB）。
+- ReleaseSmall：native Linux x64 115,600 B；size-cross static sysv 103,320 B、Win64 110,592 B、Win32 130,048 B、ARM64 114,592 B（均 < 128 KiB）。
 - release tarball：Linux x86-64 含 `bin/cinterp-cc` 和 `bin/cinterp`，其余为 runtime-only；每个 tarball 带自己的 README、SBOM，compiler tarball 额外带 `THIRD_PARTY_NOTICES.md`。
 
 ## 13. 当前边界与明确不支持
@@ -324,7 +352,7 @@ make check-version        # VERSION 单一来源校验
 - **平台**：仅 Linux x86-64/AArch64（glibc）与 Windows x64/x86；不提供 macOS、musl、Windows ARM64、Linux i386/ARM32。
 - **C/ABI**：`_Complex`、GCC builtins、外部 inline/weak 语义、Win32 `thiscall`、Win64 `__vectorcall`/COM、SysV `i128`/向量参数、向量类型、内联汇编、`_Atomic`/`_Thread_local` 不支持。
 - **链接**：不支持 CIB-to-CIB 链接、包间导出/依赖；跨包复用需合并源码后重新生成 CIB，或通过 `--lib` 使用普通共享库。
-- **执行模型**：单线程、单 VM、单 CIB；无进程内沙箱、无 Safe 模式；不可信输入由宿主隔离。
+- **执行模型**：一个 VM 单执行上下文、单 CIB；进程可通过 `ci_process_*` 持有最多 64 个 VM，不同 VM 可并行。无进程内沙箱、无 Safe 模式；不可信输入由宿主隔离。
 - **Windows CRT**：`%Lf` 行为与原生 MinGW 一致，不额外提供格式化 shim。
 - **外部数据符号**：基础 provider（`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*`、Windows UCRT helper 等）已支持；更冷门的数据符号走 provider/fallback。
 
@@ -332,8 +360,10 @@ make check-version        # VERSION 单一来源校验
 
 - **聚合返回值共享 `ret_buf`**：VM 只有一个 4 KiB 返回缓冲区；两个聚合返回值同时存活时会互相覆盖。修复需要结果所有权/生命周期重构，当前由宿主在跨调用保存聚合指针时自行复制。
 - **Win32 `__fastcall` callback 不支持**：trampoline 只保存出参栈区，ECX/EDX 参数会丢失；注册前返回 `UnsupportedCallback`。原生/间接 fastcall 调用支持。
-- **原生库句柄不卸载**：`--lib` 与 CIPI provider 的 `dlopen`/`LoadLibrary` 句柄随 VM 生命周期保留，没有 `dlclose`/`FreeLibrary`；长期多包宿主应自建进程边界。
-- **callback 槽位是一次性预算**：256 槽永久退休，累计注册超过 256 个 callback 返回 `TooManyCallbacks`。
+- **原生库句柄不卸载**：`--lib` 与 CIPI provider 的 `dlopen`/`LoadLibrary` 句柄随进程保留，没有 `dlclose`/`FreeLibrary`；长期多包宿主应自建进程边界。
+- **宿主堆、atexit/signal 与全局初始化**：`malloc` 等宿主堆分配跨 run 累积，不随 VM 线性内存重置；`atexit`/`signal` 是进程全局状态，多 VM/重复运行共享；非 `main` 入口不会执行编译器生成的 globals 安装代码。这些均已文档化，不在本次改变语义。
+- **callback 槽位**：固定 256 个进程级静态槽。自动 `CREATE_CALLBACK` 槽在 VM 销毁/plan 重载前一直占用（跨 run 复用）；显式 `ci_callback_acquire` 槽在 release 后回到可复用集合，未 release 的显式槽随 VM 销毁/重载退休。自动槽耗尽后返回 `TooManyCallbacks`。
+- **外部线程异步 callback**：VM 正在运行时，另一线程调用的 callback 默认 fail-fast（返回零值并记录 `CI_E_BUSY`），不排队、不阻塞；`libc-test/pthread_tsd` 因此显式 skip。需要异步回调的库应在 VM 空闲时调用，或改成同步 callback 设计。
 - **生成式差分**：YARPGen whitelist 已清空；nightly 的 7 个 skip 是 native 拒绝/超时或 `compiler limit:` 引擎上限。Csmith 仍有 3 条 known failure；报告保留 stale 检测，whitelist 条目开始通过会失败。
 - **后续方向**：向量/复杂 ABI、更多 external data、精确 Windows `%Lf` shim、跨 ABI 执行 fuzz 等按需扩展；不以放宽运行时上限或修改 expected 的方式“修复”。
 
@@ -343,3 +373,4 @@ make check-version        # VERSION 单一来源校验
 - LLVM IR 指令语义与 clang `-O0` 输出模式。
 - System V AMD64、Microsoft x64/x86 调用约定、AArch64 AAPCS64。
 - libffi / dyncall：ABI 分类和栈布局参考（不引入依赖）。
+- [`docs/multi-cib.md`](./docs/multi-cib.md)：进程/VM 模型、每 VM 线程、CLI 多包/重复/并行和 callback acquire/release 的完整说明。

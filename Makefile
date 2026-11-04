@@ -1,7 +1,14 @@
-.PHONY: all test compiler runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-report test-suites-cross test-winapi fetch-suites generate-diff evidence check-version
+.PHONY: all test compiler runtime debug-runtime compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-nightly-serial test-suites-report test-suites-cross test-winapi fetch-suites generate-diff evidence check-version
 
 # Fuzz seeds: CI runs the fuzz targets once per seed (1 and 2).
 FUZZ_SEED ?= 1
+
+# Test-suite concurrency. The runner defaults to CPU count anyway; these make
+# the choice explicit and let CI or a loaded workstation cap it.
+SUITE_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+GEN_JOBS ?= 2
+MINIMIZE_JOBS ?= 2
+NIGHTLY_MINIMIZE ?= 1
 
 all: test
 
@@ -60,17 +67,24 @@ fetch-suites:
 	python3 scripts/fetch_suites.py --all --support
 
 test-suites-smoke: compiler runtime
-	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier smoke --cib-cache build/cib-cache-zig-ast --report build/test-suites-smoke.json
+	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier smoke --jobs $(SUITE_JOBS) --cib-cache build/cib-cache-zig-ast --report build/test-suites-smoke.json
 
 test-suites: compiler runtime
-	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier standard --cib-cache build/cib-cache-zig-ast --report build/test-suites.json
+	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier standard --jobs $(SUITE_JOBS) --cib-cache build/cib-cache-zig-ast --report build/test-suites.json
 
 test-suites-full: compiler runtime
-	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier full --cib-cache build/cib-cache-zig-ast --report build/test-suites-full.json
+	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier full --jobs $(SUITE_JOBS) --cib-cache build/cib-cache-zig-ast --report build/test-suites-full.json
 
+# Run the suite and generated-diff phases concurrently. Each phase writes its
+# own report/log; the suite pool is global across suites.
 test-suites-nightly: compiler runtime
-	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier nightly --cib-cache build/cib-cache-zig-ast --report build/test-suites-nightly.json
-	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
+	SUITE_JOBS=$(SUITE_JOBS) GEN_JOBS=$(GEN_JOBS) MINIMIZE_JOBS=$(MINIMIZE_JOBS) \
+		NIGHTLY_MINIMIZE=$(NIGHTLY_MINIMIZE) ./scripts/test_nightly.sh
+
+# Sequential fallback for debugging or constrained hosts.
+test-suites-nightly-serial: compiler runtime
+	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --tier nightly --jobs $(SUITE_JOBS) --cib-cache build/cib-cache-zig-ast --report build/test-suites-nightly.json
+	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --jobs $(GEN_JOBS) --minimize --minimize-jobs $(MINIMIZE_JOBS) --report build/generate-diff-nightly.json
 
 test-suites-report: test-suites-full
 	@test -s build/test-suites-full.json
@@ -100,10 +114,10 @@ test-suites-cross: compiler runtime
 	cd runtime && zig build -Doptimize=ReleaseSmall
 
 generate-diff: compiler runtime
-	python3 scripts/generate_diff.py --generator yarpgen --iterations 20 --report build/generate-diff-report.json
+	python3 scripts/generate_diff.py --generator yarpgen --iterations 20 --jobs $(GEN_JOBS) --report build/generate-diff-report.json
 
 generate-diff-nightly: compiler runtime
-	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --report build/generate-diff-nightly.json --minimize
+	python3 scripts/generate_diff.py --generator yarpgen --iterations 100 --jobs $(GEN_JOBS) --minimize --minimize-jobs $(MINIMIZE_JOBS) --report build/generate-diff-nightly.json
 
 generate-diff-csmith: compiler runtime
 	python3 scripts/generate_diff.py --generator csmith --iterations 3 --report build/generate-diff-csmith.json

@@ -582,6 +582,7 @@ def main() -> int:
             return 2
     results = []
     temp_root = Path(tempfile.mkdtemp(prefix="cinterp-suites-"))
+    tasks = []
     for suite, manifest in selected.items():
         root = resolve_root(manifest)
         if not root.is_dir():
@@ -598,18 +599,21 @@ def main() -> int:
         if args.limit:
             cases = cases[: args.limit]
         env = build_env(manifest, root)
-        outdir = Path(temp_root)
-        with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
-            futures = [
-                ex.submit(run_case, suite, case, manifest, root, args.target, outdir, env, runner_cfg)
-                for case in cases
-            ]
-            for fut in as_completed(futures):
-                results.append(fut.result())
-        if not args.keep:
-            import shutil
+        for case in cases:
+            tasks.append((suite, case, manifest, root, args.target, temp_root, env, runner_cfg))
 
-            shutil.rmtree(outdir, ignore_errors=True)
+    # One global pool across every selected suite. Per-suite pools left the CPU
+    # idle at suite boundaries (and when a suite had fewer cases than workers);
+    # the per-case work directory is `<temp>/<suite>/<target>/<id>`, so cases
+    # from different suites cannot collide.
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
+        futures = [ex.submit(run_case, *task) for task in tasks]
+        for fut in as_completed(futures):
+            results.append(fut.result())
+    if not args.keep:
+        import shutil
+
+        shutil.rmtree(temp_root, ignore_errors=True)
 
     results.sort(key=lambda x: (x["suite"], x["id"]))
     for item in results:

@@ -85,6 +85,57 @@ fn buildPlans(buf: []u8) []const u8 {
     return a.code();
 }
 
+/// An empty CIPL section: enough plan metadata for a package that makes no
+/// native calls.
+fn buildEmptyPlans(buf: []u8) []const u8 {
+    var a = Asm{ .buf = buf };
+    a.bytes("CIPL");
+    a.u8v(3);
+    a.u8v(platform.abi_id);
+    a.u16v(0);
+    a.u16v(0);
+    return a.code();
+}
+
+/// A v1 CIPKG package: 15-byte header, then the module and plans sections.
+fn buildPackageV1(buf: []u8, module: []const u8, plans: []const u8) []const u8 {
+    var a = Asm{ .buf = buf };
+    a.bytes("CIPKG");
+    a.u8v(1);
+    a.u8v(0);
+    a.u32v(@intCast(module.len));
+    a.u32v(@intCast(plans.len));
+    a.bytes(module);
+    a.bytes(plans);
+    return a.code();
+}
+
+/// `main` with one local that counts down `iterations` and returns `result`.
+/// Long counts are used to keep a VM busy while another thread probes it.
+fn loopMain(buf: []u8, iterations: i64, result: i64) []const u8 {
+    var a = Asm{ .buf = buf };
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(iterations);
+    a.u8v(vm.OP_STORE_LOCAL);
+    a.u16v(0);
+    const loop = a.pos;
+    a.u8v(vm.OP_LOAD_LOCAL);
+    a.u16v(0);
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(1);
+    a.u8v(vm.OP_SUB);
+    a.u8v(vm.OP_STORE_LOCAL);
+    a.u16v(0);
+    a.u8v(vm.OP_LOAD_LOCAL);
+    a.u16v(0);
+    a.u8v(vm.OP_JNZ);
+    a.u32v(@intCast(loop));
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(result);
+    a.u8v(vm.OP_RET);
+    return a.code();
+}
+
 fn putU16(buf: []u8, p: *usize, v: u16) void {
     buf[p.*] = @truncate(v);
     buf[p.* + 1] = @truncate(v >> 8);
@@ -388,7 +439,312 @@ test "error names map to their documented CI_E category" {
     try std.testing.expectEqual(vm.CI_ERROR, vm.errorCode(error.Unexpected));
 }
 
+/// `int cb(void) { return 7; }` — the callback body the acquire/release tests
+/// dispatch directly through `ci_callback_dispatch`.
+const callback_body = [_]u8{
+    vm.OP_LOAD_CONST_I64, 7, 0, 0, 0, 0, 0, 0, 0,
+    vm.OP_RET,
+};
+
+/// `int release_one(unsigned long p) { return ci_callback_release(p); }` so a
+/// test can drive `OP_CALLBACK_RELEASE` with an arbitrary trampoline address.
+const callback_release_fn = [_]u8{
+    vm.OP_LOAD_LOCAL, 0, 0,
+    vm.OP_CALLBACK_RELEASE,
+    vm.OP_RET,
+};
+
+/// `void *acquire(void) { return ci_callback_acquire(&cb); }`.
+const callback_acquire_fn = [_]u8{
+    vm.OP_CALLBACK_ACQUIRE, 0, 0, 1, 0,
+    vm.OP_RET,
+};
+
+/// `main` that performs `iterations` acquire/release cycles and returns 42, or
+/// the negative status of the first failed release (which is what an exhausted
+/// pool looks like: the release of the NULL trampoline fails).
+fn callbackCycleMain(buf: []u8, iterations: i64) []const u8 {
+    var a = Asm{ .buf = buf };
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(iterations);
+    a.u8v(vm.OP_STORE_LOCAL);
+    a.u16v(0);
+    const loop = a.pos;
+    a.u8v(vm.OP_CALLBACK_ACQUIRE);
+    a.u16v(0); // plan
+    a.u16v(1); // cb
+    a.u8v(vm.OP_CALLBACK_RELEASE);
+    a.u8v(vm.OP_DUP);
+    // JZ ok / RET are 5 + 1 bytes; keep the status to return on failure.
+    const ok = loop + 5 + 1 + 1 + 5 + 1;
+    a.u8v(vm.OP_JZ);
+    a.u32v(@intCast(ok));
+    a.u8v(vm.OP_RET); // failed: return the negative status
+    a.u8v(vm.OP_POP); // ok: drop the zero status
+    a.u8v(vm.OP_LOAD_LOCAL);
+    a.u16v(0);
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(1);
+    a.u8v(vm.OP_SUB);
+    a.u8v(vm.OP_STORE_LOCAL);
+    a.u16v(0);
+    a.u8v(vm.OP_LOAD_LOCAL);
+    a.u16v(0);
+    a.u8v(vm.OP_JNZ);
+    a.u32v(@intCast(loop));
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(42);
+    a.u8v(vm.OP_RET);
+    return a.code();
+}
+
+/// Module with `main` (caller supplied), the callback body `cb`, `release_one`
+/// and `acquire`, all sharing one `void cb(void)` callback plan.
+const CallbackFixture = struct {
+    module_buf: [512]u8 = undefined,
+    plan_buf: [64]u8 = undefined,
+    module: []const u8 = &.{},
+    plans: []const u8 = &.{},
+
+    fn build(self: *CallbackFixture, main_code: []const u8, main_locals: u16) void {
+        const funcs = [_]FunctionSpec{
+            .{ .name = "main", .params = 0, .locals = main_locals, .code = main_code },
+            .{ .name = "cb", .params = 0, .locals = 0, .code = &callback_body },
+            .{ .name = "release_one", .params = 1, .locals = 1, .code = &callback_release_fn },
+            .{ .name = "acquire", .params = 0, .locals = 0, .code = &callback_acquire_fn },
+        };
+        self.module = buildModule(&self.module_buf, &funcs);
+        self.plans = buildPlans(&self.plan_buf);
+    }
+
+    fn load(self: *const CallbackFixture, machine: *vm.VM) !void {
+        try machine.loadModuleBytes(self.module);
+        try machine.loadPlans(self.plans);
+    }
+};
+
+fn releaseOne(machine: *vm.VM, addr: i64) !i64 {
+    return machine.runCallback(2, &.{.{ .i = addr }});
+}
+
+/// Global trampoline slot whose table address is `addr`.
+fn callbackSlotOf(addr: usize) ?u64 {
+    var slot: usize = 0;
+    while (slot < 256) : (slot += 1) {
+        const table = platform.callbackTable(slot) orelse continue;
+        if (@intFromPtr(table) == addr) return @intCast(slot);
+    }
+    return null;
+}
+
+/// First integer return register of a callback frame, for the deterministic
+/// zero-return check. The plan locations name this register on every ABI.
+fn callbackIntRet(frame: *platform.CallbackFrame) u64 {
+    return switch (platform.abi_kind) {
+        .sysv => @as(*platform.SysVCbFrame, @ptrCast(frame)).ret_rax,
+        .win64 => @as(*platform.Win64CbFrame, @ptrCast(frame)).ret_rax,
+        .aapcs64 => @as(*platform.Arm64CbFrame, @ptrCast(frame)).ret_x0,
+        .win32 => @as(*platform.Win32CbFrame, @ptrCast(frame)).ret_eax,
+    };
+}
+
+fn setCallbackIntRet(frame: *platform.CallbackFrame, bits: u64) void {
+    switch (platform.abi_kind) {
+        .sysv => @as(*platform.SysVCbFrame, @ptrCast(frame)).ret_rax = bits,
+        .win64 => @as(*platform.Win64CbFrame, @ptrCast(frame)).ret_rax = bits,
+        .aapcs64 => @as(*platform.Arm64CbFrame, @ptrCast(frame)).ret_x0 = bits,
+        .win32 => @as(*platform.Win32CbFrame, @ptrCast(frame)).ret_eax = @truncate(bits),
+    }
+}
+
+test "explicit callback acquire/release reuses trampoline slots" {
+    vm.resetCallbackPoolForTest();
+    defer vm.resetCallbackPoolForTest();
+
+    var main_buf: [128]u8 = undefined;
+    var fixture = CallbackFixture{};
+    fixture.build(callbackCycleMain(&main_buf, 300), 1);
+
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    try fixture.load(machine);
+
+    // 300 acquire/release cycles in one run: without release returning the
+    // slot to the free set the 257th acquire would push NULL and the release
+    // would fail.
+    try std.testing.expectEqual(@as(i64, 42), try machine.runEntry("main"));
+
+    var total: u32 = 0;
+    var live: u32 = 0;
+    var reusable: u32 = 0;
+    var retired: u32 = 0;
+    vm.ci_callback_pool_stats(&total, &live, &reusable, &retired);
+    try std.testing.expectEqual(@as(u32, 256), total);
+    try std.testing.expectEqual(@as(u32, 0), live);
+    try std.testing.expectEqual(@as(u32, 256), reusable);
+    try std.testing.expectEqual(@as(u32, 0), retired);
+
+    // A release puts the slot back where the next acquire finds it.
+    const first = try machine.runEntry("acquire");
+    try std.testing.expect(first != 0);
+    try std.testing.expectEqual(@as(i64, 0), try releaseOne(machine, first));
+    const second = try machine.runEntry("acquire");
+    try std.testing.expectEqual(first, second);
+    try std.testing.expectEqual(@as(i64, 0), try releaseOne(machine, second));
+}
+
+test "callback release reports busy while a dispatch is still active" {
+    vm.resetCallbackPoolForTest();
+    defer vm.resetCallbackPoolForTest();
+
+    var fixture = CallbackFixture{};
+    fixture.build(&callback_acquire_fn, 0);
+
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    try fixture.load(machine);
+
+    const addr = try machine.runEntry("acquire");
+    try std.testing.expect(addr != 0);
+
+    // Pretend a native dispatcher is inside the callback right now.
+    try std.testing.expect(vm.holdCallbackSlotForTest(machine, @intCast(addr), 1));
+    try std.testing.expectEqual(@as(i64, vm.CI_E_BUSY), try releaseOne(machine, addr));
+    var live: u32 = 0;
+    vm.ci_callback_pool_stats(null, &live, null, null);
+    try std.testing.expectEqual(@as(u32, 1), live);
+
+    // Retry once the dispatch finished.
+    try std.testing.expect(vm.holdCallbackSlotForTest(machine, @intCast(addr), -1));
+    try std.testing.expectEqual(@as(i64, vm.CI_OK), try releaseOne(machine, addr));
+    // The pointer is dead after a successful release.
+    try std.testing.expectEqual(@as(i64, vm.CI_E_INVALID_ARGUMENT), try releaseOne(machine, addr));
+    vm.ci_callback_pool_stats(null, &live, null, null);
+    try std.testing.expectEqual(@as(u32, 0), live);
+}
+
+test "unreleased callback slots are retired, released slots are not" {
+    vm.resetCallbackPoolForTest();
+    defer vm.resetCallbackPoolForTest();
+
+    var cycle_buf: [128]u8 = undefined;
+    var acquire_fixture = CallbackFixture{};
+    acquire_fixture.build(&callback_acquire_fn, 0);
+    var cycle_fixture = CallbackFixture{};
+    cycle_fixture.build(callbackCycleMain(&cycle_buf, 1), 1);
+
+    var total: u32 = 0;
+    var live: u32 = 0;
+    var reusable: u32 = 0;
+    var retired: u32 = 0;
+
+    // A VM that never releases its explicit slot retires it on destroy.
+    {
+        const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+        try acquire_fixture.load(machine);
+        try std.testing.expect((try machine.runEntry("acquire")) != 0);
+        vm.ci_callback_pool_stats(&total, &live, &reusable, &retired);
+        try std.testing.expectEqual(@as(u32, 1), live);
+        vm.ci_vm_destroy(machine);
+    }
+    vm.ci_callback_pool_stats(&total, &live, &reusable, &retired);
+    try std.testing.expectEqual(@as(u32, 0), live);
+    try std.testing.expectEqual(@as(u32, 1), retired);
+    try std.testing.expectEqual(@as(u32, 255), reusable);
+
+    // A VM that releases its slot leaves the pool untouched.
+    {
+        const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+        try cycle_fixture.load(machine);
+        try std.testing.expectEqual(@as(i64, 42), try machine.runEntry("main"));
+        vm.ci_callback_pool_stats(&total, &live, &reusable, &retired);
+        try std.testing.expectEqual(@as(u32, 0), live);
+        try std.testing.expectEqual(@as(u32, 1), retired);
+        try std.testing.expectEqual(@as(u32, 255), reusable);
+        vm.ci_vm_destroy(machine);
+    }
+    vm.ci_callback_pool_stats(&total, &live, &reusable, &retired);
+    try std.testing.expectEqual(@as(u32, 1), retired);
+    try std.testing.expectEqual(@as(u32, 255), reusable);
+
+    // Replacing the plans of a VM that still owns an explicit slot retires it:
+    // the plan metadata a dispatch would read is freed with the store.
+    {
+        const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+        defer vm.ci_vm_destroy(machine);
+        try acquire_fixture.load(machine);
+        try std.testing.expect((try machine.runEntry("acquire")) != 0);
+        try machine.loadPlans(acquire_fixture.plans);
+        vm.ci_callback_pool_stats(&total, &live, &reusable, &retired);
+        try std.testing.expectEqual(@as(u32, 0), live);
+        try std.testing.expectEqual(@as(u32, 2), retired);
+        try std.testing.expectEqual(@as(u32, 254), reusable);
+    }
+}
+
+test "a callback while another thread runs the VM fails fast; an idle VM runs it" {
+    vm.resetCallbackPoolForTest();
+    defer vm.resetCallbackPoolForTest();
+
+    var fixture = CallbackFixture{};
+    fixture.build(&callback_acquire_fn, 0);
+
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    try fixture.load(machine);
+
+    const addr = try machine.runEntry("acquire");
+    try std.testing.expect(addr != 0);
+    const slot = callbackSlotOf(@intCast(addr)).?;
+
+    var frame: platform.CallbackFrame = std.mem.zeroes(platform.CallbackFrame);
+
+    // Another thread holds the execution right: the dispatch is skipped with a
+    // zeroed return value and CI_E_BUSY recorded instead of blocking.
+    setCallbackIntRet(&frame, 0xdead_beef);
+    var holder = ForeignOwner{ .state = machine.run_state.? };
+    const thread = try std.Thread.spawn(.{}, ForeignOwner.hold, .{&holder});
+    try waitForFlag(&holder.held);
+    try std.testing.expectEqual(@as(c_int, 1), vm.ci_vm_busy(machine));
+    vm.ci_callback_dispatch(slot, &frame);
+    try std.testing.expectEqual(@as(u64, 0), callbackIntRet(&frame));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_callback_error(machine));
+    holder.release.store(true, .seq_cst);
+    thread.join();
+
+    // ci_vm_clear_error clears the callback channel too.
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_clear_error(machine));
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_callback_error(machine));
+
+    // Idle VM: the dispatch takes and releases the execution right and writes
+    // the real result into the trampoline frame.
+    vm.ci_callback_dispatch(slot, &frame);
+    try std.testing.expectEqual(@as(u64, 7), callbackIntRet(&frame));
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_callback_error(machine));
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_busy(machine));
+
+    // The thread that already runs the VM re-enters the callback.
+    try machine.run_state.?.enter();
+    setCallbackIntRet(&frame, 0);
+    vm.ci_callback_dispatch(slot, &frame);
+    try std.testing.expectEqual(@as(u64, 7), callbackIntRet(&frame));
+    _ = machine.run_state.?.leave();
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_callback_error(machine));
+
+    // A dispatch that races a destroy is skipped with zero return values too.
+    machine.callback_destroying = true;
+    setCallbackIntRet(&frame, 0xdead_beef);
+    vm.ci_callback_dispatch(slot, &frame);
+    try std.testing.expectEqual(@as(u64, 0), callbackIntRet(&frame));
+    machine.callback_destroying = false;
+
+    try std.testing.expectEqual(@as(i64, 0), try releaseOne(machine, addr));
+}
+
 test "retired callback trampoline slots are not reused" {
+    vm.resetCallbackPoolForTest();
+    defer vm.resetCallbackPoolForTest();
+
     var main_code: [16]u8 = undefined;
     var main = Asm{ .buf = &main_code };
     main.u8v(vm.OP_CREATE_CALLBACK);
@@ -493,4 +849,475 @@ test "linear memory allocations stop at the argv area" {
             try std.testing.expectEqual(@as(i64, 42), try machine.runEntry("main"));
         }
     }
+}
+
+/// `main` that returns 42 only when linear memory starts out zeroed: it reads
+/// the first word, writes a marker over it, and adds the old value to 42.
+const fresh_image_main = [_]u8{
+    vm.OP_ADDR_CONST,
+    0,    0, 0, 0, // &mem[0]
+    vm.OP_LOAD_MEM,
+    8,
+    vm.OP_STORE_LOCAL,
+    0, 0, // local 0 = *(i64*)mem
+    vm.OP_LOAD_CONST_I64,
+    0x55, 0, 0, 0, 0, 0, 0, 0,
+    vm.OP_ADDR_CONST,
+    0,    0, 0, 0,
+    vm.OP_STORE_MEM,
+    8, // *(i64*)mem = 0x55
+    vm.OP_LOAD_LOCAL,
+    0, 0,
+    vm.OP_LOAD_CONST_I64,
+    42, 0, 0, 0, 0, 0, 0, 0,
+    vm.OP_ADD,
+    vm.OP_RET,
+};
+
+test "repeated runs start from a fresh image" {
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 2, .code = &fresh_image_main },
+    };
+    var module_buf: [128]u8 = undefined;
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    try machine.loadModuleBytes(buildModule(&module_buf, &funcs));
+
+    var run: usize = 0;
+    while (run < 4) : (run += 1) {
+        try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
+        // 42 only if the previous run's marker was cleared.
+        try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+        try std.testing.expectEqual(@as(u8, 0x55), machine.mem[0]);
+        try std.testing.expectEqual(@as(usize, 0), machine.frame_count);
+    }
+}
+
+test "a run start clears setjmp targets from the previous run" {
+    // A jump buffer only needs to be a stable address, so linear memory works.
+    var setjmp_code: [32]u8 = undefined;
+    var setjmp_asm = Asm{ .buf = &setjmp_code };
+    setjmp_asm.u8v(vm.OP_ADDR_CONST);
+    setjmp_asm.u32v(0);
+    setjmp_asm.u8v(vm.OP_SETJMP);
+    setjmp_asm.u16v(1); // slot 1 of a 2-local frame
+    setjmp_asm.u8v(vm.OP_RET_VOID);
+
+    var longjmp_code: [32]u8 = undefined;
+    var longjmp_asm = Asm{ .buf = &longjmp_code };
+    longjmp_asm.u8v(vm.OP_ADDR_CONST);
+    longjmp_asm.u32v(0);
+    longjmp_asm.u8v(vm.OP_LOAD_CONST_I64);
+    longjmp_asm.i64v(1);
+    longjmp_asm.u8v(vm.OP_LONGJMP);
+    longjmp_asm.u8v(vm.OP_RET_VOID);
+
+    var module_buf: [128]u8 = undefined;
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+
+    const setjmp_funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 2, .code = setjmp_asm.code() },
+    };
+    try machine.loadModuleBytes(buildModule(&module_buf, &setjmp_funcs));
+    try std.testing.expectEqual(@as(i64, 0), try machine.runEntry("main"));
+    // The first run recorded a live target for &mem[0].
+    try std.testing.expect(machine.jumps[0].valid);
+    try std.testing.expectEqual(@as(u16, 1), machine.jumps[0].slot);
+
+    // The second module's frame still has slot 1, so the recorded entry would
+    // be structurally usable; only the per-run reset can make this fail.
+    const longjmp_funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 2, .code = longjmp_asm.code() },
+    };
+    try machine.loadModuleBytes(buildModule(&module_buf, &longjmp_funcs));
+    try std.testing.expectError(error.BadLongjmp, machine.runEntry("main"));
+    try std.testing.expect(!machine.jumps[0].valid);
+}
+
+test "a failed run keeps the last successful result" {
+    var ok_code: [16]u8 = undefined;
+    var ok = Asm{ .buf = &ok_code };
+    ok.u8v(vm.OP_LOAD_CONST_I64);
+    ok.i64v(42);
+    ok.u8v(vm.OP_RET);
+
+    var bad_code: [8]u8 = undefined;
+    var bad = Asm{ .buf = &bad_code };
+    bad.u8v(vm.OP_POP); // empty value stack
+    bad.u8v(vm.OP_RET_VOID);
+
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 0, .code = ok.code() },
+        .{ .name = "bad", .params = 0, .locals = 0, .code = bad.code() },
+    };
+    var module_buf: [128]u8 = undefined;
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    try machine.loadModuleBytes(buildModule(&module_buf, &funcs));
+
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+
+    // A run that fails after the fresh-image reset must not clear the result.
+    try std.testing.expectEqual(vm.CI_E_RUNTIME, vm.ci_vm_run(machine, "bad"));
+    try std.testing.expectEqual(vm.CI_E_RUNTIME, vm.ci_vm_last_error_code(machine));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+
+    // An unknown entry fails before the reset and must not clear it either.
+    try std.testing.expectEqual(vm.CI_E_ENTRY, vm.ci_vm_run(machine, "missing"));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+
+    // And the VM is still usable afterwards.
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+}
+
+test "a run re-entered by the owning thread is rejected" {
+    var ok_code: [16]u8 = undefined;
+    var ok = Asm{ .buf = &ok_code };
+    ok.u8v(vm.OP_LOAD_CONST_I64);
+    ok.i64v(42);
+    ok.u8v(vm.OP_RET);
+
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 0, .code = ok.code() },
+    };
+    var module_buf: [128]u8 = undefined;
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    try machine.loadModuleBytes(buildModule(&module_buf, &funcs));
+
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+
+    // Stand in for a callback that re-enters ci_vm_run: the execution right is
+    // held by this thread, exactly as it is during a real run.
+    try machine.run_state.?.enter();
+    try std.testing.expectEqual(@as(c_int, 1), vm.ci_vm_busy(machine));
+    try std.testing.expectEqual(vm.CI_E_RUNTIME, vm.ci_vm_run(machine, "main"));
+    try std.testing.expectEqual(vm.CI_E_RUNTIME, vm.ci_vm_last_error_code(machine));
+    // The rejected call did not disturb the previous result.
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+    _ = machine.run_state.?.leave();
+
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_busy(machine));
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+}
+
+test "loaders report CI_E_BUSY while the VM executes" {
+    var ok_code: [16]u8 = undefined;
+    var ok = Asm{ .buf = &ok_code };
+    ok.u8v(vm.OP_LOAD_CONST_I64);
+    ok.i64v(42);
+    ok.u8v(vm.OP_RET);
+
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 0, .code = ok.code() },
+    };
+    var module_buf: [128]u8 = undefined;
+    const module = buildModule(&module_buf, &funcs);
+    var plans_buf: [32]u8 = undefined;
+    const plans = buildEmptyPlans(&plans_buf);
+    var package_buf: [192]u8 = undefined;
+    const package = buildPackageV1(&package_buf, module, plans);
+
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    try machine.loadModuleBytes(module);
+
+    try machine.run_state.?.enter();
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_load_module(machine, module.ptr, module.len));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_load_plans(machine, plans.ptr, plans.len));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_load_package(machine, package.ptr, package.len));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_load_library(machine, "libcinterp-does-not-exist.so"));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_last_error_code(machine));
+    _ = machine.run_state.?.leave();
+
+    // Idle again: the same calls go through.
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_load_package(machine, package.ptr, package.len));
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+}
+
+const BusyProbe = struct {
+    machine: *vm.VM,
+    started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    status: c_int = vm.CI_ERROR,
+
+    fn run(self: *BusyProbe) void {
+        self.started.store(true, .seq_cst);
+        self.status = vm.ci_vm_run(self.machine, "main");
+    }
+};
+
+/// Hold a VM's execution right from a second thread until the test releases
+/// it. This makes the cross-thread `CI_E_BUSY` paths deterministic: no timing
+/// window, the owner cannot finish before the assertions run.
+const ForeignOwner = struct {
+    state: *vm.RunState,
+    held: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    release: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    entered: bool = false,
+
+    fn hold(self: *ForeignOwner) void {
+        self.state.enter() catch return;
+        self.entered = true;
+        self.held.store(true, .seq_cst);
+        while (!self.release.load(.seq_cst)) std.time.sleep(100 * std.time.ns_per_us);
+        _ = self.state.leave();
+    }
+};
+
+fn waitForFlag(flag: *std.atomic.Value(bool)) !void {
+    const deadline = std.time.nanoTimestamp() + 10 * std.time.ns_per_s;
+    while (!flag.load(.seq_cst)) {
+        if (std.time.nanoTimestamp() > deadline) return error.TimedOutWaitingForTest;
+        std.time.sleep(50 * std.time.ns_per_us);
+    }
+}
+
+test "two threads on one VM: the second reports CI_E_BUSY" {
+    var code_buf: [64]u8 = undefined;
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 1, .code = loopMain(&code_buf, 1_000_000, 42) },
+    };
+    var module_buf: [128]u8 = undefined;
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    try machine.loadModuleBytes(buildModule(&module_buf, &funcs));
+
+    var probe = BusyProbe{ .machine = machine };
+    const thread = try std.Thread.spawn(.{}, BusyProbe.run, .{&probe});
+    var joined = false;
+    defer {
+        if (!joined) thread.join();
+    }
+
+    // Wait for the worker to take the VM, then race it from this thread.
+    const deadline = std.time.nanoTimestamp() + 10 * std.time.ns_per_s;
+    while (!probe.started.load(.seq_cst)) {
+        if (std.time.nanoTimestamp() > deadline) return error.TimedOutWaitingForRun;
+    }
+    while (vm.ci_vm_busy(machine) == 0) {
+        if (std.time.nanoTimestamp() > deadline) return error.TimedOutWaitingForRun;
+    }
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_run(machine, "main"));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_last_error_code(machine));
+
+    thread.join();
+    joined = true;
+    try std.testing.expectEqual(vm.CI_OK, probe.status);
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_busy(machine));
+}
+
+const VmRunThread = struct {
+    machine: *vm.VM,
+    runs: usize,
+    status: c_int = vm.CI_ERROR,
+    result: i64 = 0,
+
+    fn run(self: *VmRunThread) void {
+        var i: usize = 0;
+        while (i < self.runs) : (i += 1) {
+            self.status = vm.ci_vm_run(self.machine, "main");
+            if (self.status != vm.CI_OK) return;
+            self.result = vm.ci_vm_result(self.machine);
+        }
+    }
+};
+
+test "two VMs run independently on two threads" {
+    var code_a: [64]u8 = undefined;
+    var code_b: [64]u8 = undefined;
+    const funcs_a = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 1, .code = loopMain(&code_a, 200_000, 42) },
+    };
+    const funcs_b = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 1, .code = loopMain(&code_b, 200_000, 7) },
+    };
+    var module_a: [128]u8 = undefined;
+    var module_b: [128]u8 = undefined;
+
+    const a = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    const b = vm.ci_vm_create(0) orelse {
+        vm.ci_vm_destroy(a);
+        return error.OutOfMemory;
+    };
+    try a.loadModuleBytes(buildModule(&module_a, &funcs_a));
+    try b.loadModuleBytes(buildModule(&module_b, &funcs_b));
+
+    var worker_a = VmRunThread{ .machine = a, .runs = 3 };
+    var worker_b = VmRunThread{ .machine = b, .runs = 3 };
+    const thread_a = try std.Thread.spawn(.{}, VmRunThread.run, .{&worker_a});
+    const thread_b = try std.Thread.spawn(.{}, VmRunThread.run, .{&worker_b});
+    thread_a.join();
+    thread_b.join();
+
+    try std.testing.expectEqual(vm.CI_OK, worker_a.status);
+    try std.testing.expectEqual(@as(i64, 42), worker_a.result);
+    try std.testing.expectEqual(vm.CI_OK, worker_b.status);
+    try std.testing.expectEqual(@as(i64, 7), worker_b.result);
+
+    // Destroying one VM leaves the other one usable.
+    vm.ci_vm_destroy(a);
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(b, "main"));
+    try std.testing.expectEqual(@as(i64, 7), vm.ci_vm_result(b));
+    vm.ci_vm_destroy(b);
+}
+
+test "ci_vm_destroy_ex TRY reports a busy VM and defers a same-thread destroy" {
+    var ok_code: [16]u8 = undefined;
+    var ok = Asm{ .buf = &ok_code };
+    ok.u8v(vm.OP_LOAD_CONST_I64);
+    ok.i64v(42);
+    ok.u8v(vm.OP_RET);
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 0, .code = ok.code() },
+    };
+    var module_buf: [128]u8 = undefined;
+    const module = buildModule(&module_buf, &funcs);
+
+    // An idle VM is destroyed by the try path.
+    const idle = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    try idle.loadModuleBytes(module);
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_destroy_ex(idle, vm.CI_DESTROY_TRY));
+
+    // Unknown flags are rejected instead of silently ignored.
+    const other = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    try other.loadModuleBytes(module);
+    try std.testing.expectEqual(vm.CI_E_INVALID_ARGUMENT, vm.ci_vm_destroy_ex(other, 2));
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_busy(other));
+
+    // A second thread holds the execution right: the try path reports busy.
+    var owner = ForeignOwner{ .state = other.run_state.? };
+    const owner_thread = try std.Thread.spawn(.{}, ForeignOwner.hold, .{&owner});
+    var owner_joined = false;
+    defer {
+        if (!owner_joined) {
+            owner.release.store(true, .seq_cst);
+            owner_thread.join();
+        }
+    }
+    try waitForFlag(&owner.held);
+    try std.testing.expect(owner.entered);
+    try std.testing.expectEqual(@as(c_int, 1), vm.ci_vm_busy(other));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_destroy_ex(other, vm.CI_DESTROY_TRY));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_last_error_code(other));
+    owner.release.store(true, .seq_cst);
+    owner_thread.join();
+    owner_joined = true;
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_busy(other));
+
+    // A destroy from the thread that is running the VM cannot wait for itself:
+    // it returns immediately (and a repeat request is idempotent) while the
+    // outermost run frees the VM.
+    try other.run_state.?.enter();
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_destroy_ex(other, 0));
+    try std.testing.expectEqual(@as(c_int, 1), vm.ci_vm_busy(other));
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_destroy_ex(other, vm.CI_DESTROY_TRY));
+    try std.testing.expect(other.run_state.?.leave());
+    // This test stands in for the run frame, which frees the VM here.
+    vm.finishDeferredDestroy(other);
+}
+
+fn loadTestPackage(process: *vm.Process, package: []const u8, out: *?*vm.VM) c_int {
+    return vm.ci_process_load_package(process, package.ptr, package.len, out);
+}
+
+test "a process loads, runs, unloads and destroys independent VMs" {
+    var code_buf: [16]u8 = undefined;
+    var code = Asm{ .buf = &code_buf };
+    code.u8v(vm.OP_LOAD_CONST_I64);
+    code.i64v(42);
+    code.u8v(vm.OP_RET);
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 0, .code = code.code() },
+    };
+    var module_buf: [128]u8 = undefined;
+    var plans_buf: [32]u8 = undefined;
+    var package_buf: [192]u8 = undefined;
+    const package = buildPackageV1(&package_buf, buildModule(&module_buf, &funcs), buildEmptyPlans(&plans_buf));
+
+    const process = vm.ci_process_create(null) orelse return error.OutOfMemory;
+    var first: ?*vm.VM = null;
+    var second: ?*vm.VM = null;
+    try std.testing.expectEqual(vm.CI_OK, loadTestPackage(process, package, &first));
+    try std.testing.expectEqual(vm.CI_OK, loadTestPackage(process, package, &second));
+    try std.testing.expect(first != null and second != null);
+    try std.testing.expect(first.? != second.?);
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(first.?, "main"));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(first.?));
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(second.?, "main"));
+    try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(second.?));
+
+    // A rejected package leaves the registry alone and records the category.
+    var broken_buf: [192]u8 = undefined;
+    @memcpy(broken_buf[0..package.len], package);
+    broken_buf[0] = 'X';
+    var unused: ?*vm.VM = null;
+    try std.testing.expectEqual(vm.CI_E_BAD_PACKAGE, loadTestPackage(process, broken_buf[0..package.len], &unused));
+    try std.testing.expect(unused == null);
+    try std.testing.expectEqual(vm.CI_E_BAD_PACKAGE, vm.ci_process_last_error_code(process));
+    try std.testing.expect(vm.ci_process_last_error(process)[0] != 0);
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(second.?, "main"));
+
+    // Unloading is one-shot; the borrowed handle is dead afterwards. (Only its
+    // value is used below, it is never dereferenced.)
+    const first_vm = first.?;
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_process_unload_package(process, first_vm));
+    try std.testing.expectEqual(vm.CI_E_INVALID_ARGUMENT, vm.ci_process_unload_package(process, first_vm));
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(second.?, "main"));
+
+    vm.ci_process_destroy(process);
+}
+
+test "a process reports busy VMs instead of freeing them" {
+    var code_buf: [16]u8 = undefined;
+    var code = Asm{ .buf = &code_buf };
+    code.u8v(vm.OP_LOAD_CONST_I64);
+    code.i64v(42);
+    code.u8v(vm.OP_RET);
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 0, .code = code.code() },
+    };
+    var module_buf: [128]u8 = undefined;
+    var plans_buf: [32]u8 = undefined;
+    var package_buf: [192]u8 = undefined;
+    const package = buildPackageV1(&package_buf, buildModule(&module_buf, &funcs), buildEmptyPlans(&plans_buf));
+
+    const process = vm.ci_process_create(null) orelse return error.OutOfMemory;
+    var handle: ?*vm.VM = null;
+    try std.testing.expectEqual(vm.CI_OK, loadTestPackage(process, package, &handle));
+    const machine = handle orelse return error.OutOfMemory;
+
+    // A second thread holds the VM's execution right, as a run thread would.
+    var owner = ForeignOwner{ .state = machine.run_state.? };
+    const owner_thread = try std.Thread.spawn(.{}, ForeignOwner.hold, .{&owner});
+    var owner_joined = false;
+    defer {
+        if (!owner_joined) {
+            owner.release.store(true, .seq_cst);
+            owner_thread.join();
+        }
+    }
+    try waitForFlag(&owner.held);
+
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_process_unload_package(process, machine));
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_process_last_error_code(process));
+
+    // Destroy keeps the busy VM and the process alive so the error stays
+    // observable and a later unload/destroy can still free it.
+    vm.ci_process_destroy(process);
+    try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_process_last_error_code(process));
+    try std.testing.expectEqual(@as(c_int, 1), vm.ci_vm_busy(machine));
+
+    owner.release.store(true, .seq_cst);
+    owner_thread.join();
+    owner_joined = true;
+    try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_busy(machine));
+    // Idle again, so the retry frees the VM and the process.
+    vm.ci_process_destroy(process);
 }

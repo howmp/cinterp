@@ -139,6 +139,29 @@ qsort_out="$("$RUNTIME" "$OUT/ffi_qsort.cib" 2>&1)"
 printf '%s\n' "$qsort_out" | grep -Fq "result: 1"
 echo "OK ffi_qsort -> 1"
 
+echo "== explicit callback acquire/release"
+compile examples/ffi_callback_scope.c -o "$OUT/ffi_callback_scope.cib" >/dev/null
+cbscope_out="$("$RUNTIME" "$OUT/ffi_callback_scope.cib" 2>&1)"
+printf '%s\n' "$cbscope_out" | grep -Fq "result: 1"
+echo "OK ffi_callback_scope -> 1"
+# The same VM runs 300 times; explicit release must return every trampoline
+# slot, so the 256-slot process budget is not exhausted.
+cbscope_repeat="$("$RUNTIME" --repeat 300 "$OUT/ffi_callback_scope.cib" 2>&1)"
+cbscope_ok="$(printf '%s\n' "$cbscope_repeat" | grep -c '^result: 1$' || true)"
+if [ "$cbscope_ok" != 300 ]; then
+    echo "FAIL ffi_callback_scope --repeat 300: $cbscope_ok results" >&2
+    exit 1
+fi
+echo "OK ffi_callback_scope --repeat 300 -> 300 x 1"
+# Automatic callback slots are reused across repeated runs without reloading.
+qsort_repeat="$("$RUNTIME" --repeat 300 "$OUT/ffi_qsort.cib" 2>&1)"
+qsort_ok="$(printf '%s\n' "$qsort_repeat" | grep -c '^result: 1$' || true)"
+if [ "$qsort_ok" != 300 ]; then
+    echo "FAIL ffi_qsort --repeat 300: $qsort_ok results" >&2
+    exit 1
+fi
+echo "OK ffi_qsort --repeat 300 -> 300 x 1"
+
 echo "== callback (stack args + structs)"
 cc -shared -fPIC -O0 examples/ffi_callback_helper.c -o "$OUT/libffi_callback_helper.so"
 compile examples/ffi_callback.c -o "$OUT/ffi_callback.cib" >/dev/null
@@ -273,5 +296,161 @@ cc -std=c11 -I runtime/zig-out/include -DCINTERP_EXPECT_VERSION="\"$VERSION\"" \
     -o "$OUT/capi_smoke_shared"
 "$OUT/capi_smoke_shared" "$OUT/hello.cib" "$OUT/ffi_qsort.cib" "$OUT/capi_argv.cib"
 echo "OK C embedding API"
+
+echo "== multi-CIB process API (pthreads, static + shared)"
+# The busy package spins for about one second of CPU time so capi_multi can
+# observe ci_vm_busy / unload / destroy while another thread runs its VM.
+cat > "$OUT/capi_multi_busy.c" <<'EOF'
+#include <time.h>
+
+int main(void) {
+    clock_t start = clock();
+    while (clock() - start < CLOCKS_PER_SEC) {
+    }
+    return 7;
+}
+EOF
+compile "$OUT/capi_multi_busy.c" -o "$OUT/capi_multi_busy.cib" >/dev/null
+cc -std=c11 -I runtime/zig-out/include \
+    runtime/tests/capi_multi.c \
+    runtime/zig-out/lib/libcinterp.a -ldl -lpthread -lm -o "$OUT/capi_multi"
+"$OUT/capi_multi" "$OUT/hello.cib" "$OUT/math.cib" "$OUT/ffi_qsort.cib" \
+    "$OUT/capi_multi_busy.cib"
+cc -std=c11 -I runtime/zig-out/include \
+    runtime/tests/capi_multi.c \
+    -Lruntime/zig-out/lib -Wl,-rpath,"$ROOT/runtime/zig-out/lib" -lcinterp \
+    -o "$OUT/capi_multi_shared"
+"$OUT/capi_multi_shared" "$OUT/hello.cib" "$OUT/math.cib" "$OUT/ffi_qsort.cib" \
+    "$OUT/capi_multi_busy.cib"
+echo "OK multi-CIB process API"
+
+echo "== CLI multi-CIB / repeat"
+# The legacy grammar is untouched: one package, one run, one bare result line.
+legacy_out="$("$RUNTIME" "$OUT/hello.cib" 2>&1)"
+if [ "$legacy_out" != "result: 42" ]; then
+    echo "FAIL legacy single run changed its output" >&2
+    printf '%s\n' "$legacy_out" >&2
+    exit 1
+fi
+# A positional entry plus `--` argv is still the legacy form.
+argv_out="$("$RUNTIME" "$OUT/capi_argv.cib" main -- x 7 2>&1)"
+if [ "$argv_out" != "result: 7" ]; then
+    echo "FAIL legacy positional entry/argv changed its output" >&2
+    printf '%s\n' "$argv_out" >&2
+    exit 1
+fi
+echo "OK legacy single run"
+
+# --repeat: one VM, N runs, one header + result per run.
+repeat_out="$("$RUNTIME" --repeat 3 "$OUT/hello.cib" 2>&1)"
+repeat_results="$(printf '%s\n' "$repeat_out" | grep -c '^result: 42$' || true)"
+repeat_headers="$(printf '%s\n' "$repeat_out" | grep -c "^package: $OUT/hello.cib run: [0-9]*/3$" || true)"
+if [ "$repeat_results" != 3 ] || [ "$repeat_headers" != 3 ]; then
+    echo "FAIL --repeat 3: $repeat_results results, $repeat_headers headers" >&2
+    printf '%s\n' "$repeat_out" >&2
+    exit 1
+fi
+printf '%s\n' "$repeat_out" | grep -Fq "run: 3/3" || {
+    echo "FAIL --repeat 3 missing run: 3/3" >&2
+    exit 1
+}
+echo "OK --repeat 3 hello -> 3 x 42"
+
+# --run-all: one VM per package, hello/math/ffi_qsort -> 42/8/1.
+runall_out="$("$RUNTIME" --run-all "$OUT/hello.cib" "$OUT/math.cib" "$OUT/ffi_qsort.cib" 2>&1)"
+for want in 42 8 1; do
+    got="$(printf '%s\n' "$runall_out" | grep -c "^result: $want$" || true)"
+    if [ "$got" != 1 ]; then
+        echo "FAIL --run-all: expected one result: $want, got $got" >&2
+        printf '%s\n' "$runall_out" >&2
+        exit 1
+    fi
+done
+runall_headers="$(printf '%s\n' "$runall_out" | grep -c "^package: .* run: 1/1$" || true)"
+if [ "$runall_headers" != 3 ]; then
+    echo "FAIL --run-all: expected 3 package headers, got $runall_headers" >&2
+    printf '%s\n' "$runall_out" >&2
+    exit 1
+fi
+echo "OK --run-all hello/math/ffi_qsort -> 42/8/1"
+
+# Default --jobs 1 keeps the package order deterministic.
+ordered_out="$("$RUNTIME" --run-all --repeat 2 "$OUT/hello.cib" "$OUT/math.cib" 2>&1)"
+ordered_headers="$(printf '%s\n' "$ordered_out" | grep '^package: ')"
+expected_headers="package: $OUT/hello.cib run: 1/2
+package: $OUT/hello.cib run: 2/2
+package: $OUT/math.cib run: 1/2
+package: $OUT/math.cib run: 2/2"
+if [ "$ordered_headers" != "$expected_headers" ]; then
+    echo "FAIL --run-all --repeat 2 is not deterministic with --jobs 1" >&2
+    printf '%s\n' "$ordered_out" >&2
+    exit 1
+fi
+echo "OK --run-all --repeat 2 (jobs 1) is ordered"
+
+# --jobs 2 runs packages on two worker threads: the set of results must not
+# change, only the order (which the CLI documents as unspecified).
+parallel_out="$("$RUNTIME" --run-all --repeat 2 --jobs 2 "$OUT/hello.cib" "$OUT/math.cib" 2>&1)"
+parallel_42="$(printf '%s\n' "$parallel_out" | grep -c '^result: 42$' || true)"
+parallel_8="$(printf '%s\n' "$parallel_out" | grep -c '^result: 8$' || true)"
+parallel_headers="$(printf '%s\n' "$parallel_out" | grep -c '^package: ' || true)"
+parallel_last="$(printf '%s\n' "$parallel_out" | grep -c ' run: 2/2$' || true)"
+if [ "$parallel_42" != 2 ] || [ "$parallel_8" != 2 ] ||
+   [ "$parallel_headers" != 4 ] || [ "$parallel_last" != 2 ]; then
+    echo "FAIL --run-all --repeat 2 --jobs 2: 42x$parallel_42 8x$parallel_8 headers=$parallel_headers run2=$parallel_last" >&2
+    printf '%s\n' "$parallel_out" >&2
+    exit 1
+fi
+echo "OK --run-all --repeat 2 --jobs 2"
+
+# --load-only loads and validates every package without running anything.
+load_out="$("$RUNTIME" --run-all --load-only "$OUT/hello.cib" "$OUT/math.cib" 2>&1)"
+if [ -n "$load_out" ]; then
+    echo "FAIL --run-all --load-only produced output" >&2
+    printf '%s\n' "$load_out" >&2
+    exit 1
+fi
+single_load="$("$RUNTIME" --load-only "$OUT/hello.cib" 2>&1)"
+if [ -n "$single_load" ]; then
+    echo "FAIL --load-only produced output" >&2
+    printf '%s\n' "$single_load" >&2
+    exit 1
+fi
+echo "OK --load-only"
+
+# Dumps stay per package; multi mode labels each package.
+dump_out="$("$RUNTIME" --run-all --dump-target --dump-imports --load-only \
+    "$OUT/hello.cib" "$OUT/ffi_printf.cib" 2>&1)"
+printf '%s\n' "$dump_out" | grep -Fq "package: $OUT/ffi_printf.cib"
+printf '%s\n' "$dump_out" | grep -Fq "target: x86_64-pc-linux-gnu"
+printf '%s\n' "$dump_out" | grep -Fq "printf: libc.so.6:printf"
+echo "OK --run-all dumps"
+
+expect_usage_error() {
+    local name="$1"
+    shift
+    set +e
+    "$@" >/dev/null 2>&1
+    local rc=$?
+    set -e
+    if [ "$rc" -ne 2 ]; then
+        echo "FAIL $name: expected usage exit 2, got $rc" >&2
+        exit 1
+    fi
+}
+expect_usage_error "--repeat 0" "$RUNTIME" --repeat 0 "$OUT/hello.cib"
+expect_usage_error "--jobs 0" "$RUNTIME" --jobs 0 "$OUT/hello.cib"
+expect_usage_error "missing package" "$RUNTIME"
+expect_usage_error "--run-all without packages" "$RUNTIME" --run-all
+expect_usage_error "--entry plus positional entry" "$RUNTIME" --entry main "$OUT/hello.cib" main
+set +e
+"$RUNTIME" --run-all "$OUT/hello.cib" "$OUT/bad.cib" >/dev/null 2>&1
+runall_bad_rc=$?
+set -e
+if [ "$runall_bad_rc" -ne 1 ]; then
+    echo "FAIL --run-all with a bad package exited $runall_bad_rc, expected 1" >&2
+    exit 1
+fi
+echo "OK CLI usage/error paths"
 
 echo "all tests passed"

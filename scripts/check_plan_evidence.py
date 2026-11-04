@@ -6,8 +6,8 @@ it either crashed or verified nothing. This version reads the reports the build
 actually writes:
 
   * ``build/test-suites-smoke.json``     (17 ok)
-  * ``build/test-suites.json``           (396 ok / 99 skip)
-  * ``build/test-suites-full.json``      (4319 ok / 202 skip)
+  * ``build/test-suites.json``           (395 ok / 100 skip)
+  * ``build/test-suites-full.json``      (4318 ok / 203 skip)
   * ``build/test-suites-nightly.json``   (consistency only)
   * ``build/generate-diff-nightly.json`` (0 failures)
   * ``build/release/cinterp-*.tar.gz``   (4 tarballs + SHA256SUMS; Linux ships bin/cinterp-cc)
@@ -37,8 +37,8 @@ MISSING = "missing"
 # (label, path, expected ok, expected skip, --require-* key)
 SUITE_REPORTS = (
     ("test-suites-smoke", B / "test-suites-smoke.json", 17, 0, "smoke"),
-    ("test-suites", B / "test-suites.json", 396, 99, "standard"),
-    ("test-suites-full", B / "test-suites-full.json", 4319, 202, "full"),
+    ("test-suites", B / "test-suites.json", 395, 100, "standard"),
+    ("test-suites-full", B / "test-suites-full.json", 4318, 203, "full"),
 )
 NIGHTLY_REPORT = B / "test-suites-nightly.json"
 DIFF_REPORT = B / "generate-diff-nightly.json"

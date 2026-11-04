@@ -60,7 +60,9 @@ cinterp-sys = { path = "vendor/cinterp-sys" }
 ```
 
 该 crate 暴露原始 `ci_vm_*` 符号以及一个小型的安全 `Vm` 包装；参见发布 tarball 中的
-`rust/cinterp-sys/README.md`。`Error` 携带三个字段：
+`rust/cinterp-sys/README.md`。`ci_process_*`、`ci_vm_busy`、`ci_vm_destroy_ex` 和
+callback 池统计目前没有安全封装，需要时请在 Rust 中直接声明对应 `extern "C"`，或使用
+C 宿主。`Error` 携带三个字段：
 
 - `Error.code` 是 `ci_vm_last_error_code()` 报告的类别（一个 `CI_E_*` 值；若 VM 未
   记录任何类别，则为原始状态码）；
@@ -116,6 +118,12 @@ int main(void) {
 `ci_vm_run`/`ci_vm_run_args` 返回状态；被解释执行的 `main` 返回值通过
 `ci_vm_result` 读取。`ci_vm_run_args` 最多接受 256 个 argv 条目。
 
+这个单 VM 流程适合一个宿主进程只跑一个 CIB 的场景。需要同时持有多个 CIB 时，使用
+`ci_process_create`/`ci_process_load_package` 为每个包创建一个 VM，并用
+`ci_process_unload_package` 释放借出的 `ci_vm *`；busy VM 上的卸载/`ci_process_destroy`
+返回 `CI_E_BUSY`，宿主 join 运行线程后重试。完整签名、pthread 并行示例、CLI 多包
+命令和 callback acquire/release 见 [`multi-cib.md`](multi-cib.md)。
+
 `ci_vm_create_ex` 接受一个 `ci_vm_config` 以支持前向兼容的选项：`struct_size` 至少
 必须覆盖到 `stack_size`（若要传入 `memory_size`，请将其设为 `sizeof(ci_vm_config)`），
 并且 `flags` 必须为零。
@@ -142,11 +150,19 @@ VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划�
 2 MiB；原先固定的约 10 MiB 占用（其中包括 6.5 MiB 的计划表）已不复存在。对于小包，
 可以调低 `memory_size`。
 
+每个 VM 每次 `ci_vm_run*` 都从全新镜像开始：值栈、线性内存、`mem_top`/帧和
+`setjmp` 目标都会重置，`main` 开头的全局安装代码会重新执行；`native` 计划缓存保留，
+按 run 登记的 native target 重新收集。`ci_vm_result` 返回最后一次**成功**运行的结果，
+失败运行不会覆盖它。非 `main` 入口不会执行全局安装代码，这是已知限制；需要全局初始化
+时请从 `main` 进入。
+
 ## 错误与所有权
 
 - 函数返回 `CI_OK` 或**特定类别的负 `CI_E_*` 状态码**。只有当运行时无法对失败进行
   分类时才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别，
   `ci_vm_last_error` 返回具体的错误名（例如 `BadPackageMagic`）。
+- `CI_E_BUSY`（-12）表示另一线程正在执行该 VM，或 loader/`ci_vm_destroy_ex`
+  遇到 busy；`ci_vm_run` 在同一线程嵌套调用时返回 `CI_E_RUNTIME`。
 - 成功的 `ci_vm_load_*`、`ci_vm_run`、`ci_vm_run_args` 或 `ci_vm_load_library` 会
   同时清除错误文本和类别。`ci_vm_clear_error(vm)` 显式清除它们并返回 `CI_OK`。
 - `ci_vm_last_error` 返回的文本位于 VM 自己拥有的 128 字节缓冲区中。该指针一直有效，
@@ -163,15 +179,36 @@ VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划�
 
 ## 线程、回调与多个 VM
 
-- 单个 VM 是单线程的。不要并发调用同一个 VM。
-- 不同的 VM 彼此独立。回调 trampoline 是进程级的：一个固定 **256 个槽**的池，由
-  进程中的每个 VM 共享。
-- 当拥有该槽的 VM 被销毁或其计划被重新加载时，该槽会**永久退役**，并且**永不复用**
-  （宿主可能仍持有该函数指针，复用该槽会把它重定向到另一个 VM）。因此该池是每个
-  进程一次性 256 次回调注册的预算：池耗尽后，`CREATE_CALLBACK` 会以
-  `TooManyCallbacks`（`CI_E_RUNTIME`）失败。在循环中反复创建和销毁带回调的 VM
-  最终会耗尽它；它不是每 VM 的限制。
-- `ci_vm_destroy` 会等待正在进行的回调返回后再释放 VM。
+- 每个 VM 同一时间只允许一个执行上下文。`ci_vm_run`/`ci_vm_run_args` 在另一线程正在
+  运行该 VM 时返回 `CI_E_BUSY`；同一线程从 callback 内再次调用返回 `CI_E_RUNTIME`
+  （避免清空外层运行的值栈和线性内存）。`ci_vm_busy(vm)` 返回 1/0。
+- 不同 VM 彼此独立，可以同时在不同线程上运行；每个 VM 有自己的执行锁。
+- loader（`ci_vm_load_module`/`load_plans`/`load_package`/`load_library`）在 VM 执行
+  期间返回 `CI_E_BUSY`，不会替换正在使用的模块或计划。
+- `ci_vm_destroy(vm)` 等待另一线程的运行结束；由正在运行的线程调用时延迟到最外层
+  运行返回后释放。`ci_vm_destroy_ex(vm, CI_DESTROY_TRY)` 在 busy 时立即返回
+  `CI_E_BUSY` 并保持 VM 不变。
+- 一个进程需要多个 CIB 时，用 `ci_process_*` 注册表：`ci_process_load_package` 为
+  每个包创建一个新 VM，返回的 `ci_vm *` 是借出的句柄，必须用
+  `ci_process_unload_package` 释放。`ci_process_destroy` 在仍有 VM 运行时报告
+  `CI_E_BUSY` 并保持注册表存活，宿主应 join 线程后重试。详见
+  [`multi-cib.md`](multi-cib.md)。
+- 回调 trampoline 是进程级的：一个固定 **256 个槽**的静态池，由进程中的每个 VM
+  共享，不生成可执行内存。存在两种生命周期：
+  - 自动 callback（把 `@cb` 传给原生调用）的槽位绑定到所属 VM，跨重复运行保留，
+    直到 VM 被销毁或其计划被重新加载时**永久退休**。因此它不是每次运行消耗一个新槽。
+  - `ci_callback_acquire(fn)`/`ci_callback_release(fn)` 允许 CIB 显式管理：acquire
+    返回 trampoline 或 NULL（池耗尽），release 成功返回 0 并把槽位放回可复用集合；
+    callback 仍在执行时返回 `CI_E_BUSY`，指针不属于当前 VM/已释放时返回
+    `CI_E_INVALID_ARGUMENT`。这两个宏由 `cinterp-cc` 强制包含的头文件提供，CIB
+    源码不需要 `#include`。释放后的旧指针不得再次调用；未释放的显式槽在 VM 销毁或
+    计划重载时退休。
+  - `ci_callback_pool_stats(&total, &live, &free_slots, &retired)` 报告池使用情况；
+    `ci_vm_callback_error(vm)` 报告被跳过的 callback dispatch（例如 `CI_E_BUSY`），
+    `ci_vm_clear_error(vm)` 会一并清除。
+- 原生代码在外部线程调用 callback 时：同一线程正在运行 VM 则重入；VM 空闲则 dispatch
+  自行取得执行权；另一线程正在运行 VM 时 fail-fast，callback 被跳过、返回值置零并
+  记录 `CI_E_BUSY`。不要通过 callback 等待 busy VM，否则可能与运行线程死锁。
 - 回调在 SysV x86-64、Win64、Win32 和 AArch64 上受支持。Win32 `__stdcall` 回调受
   支持（trampoline 会弹出 stdcall 参数）；Win32 `__fastcall` 回调在注册时即被拒绝，
   返回 `UnsupportedCallback`（`CI_E_RUNTIME`），因为 i686 trampoline 永远看不到
@@ -182,6 +219,9 @@ VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划�
 
 - `CI_ABI_VERSION` 当前为 **2**。`ci_abi_version()` 返回它，`ci_version()` 返回仓库
   `VERSION` 文件中的发布版本。`ci_vm_clear_error()` 属于同一个头文件/ABI。
+- C ABI 2 是 append-only 的：`CI_E_BUSY = -12`、`ci_vm_busy`、`ci_vm_destroy_ex`、
+  `ci_vm_callback_error`、`ci_callback_pool_stats` 和 `ci_process_*` 都是追加项，
+  既有函数、数值和语义不变，因此不需要提升 `CI_ABI_VERSION`。
 - 包格式版本、N−1 读取保证和 C ABI 规则记录在
   [`compatibility.md`](compatibility.md) 中。
 - `CI_ABI_VERSION` 与共享库 SONAME 主版本是相互独立的编号；请检查

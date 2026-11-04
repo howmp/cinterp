@@ -86,9 +86,11 @@ python3 scripts/test_suites.py --tier full --jobs 8 --cib-cache build/cib-cache
 
 ### 跳过 / 排除清单（2026-11-03）
 
-- 11 个清单引用了 `repo_skip_file`。这些文件合计包含 **201** 行非注释的
+- 11 个清单引用了 `repo_skip_file`。这些文件合计包含 **202** 行非注释的
   `ID<TAB>reason`；`llvm-regression-c.json` 另外增加一条内联跳过，因此在
-  `build/test-suites-full.json` 中共有 **202** 次跳过。
+  `build/test-suites-full.json` 中共有 **203** 次跳过。
+- `libc-test/pthread_tsd` 被跳过：它在 VM 执行期间从 worker 线程调用 VM
+  callback；每 VM fail-fast 线程策略会有意跳过这种外部线程 callback。
 - `tests/manifests/gcc-torture-compile.skip` 有三个条目，对应其包会超出运行时上限的
   仅编译压力用例（`limits-externdecl` >512 个导入，`pr37669-2` >64 个参数，`stuct`
   >2 MiB 模块）。`llvm-regression-c.json` 出于同样的原因内联跳过 `pr60822`。
@@ -116,7 +118,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 ## 当前原生基线（2026-11-03）
 
 在 `x86_64-linux` 上运行 `make test-suites-full`；这些数字直接读取自
-`build/test-suites-full.json`（`tier=full`，`counts = {ok: 4319, skip: 202}`，
+`build/test-suites-full.json`（`tier=full`，`counts = {ok: 4318, skip: 203}`，
 共 4521 条结果）。TCC 的参考输出会针对绝对的 `__FILE__`
 路径、行尾空格和 TCC 编译器警告做归一化处理；这样在不削弱语义比较的前提下
 多恢复了 4 个用例。
@@ -127,7 +129,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | c-testsuite | 220 | 218 | 2 | 内联跳过（`00204`、`00216`） |
 | tcc-tests2 | 142 | 99 | 43 | |
 | chibicc | 41 | 15 | 26 | |
-| libc-test | 75 | 47 | 28 | |
+| libc-test | 75 | 46 | 29 | `pthread_tsd` 因外部线程 callback 的 fail-fast 策略跳过 |
 | libc-test-regression | 69 | 48 | 21 | |
 | gcc-torture | 1306 | 1287 | 19 | 执行类用例 |
 | gcc-torture-compile | 1411 | 1408 | 3 | 仅编译（`mode: compile`）；3 条运行时上限跳过 |
@@ -137,7 +139,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | compcert-compile | 34 | 30 | 4 | 仅编译（`mode: compile`） |
 | llvm-singlesource | 93 | 85 | 8 | 仅编译（`mode: compile`） |
 | llvm-regression-c | 935 | 934 | 1 | 仅编译（`mode: compile`），已去重 ID；1 条运行时上限跳过 |
-| **总计** | **4521** | **4319** | **202** | |
+| **总计** | **4521** | **4318** | **203** | |
 
 ### 仅编译部分
 
@@ -153,10 +155,10 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | llvm-singlesource（同样是 `mode: compile`） | 85 |
 | **所有编译模式的通过数** | **2457** |
 
-其余 4319 − 2457 = **1862** 次通过是可执行用例，其 stdout /
+其余 4318 − 2457 = **1861** 次通过是可执行用例，其 stdout /
 退出状态 / `// expect:` 结果会与参考结果进行比较。
 
-### 每日/交叉冒烟套件（不属于 4319 的一部分）
+### 每日/交叉冒烟套件（不属于 4318 的一部分）
 
 这四个冒烟套件只属于 `nightly` 层级；它们由
 `make test-suites-cross` 和 `cross-abi` 工作流按目标分别执行，结果落在

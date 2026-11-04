@@ -153,6 +153,55 @@ int main(int argc, char **argv) {
     if (ci_vm_run(old, "main") != CI_OK || ci_vm_result(old) != 42) return 29;
     ci_vm_destroy(old);
 
+    /* Per-VM execution state: an idle VM is not busy, a failed run keeps the
+       last successful result, and CI_DESTROY_TRY frees an idle VM. */
+    ci_vm *keep = ci_vm_create(0);
+    if (!keep) return 35;
+    if (ci_vm_busy(keep) != 0) return 36;
+    if (load_package(keep, hello, hello_size) != CI_OK) return 37;
+    if (ci_vm_run(keep, "main") != CI_OK) return 38;
+    if (ci_vm_result(keep) != 42) return 39;
+    if (ci_vm_busy(keep) != 0) return 40;
+    if (ci_vm_run(keep, "no-such-entry") != CI_E_ENTRY) return 41;
+    if (ci_vm_result(keep) != 42) return 42;
+    if (ci_vm_last_error_code(keep) != CI_E_ENTRY) return 43;
+    if (ci_vm_destroy_ex(keep, CI_DESTROY_TRY) != CI_OK) return 44;
+
+    /* Process registry: two independent VMs for the same package. */
+    ci_process *process = ci_process_create(NULL);
+    if (!process) return 45;
+    if (ci_process_last_error(process)[0] != 0 || ci_process_last_error_code(process) != 0)
+        return 46;
+    ci_vm *p1 = NULL;
+    ci_vm *p2 = NULL;
+    if (ci_process_load_package(process, hello, hello_size, &p1) != CI_OK) return 47;
+    if (ci_process_load_package(process, hello, hello_size, &p2) != CI_OK) return 48;
+    if (p1 == NULL || p2 == NULL || p1 == p2) return 49;
+    if (ci_vm_run(p1, "main") != CI_OK || ci_vm_result(p1) != 42) return 50;
+    if (ci_vm_run(p2, "main") != CI_OK || ci_vm_result(p2) != 42) return 51;
+
+    unsigned char *junk = malloc(hello_size);
+    if (!junk) return 11;
+    memcpy(junk, hello, hello_size);
+    junk[0] = 'X';
+    ci_vm *unused = NULL;
+    if (ci_process_load_package(process, junk, hello_size, &unused) != CI_E_BAD_PACKAGE) return 52;
+    if (unused != NULL) return 53;
+    if (ci_process_last_error_code(process) != CI_E_BAD_PACKAGE) return 54;
+    if (ci_process_last_error(process)[0] == 0) return 54;
+    free(junk);
+    /* A rejected load left the registry alone. */
+    if (ci_vm_run(p2, "main") != CI_OK || ci_vm_result(p2) != 42) return 55;
+
+    if (ci_process_unload_package(process, p1) != CI_OK) return 56;
+    if (ci_process_unload_package(process, p2) != CI_OK) return 57;
+    ci_process_destroy(process);
+
+    /* The process registry accepts the same pre-memory_size config layout. */
+    ci_process *legacy_process = ci_process_create((const ci_vm_config *)&legacy);
+    if (!legacy_process) return 58;
+    ci_process_destroy(legacy_process);
+
     free(hello);
     free(qsort_cib);
     free(argv_cib);

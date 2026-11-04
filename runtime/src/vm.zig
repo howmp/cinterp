@@ -119,6 +119,23 @@ pub const OP_ALLOCA_ALIGNED: u8 = 0x9F;
 pub const OP_ALLOCA_DYN_ALIGN: u8 = 0xA0;
 pub const OP_CALL_VARIADIC_TYPED: u8 = 0xA1;
 pub const OP_FPCLASS: u8 = 0xA2;
+/// `OP_CALLBACK_ACQUIRE u16 plan_index, u16 func_index`: bind `func_index` to
+/// the native callback plan `plan_index` in a free process-wide trampoline slot
+/// and push the trampoline address (0 when every slot is live or retired).
+/// Emitted for `ci_callback_acquire` from the force-included
+/// `cinterp_callbacks.h`. Unlike `OP_CREATE_CALLBACK` it reserves no
+/// compile-time local slot: the CIB decides when to give the slot back with
+/// `OP_CALLBACK_RELEASE`, which is what lets one VM create more than 256
+/// callbacks over its lifetime.
+pub const OP_CALLBACK_ACQUIRE: u8 = 0xA3;
+/// `OP_CALLBACK_RELEASE`: pop the trampoline address `OP_CALLBACK_ACQUIRE`
+/// produced, release the slot this VM owns for it and push the status:
+/// `CI_OK` (0), `CI_E_BUSY` while a dispatch is still inside the callback, or
+/// `CI_E_INVALID_ARGUMENT` when this VM owns no slot for the address (already
+/// released, never a trampoline, or another VM's). Emitted for
+/// `ci_callback_release`; the C contract is that the pointer is dead after a
+/// successful release, so the reused slot cannot be reached through it.
+pub const OP_CALLBACK_RELEASE: u8 = 0xA4;
 
 fn floatToI64Safe(x: anytype) !i64 {
     const xf: f64 = @floatCast(x);
@@ -240,12 +257,143 @@ const CallbackEntry = struct {
     plan: abi.CallPlan,
 };
 
+/// Per-VM execution state: who may run this VM, and whether it is going away.
+///
+/// `VM` is copied by value by `checkpoint`/`rollback` (a transactional load
+/// works on a snapshot) and zeroed wholesale by `initMachine`, so the lock
+/// cannot live inside the struct: a copied `std.Thread.Mutex` would be a second
+/// lock over the same state, and the `initMachine` memset would silently forget
+/// a held lock. `VM.run_state` is therefore a heap pointer that every copy of
+/// the VM shares.
+pub const RunState = struct {
+    mutex: std.Thread.Mutex = .{},
+    cond: std.Thread.Condition = .{},
+    /// Thread holding the exclusive execution right, or null when the VM is
+    /// idle.
+    owner: ?std.Thread.Id = null,
+    /// Number of execution contexts the owner holds. Nested runs are rejected
+    /// rather than stacked, so this is 0 or 1; it is tracked anyway so a
+    /// deferred destroy only fires on the outermost run.
+    depth: u32 = 0,
+    /// Set once destruction started: no new run or load may begin, so a
+    /// destroy cannot race a fresh execution.
+    closing: bool = false,
+    /// `ci_vm_destroy` was called by the thread that is running this VM (for
+    /// example from a callback). Freeing it there would corrupt the frame that
+    /// is still executing, so the outermost run destroys the VM on its way out.
+    destroy_pending: bool = false,
+
+    pub const EnterError = error{ Busy, NestedRun, VmDestroyed };
+
+    /// `.idle` means the caller won the right to free the VM. `.closing` means
+    /// another thread already took it (so the caller must not free it).
+    pub const CloseResult = enum { idle, busy, deferred, closing };
+
+    /// True while any thread is executing this VM. Used by `ci_vm_busy`.
+    pub fn isBusy(self: *RunState) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.owner != null;
+    }
+
+    /// Take the exclusive execution right for the calling thread.
+    ///
+    /// Another thread gets `error.Busy`. The owning thread itself gets
+    /// `error.NestedRun`: re-entering `ci_vm_run` from a callback would clear
+    /// the value stack and memory of the run that called it. A VM that is
+    /// already being destroyed gets `error.VmDestroyed`.
+    pub fn enter(self: *RunState) EnterError!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.closing) return error.VmDestroyed;
+        if (self.owner) |owner| {
+            if (owner == std.Thread.getCurrentId()) return error.NestedRun;
+            return error.Busy;
+        }
+        self.owner = std.Thread.getCurrentId();
+        self.depth = 1;
+    }
+
+    /// Release the execution right taken by `enter`. Returns true when a
+    /// destroy requested from inside this run has to be completed by the
+    /// caller, which must not touch the VM after that.
+    pub fn leave(self: *RunState) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.depth > 0) self.depth -= 1;
+        self.owner = null;
+        self.cond.broadcast();
+        return self.destroy_pending and self.depth == 0;
+    }
+
+    /// Mark the VM as closing because a destroy was requested by the thread
+    /// that is currently running it; the outermost run frees it.
+    pub fn requestDeferredDestroy(self: *RunState) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.closing = true;
+        self.destroy_pending = true;
+    }
+
+    /// Close the VM for destruction without waiting. `.deferred` means the
+    /// calling thread owns the VM right now, so the destroy must happen when
+    /// that run returns; the caller decides whether to defer it.
+    pub fn tryClose(self: *RunState) CloseResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.owner) |owner| {
+            if (owner == std.Thread.getCurrentId()) return .deferred;
+            return .busy;
+        }
+        if (self.closing) return .closing;
+        self.closing = true;
+        return .idle;
+    }
+
+    /// Close the VM for destruction, waiting for another thread's run to
+    /// finish. Never blocks when the calling thread owns the VM.
+    pub fn closeAndWait(self: *RunState) CloseResult {
+        self.mutex.lock();
+        if (self.closing) {
+            // Another thread is already destroying this VM; it will free it.
+            self.mutex.unlock();
+            return .closing;
+        }
+        if (self.owner) |owner| {
+            if (owner == std.Thread.getCurrentId()) {
+                self.mutex.unlock();
+                return .deferred;
+            }
+            self.closing = true;
+            while (self.owner != null) self.cond.wait(&self.mutex);
+            self.mutex.unlock();
+            return .idle;
+        }
+        self.closing = true;
+        self.mutex.unlock();
+        return .idle;
+    }
+};
+
 // Callback trampolines have a fixed slot in assembly. Slots are allocated
-// process-wide but entries and VM ownership are per-VM; a slot is retired when
-// its VM is destroyed so a retained host function pointer can never dispatch
-// into a recycled VM.
+// process-wide but entries and VM ownership are per-VM. Two lifetimes share the
+// 256 slots:
+//
+//   * automatic slots (`OP_CREATE_CALLBACK`, the compiler's `@cb` path) stay
+//     bound to their VM until it is destroyed or its plans are replaced, and
+//     are then retired for good so a retained host function pointer can never
+//     dispatch into a recycled VM;
+//   * explicit slots (`OP_CALLBACK_ACQUIRE`/`OP_CALLBACK_RELEASE`, the
+//     `ci_callback_acquire`/`ci_callback_release` macros) go back to the free
+//     set when the CIB releases them, so a repeated run does not exhaust the
+//     pool. The C contract covers the reuse: a pointer passed to release must
+//     not be called again, and an unreleased slot is retired with its VM.
 var callback_owners: [256]?*VM = [_]?*VM{null} ** 256;
 var callback_retired: [256]bool = [_]bool{false} ** 256;
+/// Number of `ci_callback_dispatch` calls currently inside (or failing fast
+/// for) each slot. A slot cannot be released or reused while this is non-zero:
+/// the dispatch reads the plan metadata the release would invalidate.
+var callback_slot_active: [256]u32 = [_]u32{0} ** 256;
 var callback_mutex: std.Thread.Mutex = .{};
 var callback_cond: std.Thread.Condition = .{};
 
@@ -419,14 +567,25 @@ pub const VM = struct {
     frames: [MAX_FRAMES]Frame = undefined,
     frame_count: usize = 0,
     jumps: [32]JumpEntry = [_]JumpEntry{.{}} ** 32,
+    /// Last successful run result. A failed run leaves it untouched.
     result: i64 = 0,
     stack_limit: usize = MAX_STACK,
     last_error: [128]u8 = undefined,
     last_error_code: c_int = 0,
+    /// Execution lock state. Null for stack-allocated test VMs and for the
+    /// scratch VM a transactional `loadPackage` validates in: those are never
+    /// shared between threads, so they need no locking.
+    run_state: ?*RunState = null,
     callback_entries: [256]?CallbackEntry = [_]?CallbackEntry{null} ** 256,
     callback_slots: [256]i16 = [_]i16{-1} ** 256,
     callback_active: usize = 0,
     callback_destroying: bool = false,
+    /// Last failed `ci_callback_dispatch` for this VM as a `CI_E_*` category
+    /// (0 = none). Written under `callback_mutex`, reported by
+    /// `ci_vm_callback_error` and cleared by `ci_vm_clear_error`, so a host
+    /// whose native library swallows the callback result can still see that a
+    /// dispatch was skipped.
+    callback_error: c_int = 0,
     native_targets: [256]usize = [_]usize{0} ** 256,
     native_target_count: usize = 0,
     native_plan_cache: [plan_loader.MAX_PLANS]?*const anyopaque = [_]?*const anyopaque{null} ** plan_loader.MAX_PLANS,
@@ -494,20 +653,100 @@ pub const VM = struct {
         self.resetResolverCaches();
     }
 
+    /// Retire every trampoline slot this VM still owns, whether it came from an
+    /// automatic `OP_CREATE_CALLBACK` or an explicit `OP_CALLBACK_ACQUIRE`.
+    ///
+    /// The scan is over the process-wide slots, not over `callback_slots`:
+    /// explicitly acquired slots have no compile-time local index, so an
+    /// unreleased one would otherwise never be retired and its trampoline could
+    /// later dispatch into a recycled VM. Slots the CIB released are owned by
+    /// nobody and are deliberately left reusable.
     fn releaseCallbacks(self: *VM) void {
         callback_mutex.lock();
-        defer callback_mutex.unlock();
-        for (0..self.callback_slots.len) |slot| {
-            const mapped = self.callback_slots[slot];
-            if (mapped < 0) continue;
-            const g: usize = @intCast(mapped);
-            if (g < callback_owners.len and callback_owners[g] == self) {
+        // A dispatch can hold no execution right while it fails fast, but it
+        // keeps `callback_active` raised while it reads the plan metadata this
+        // function is about to invalidate (the caller frees `plan_store`
+        // afterwards). Dispatches never wait for the execution right, so this
+        // bounded wait cannot deadlock.
+        while (self.callback_active > 0) callback_cond.wait(&callback_mutex);
+        for (0..callback_owners.len) |g| {
+            if (callback_owners[g] == self) {
                 callback_owners[g] = null;
                 callback_retired[g] = true;
             }
             self.callback_entries[g] = null;
-            self.callback_slots[slot] = -1;
         }
+        for (0..self.callback_slots.len) |slot| self.callback_slots[slot] = -1;
+        callback_mutex.unlock();
+    }
+
+    /// `OP_CALLBACK_ACQUIRE`: take a free process-wide trampoline slot for
+    /// `func_index` and `plan_index`, remember it on this VM and return the
+    /// trampoline address, or 0 when the pool has no free slot left.
+    ///
+    /// A failed plan validation is an error (the program is malformed), while
+    /// an exhausted pool is the documented null return the CIB checks for.
+    fn acquireCallback(self: *VM, plan_index: u16, func_index: u16) !i64 {
+        const fidx: usize = func_index;
+        if (fidx >= self.func_count) return error.BadFunction;
+        const store = self.plan_store orelse return error.NoPlans;
+        const p = store.planAt(plan_index) orelse return error.BadPlan;
+        // Reject a plan the platform cannot marshal now, instead of silently
+        // dropping the callback when native code invokes it.
+        const plan = store.callPlan(p);
+        try platform.validate(plan);
+        if (platform.abi_kind == .win32 and !platform.win32CallbackSupported(plan))
+            return error.UnsupportedCallback;
+
+        callback_mutex.lock();
+        defer callback_mutex.unlock();
+        if (self.callback_destroying) return 0;
+        for (0..callback_owners.len) |g| {
+            if (callback_retired[g] or callback_owners[g] != null) continue;
+            const addr = platform.callbackTable(g) orelse continue;
+            self.callback_entries[g] = .{ .func = fidx, .plan = plan };
+            callback_owners[g] = self;
+            const addr64: u64 = @intCast(@intFromPtr(addr));
+            return @bitCast(addr64);
+        }
+        return 0;
+    }
+
+    /// `OP_CALLBACK_RELEASE`: give back the trampoline slot this VM owns for
+    /// `addr`. Returns `CI_OK`, `CI_E_BUSY` while a dispatch is still inside
+    /// the callback (the caller retries once it returns; blocking here could
+    /// deadlock with the running thread), or `CI_E_INVALID_ARGUMENT` when this
+    /// VM owns no slot for `addr`.
+    fn releaseCallback(self: *VM, addr: usize) i64 {
+        var status: i64 = CI_E_INVALID_ARGUMENT;
+        callback_mutex.lock();
+        defer callback_mutex.unlock();
+        for (0..callback_owners.len) |g| {
+            if (callback_owners[g] != self) continue;
+            if (self.callback_entries[g] == null) continue;
+            const table = platform.callbackTable(g) orelse continue;
+            if (@intFromPtr(table) != addr) continue;
+            if (callback_slot_active[g] > 0) {
+                status = CI_E_BUSY;
+                break;
+            }
+            callback_owners[g] = null;
+            // Not retired: the next acquire may reuse the slot, and the C
+            // contract says the old pointer is dead after this release.
+            callback_retired[g] = false;
+            self.callback_entries[g] = null;
+            // An automatic slot can be released too when its trampoline leaked
+            // out of `@cb`. Drop any local mapping so the next
+            // `OP_CREATE_CALLBACK` allocates a fresh slot instead of finding
+            // this one unowned.
+            for (0..self.callback_slots.len) |local| {
+                if (self.callback_slots[local] == @as(i16, @intCast(g)))
+                    self.callback_slots[local] = -1;
+            }
+            status = CI_OK;
+            break;
+        }
+        return status;
     }
 
     fn freePlans(self: *VM) void {
@@ -978,13 +1217,10 @@ pub const VM = struct {
         }
         if (fi == self.func_count) return error.EntryNotFound;
 
-        for (0..self.values.len) |i| self.values[i] = .{ .i = 0 };
-        self.sp = 0;
-        self.mem_top = 0;
-        self.arg_area_start = 0;
-        @memset(self.mem, 0);
-        self.frame_count = 0;
-        self.result = 0;
+        // Every run starts from a fresh image. `result` is deliberately not
+        // reset here: `ci_vm_result` reports the last *successful* run, so a
+        // run that fails must leave the previous value in place.
+        self.resetRunImage();
 
         const entry_fn = self.functions[fi];
         const entry_locals: usize = entry_fn.local_count;
@@ -997,6 +1233,23 @@ pub const VM = struct {
         if (entry_fn.param_count > 2) self.values[2] = .{ .u = envp_addr };
 
         return self.executeLoop(fi, 0, 0);
+    }
+
+    /// Drop everything that must not survive from one run into the next: the
+    /// value stack, linear memory and the alloca bump pointer are cleared,
+    /// `setjmp` targets recorded by an earlier run are forgotten (a `longjmp`
+    /// must never resume into code that is no longer running), and resolved
+    /// native targets are re-registered per run. The native *plan* cache is
+    /// kept, because a plan index still names the same symbol.
+    fn resetRunImage(self: *VM) void {
+        for (0..self.values.len) |i| self.values[i] = .{ .i = 0 };
+        self.sp = 0;
+        self.mem_top = 0;
+        self.arg_area_start = 0;
+        @memset(self.mem, 0);
+        self.frame_count = 0;
+        for (&self.jumps) |*entry| entry.* = .{};
+        self.native_target_count = 0;
     }
 
     fn buildArgArea(self: *VM, cargs: []const []const u8) !struct { usize, u64, u64 } {
@@ -1601,6 +1854,15 @@ pub const VM = struct {
                     const addr = platform.callbackTable(global_slot) orelse return error.UnsupportedCallback;
                     const addr64: u64 = @intCast(@intFromPtr(addr));
                     try self.push(.{ .i = @bitCast(addr64) });
+                },
+                OP_CALLBACK_ACQUIRE => {
+                    const plan_index = try readU16(code, &ip);
+                    const func = try readU16(code, &ip);
+                    try self.push(.{ .i = try self.acquireCallback(plan_index, func) });
+                },
+                OP_CALLBACK_RELEASE => {
+                    const v = try self.pop();
+                    try self.push(.{ .i = self.releaseCallback(addressFromBits(v.i)) });
                 },
                 OP_CALL_NATIVE, OP_CALL_VARARG => {
                     const idx = try readU16(code, &ip);
@@ -2239,63 +2501,53 @@ fn readU64Ptr(ptr: [*]const u8) u64 {
     return @as(*align(1) const u64, @ptrCast(ptr)).*;
 }
 
-pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) callconv(.C) void {
-    const s: usize = @intCast(slot);
-    // The i686 trampoline rewrites ESP from `frame.cleanup` once this returns,
-    // so clear it before anything can bail out: every early return below then
-    // balances the stack exactly like a `__cdecl` call.
-    switch (platform.abi_kind) {
-        .win32 => {
-            const wframe: *platform.Win32CbFrame = @ptrCast(frame);
-            wframe.cleanup = 0;
-        },
-        else => {},
-    }
-    callback_mutex.lock();
-    if (s >= callback_owners.len) {
-        callback_mutex.unlock();
-        return;
-    }
-    const machine = callback_owners[s] orelse {
-        callback_mutex.unlock();
-        return;
-    };
-    const entry = machine.callback_entries[s] orelse {
-        callback_mutex.unlock();
-        return;
-    };
-    if (machine.callback_destroying) {
-        callback_mutex.unlock();
-        return;
-    }
-    machine.callback_active += 1;
-    callback_mutex.unlock();
-    defer {
-        callback_mutex.lock();
-        machine.callback_active -= 1;
-        callback_cond.broadcast();
-        callback_mutex.unlock();
-    }
+/// Zero image used to give a skipped dispatch deterministic return values.
+const callback_zero_image = [_]u8{0} ** 4096;
 
-    // An i686 `__stdcall` callback pops its own argument bytes; the trampoline
-    // can only learn how many from the plan, so hand it `plan.stack_size` (0
-    // for `__cdecl`, where the caller pops). This is done before validation so
-    // a rejected plan still returns with the stack balanced for the stdcall
-    // function the host actually called through. Other ABI frames have no
-    // cleanup field and are left untouched.
-    switch (platform.abi_kind) {
-        .win32 => {
-            const wframe: *platform.Win32CbFrame = @ptrCast(frame);
-            wframe.cleanup = platform.win32CallbackCleanup(entry.plan);
-        },
-        else => {},
+/// Write zero return values into `frame` for `plan`, so a host that ignores
+/// `ci_vm_callback_error` gets a deterministic result instead of whatever the
+/// trampoline frame still held. The plan's return locations name the integer
+/// and vector return registers of the SysV, Win64, Win32 and AAPCS64 frames, so
+/// this covers the ABI's return registers plus the aggregate image of a
+/// multi-location return.
+fn zeroCallbackReturns(frame: *platform.CallbackFrame, plan: abi.CallPlan) void {
+    // An sret callback returned through the caller's buffer and has no
+    // register result; a void callback has nothing to write.
+    if (plan.sret or plan.ret_locs.len == 0) return;
+    if (plan.ret_size > 8) {
+        const size: usize = @min(@as(usize, plan.ret_size), callback_zero_image.len);
+        for (plan.ret_locs) |loc| {
+            const off: usize = @intCast(loc.offset);
+            if (off >= size) continue;
+            const count = @min(@as(usize, loc.size), size - off);
+            if (count == 0) continue;
+            platform.callbackWriteBytes(frame, loc, callback_zero_image[0..count], count);
+        }
+        return;
     }
-    platform.validate(entry.plan) catch return;
+    if (plan.ret_locs.len > 1) {
+        for (plan.ret_locs) |loc| {
+            const off: usize = @intCast(loc.offset);
+            if (off >= 8) continue;
+            const count = @min(@as(usize, loc.size), 8 - off);
+            platform.callbackWriteBytes(frame, loc, callback_zero_image[0..count], count);
+        }
+        return;
+    }
+    platform.callbackWriteRet(frame, plan.ret_locs[0], 0);
+}
+
+/// Marshal the captured trampoline frame, run the CIB function and write its
+/// result back into the frame. Returns false when the dispatch could not run
+/// (an unusable plan or a failing CIB function), so the caller can store
+/// deterministic zero return values instead of leaving the frame's old content.
+fn dispatchCallbackEntry(machine: *VM, entry: CallbackEntry, frame: *platform.CallbackFrame) bool {
+    platform.validate(entry.plan) catch return false;
     const n: usize = entry.plan.args.len;
     var scratch: [8192]u8 align(16) = undefined;
     var scratch_used: usize = 0;
     var values: [plan_loader.MAX_ARGS]Value = undefined;
-    if (n > values.len) return;
+    if (n > values.len) return false;
     for (entry.plan.args, 0..) |arg, i| {
         if (arg.is_struct) {
             if (arg.locs.len == 1 and arg.locs[0].kind == .stack) {
@@ -2304,7 +2556,7 @@ pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) ca
             }
             const start = scratch_used;
             const size: usize = @intCast(arg.size);
-            if (start + size > scratch.len) return;
+            if (start + size > scratch.len) return false;
             @memset(scratch[start .. start + size], 0);
             const first_off: usize = @intCast(arg.locs[0].offset);
             for (arg.locs) |loc| {
@@ -2322,8 +2574,8 @@ pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) ca
             values[i] = .{ .u = platform.callbackReadArg(frame, arg.locs[0]) };
         }
     }
-    const result = machine.runCallback(entry.func, values[0..n]) catch return;
-    if (entry.plan.sret or entry.plan.ret_locs.len == 0) return;
+    const result = machine.runCallback(entry.func, values[0..n]) catch return false;
+    if (entry.plan.sret or entry.plan.ret_locs.len == 0) return true;
     const result_bits: u64 = @bitCast(result);
     if (entry.plan.ret_size > 8) {
         const src: [*]const u8 = @ptrFromInt(addressFromBits(result));
@@ -2344,6 +2596,132 @@ pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) ca
     } else {
         platform.callbackWriteRet(frame, entry.plan.ret_locs[0], result_bits);
     }
+    return true;
+}
+
+/// Record the category of a dispatch that was skipped, for
+/// `ci_vm_callback_error`. Protected by the pool lock because the dispatch may
+/// run on a foreign thread while the owning thread reads the VM.
+fn recordCallbackError(machine: *VM, code: c_int) void {
+    callback_mutex.lock();
+    defer callback_mutex.unlock();
+    machine.callback_error = code;
+}
+
+/// Drop the dispatch counts for `slot` and, when this dispatch was the
+/// outermost execution context of a VM whose destroy was requested from inside
+/// the callback, free the VM last: `machine` must not be touched after that.
+fn finishCallbackDispatch(machine: *VM, slot: usize, destroy_after: bool) void {
+    callback_mutex.lock();
+    if (callback_slot_active[slot] > 0) callback_slot_active[slot] -= 1;
+    if (machine.callback_active > 0) machine.callback_active -= 1;
+    callback_cond.broadcast();
+    callback_mutex.unlock();
+    if (destroy_after) destroyVm(machine);
+}
+
+/// Assembly trampoline entry: native code called through `slot` and captured
+/// its arguments in `frame`.
+///
+/// Threading rules, using the VM's execution lock (`RunState`):
+///   * the thread that already runs the VM (a callback calling a native
+///     function that calls back in) re-enters `runCallback` as before;
+///   * an idle VM takes its execution right for the duration of the dispatch,
+///     so the callback cannot race a `ci_vm_run` on another thread;
+///   * a VM that another thread is running fails fast: the callback is
+///     skipped, its return value is zeroed and `ci_vm_callback_error` reports
+///     `CI_E_BUSY`. Waiting here could deadlock, because the run thread may be
+///     waiting for this very callback to return.
+pub export fn ci_callback_dispatch(slot: u64, frame: *platform.CallbackFrame) callconv(.C) void {
+    const s: usize = @intCast(slot);
+    // The i686 trampoline rewrites ESP from `frame.cleanup` once this returns,
+    // so clear it before anything can bail out: every early return below then
+    // balances the stack exactly like a `__cdecl` call.
+    switch (platform.abi_kind) {
+        .win32 => {
+            const wframe: *platform.Win32CbFrame = @ptrCast(frame);
+            wframe.cleanup = 0;
+        },
+        else => {},
+    }
+
+    callback_mutex.lock();
+    if (s >= callback_owners.len) {
+        callback_mutex.unlock();
+        return;
+    }
+    const machine = callback_owners[s] orelse {
+        callback_mutex.unlock();
+        return;
+    };
+    const entry = machine.callback_entries[s] orelse {
+        callback_mutex.unlock();
+        return;
+    };
+    // An i686 `__stdcall` callback pops its own argument bytes; the trampoline
+    // can only learn how many from the plan, so hand it `plan.stack_size` (0
+    // for `__cdecl`, where the caller pops). This is done before any path that
+    // can return early, so a skipped or rejected callback still returns with
+    // the stack balanced for the function the host actually called through.
+    // Other ABI frames have no cleanup field and are left untouched.
+    switch (platform.abi_kind) {
+        .win32 => {
+            const wframe: *platform.Win32CbFrame = @ptrCast(frame);
+            wframe.cleanup = platform.win32CallbackCleanup(entry.plan);
+        },
+        else => {},
+    }
+    if (machine.callback_destroying) {
+        // Still under the pool lock: the destroy path cannot free the plan
+        // store that `entry.plan`'s return locations point into.
+        zeroCallbackReturns(frame, entry.plan);
+        callback_mutex.unlock();
+        return;
+    }
+    machine.callback_active += 1;
+    callback_slot_active[s] += 1;
+    callback_mutex.unlock();
+
+    // Until `finishCallbackDispatch` the VM cannot be freed (`callback_active`
+    // is raised and `destroyVm` waits for it), so every path below can touch
+    // `machine`.
+    var entered = false;
+    if (machine.run_state) |state| {
+        if (state.enter()) |_| {
+            entered = true;
+        } else |err| switch (err) {
+            // The calling thread already runs this VM: the existing
+            // saved/restored callback frame is exactly the reentrant path, and
+            // the execution right is already held.
+            error.NestedRun => {},
+            error.Busy => {
+                recordCallbackError(machine, CI_E_BUSY);
+                zeroCallbackReturns(frame, entry.plan);
+                finishCallbackDispatch(machine, s, false);
+                return;
+            },
+            error.VmDestroyed => {
+                recordCallbackError(machine, CI_E_DESTROYED);
+                zeroCallbackReturns(frame, entry.plan);
+                finishCallbackDispatch(machine, s, false);
+                return;
+            },
+        }
+    }
+
+    // A dispatch that could not run (or whose CIB function failed) still leaves
+    // deterministic zero return values instead of the frame's previous content.
+    if (!dispatchCallbackEntry(machine, entry, frame))
+        zeroCallbackReturns(frame, entry.plan);
+
+    var destroy_after = false;
+    if (entered) {
+        // This dispatch is the outermost execution context, so a
+        // `ci_vm_destroy` issued from inside the callback is completed here;
+        // it could not free the VM while the frame below was still running.
+        if (machine.run_state.?.leave()) destroy_after = true;
+    }
+    finishCallbackDispatch(machine, s, destroy_after);
 }
 
 const Reader = struct {
@@ -2424,6 +2802,13 @@ pub const CI_E_ENTRY: c_int = -8;
 pub const CI_E_RESOURCE: c_int = -9;
 pub const CI_E_RUNTIME: c_int = -10;
 pub const CI_E_DESTROYED: c_int = -11;
+/// The VM is executing on another thread (or `CI_DESTROY_TRY`/unload found it
+/// busy). Appended after `CI_E_DESTROYED`; existing values are unchanged.
+pub const CI_E_BUSY: c_int = -12;
+
+/// `ci_vm_destroy_ex` flag: fail with `CI_E_BUSY` instead of waiting for a
+/// running thread. The default (flags == 0) waits for the VM to become idle.
+pub const CI_DESTROY_TRY: c_uint = 1;
 
 pub const CiVmConfig = extern struct {
     struct_size: u32,
@@ -2491,6 +2876,7 @@ pub fn errorCode(err: anyerror) c_int {
         error.StackOverflow,
         error.FrameOverflow,
         error.ReturnTooLarge,
+        error.ProcessFull,
         => CI_E_RESOURCE,
         error.BadAddress,
         error.BadOpcode,
@@ -2510,6 +2896,12 @@ pub fn errorCode(err: anyerror) c_int {
         error.NullStruct,
         error.UnsupportedVaList,
         => CI_E_RUNTIME,
+        // A second thread called into a VM that is already executing, or a
+        // loader/`CI_DESTROY_TRY` found the VM busy.
+        error.Busy => CI_E_BUSY,
+        // The owning thread re-entered `ci_vm_run` (for example from a
+        // callback); running it would clear the outer run's image.
+        error.NestedRun => CI_E_RUNTIME,
         error.VmDestroyed => CI_E_DESTROYED,
         else => CI_ERROR,
     };
@@ -2543,12 +2935,20 @@ fn createVm(stack_size: usize, memory_size: usize) ?*VM {
     if (mem_size > MAX_MEMORY) return null;
     const machine = std.heap.page_allocator.create(VM) catch return null;
     initMachine(machine);
+    const state = std.heap.page_allocator.create(RunState) catch {
+        std.heap.page_allocator.destroy(machine);
+        return null;
+    };
+    state.* = .{};
+    machine.run_state = state;
     machine.values = std.heap.page_allocator.alloc(Value, limit) catch {
+        std.heap.page_allocator.destroy(state);
         std.heap.page_allocator.destroy(machine);
         return null;
     };
     machine.mem = std.heap.page_allocator.alignedAlloc(u8, 32, mem_size) catch {
         std.heap.page_allocator.free(machine.values);
+        std.heap.page_allocator.destroy(state);
         std.heap.page_allocator.destroy(machine);
         return null;
     };
@@ -2570,33 +2970,118 @@ pub export fn ci_vm_create_ex(config: ?*const CiVmConfig) ?*VM {
     return createVm(cfg.stack_size, memory_size);
 }
 
-pub export fn ci_vm_destroy(machine: ?*VM) void {
-    const m = machine orelse return;
+/// Free a VM whose execution right is closed and whose run thread (if any) has
+/// finished. Callers must have gone through `RunState.tryClose`,
+/// `RunState.closeAndWait` or `RunState.leave`.
+fn destroyVm(m: *VM) void {
     callback_mutex.lock();
     m.callback_destroying = true;
-    for (0..m.callback_slots.len) |slot| {
-        const mapped = m.callback_slots[slot];
-        if (mapped >= 0) {
-            const g: usize = @intCast(mapped);
-            if (g < callback_owners.len and callback_owners[g] == m) {
-                callback_owners[g] = null;
-                callback_retired[g] = true;
-            }
-            m.callback_slots[slot] = -1;
+    // Every trampoline slot this VM still owns is retired for good: a host that
+    // kept a function pointer from this VM must never reach a later one. The
+    // scan is over the process-wide slots instead of `callback_slots`, so an
+    // explicitly acquired slot that was never released is retired too. Slots
+    // the CIB released are owned by nobody and stay reusable.
+    for (0..callback_owners.len) |g| {
+        if (callback_owners[g] == m) {
+            callback_owners[g] = null;
+            callback_retired[g] = true;
         }
+        m.callback_entries[g] = null;
     }
+    for (0..m.callback_slots.len) |slot| m.callback_slots[slot] = -1;
     while (m.callback_active > 0) callback_cond.wait(&callback_mutex);
     callback_mutex.unlock();
     m.freePlans();
     if (m.module_buf.len > 0) std.heap.page_allocator.free(m.module_buf);
     if (m.values.len > 0) std.heap.page_allocator.free(m.values);
     if (m.mem.len > 0) std.heap.page_allocator.free(m.mem);
+    if (m.run_state) |state| std.heap.page_allocator.destroy(state);
     std.heap.page_allocator.destroy(m);
+}
+
+/// Destroy a VM. Kept source-compatible with ABI 2 callers: it waits for a
+/// concurrent run to finish, and defers the free when the calling thread is
+/// itself running the VM (a callback calling `ci_vm_destroy`), so it never
+/// deadlocks and never frees a frame that is still executing.
+pub export fn ci_vm_destroy(machine: ?*VM) void {
+    _ = ci_vm_destroy_ex(machine, 0);
+}
+
+/// `flags` is 0 (wait for the VM to become idle, like `ci_vm_destroy`) or
+/// `CI_DESTROY_TRY` (return `CI_E_BUSY` while it executes instead of waiting).
+pub export fn ci_vm_destroy_ex(machine: ?*VM, flags: c_uint) c_int {
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    if ((flags & ~CI_DESTROY_TRY) != 0) return fail(m, error.InvalidArgument);
+    const state = m.run_state orelse {
+        // Stack/scratch VM without execution state: nothing can be running.
+        destroyVm(m);
+        return CI_OK;
+    };
+    if ((flags & CI_DESTROY_TRY) != 0) {
+        switch (state.tryClose()) {
+            .idle => {},
+            .busy => return fail(m, error.Busy),
+            // The caller is inside its own run; the outermost run frees it.
+            .deferred => {
+                state.requestDeferredDestroy();
+                return CI_OK;
+            },
+            // Another thread is already destroying this VM.
+            .closing => return fail(m, error.VmDestroyed),
+        }
+    } else {
+        switch (state.closeAndWait()) {
+            .idle => {},
+            .deferred => {
+                state.requestDeferredDestroy();
+                return CI_OK;
+            },
+            .busy => unreachable,
+            .closing => return fail(m, error.VmDestroyed),
+        }
+    }
+    destroyVm(m);
+    return CI_OK;
+}
+
+/// Free a VM whose destroy was deferred (requested from inside its own run).
+/// `runVmGuarded` calls this after the outermost run releases the execution
+/// right; it is public so tests can stand in for that frame.
+pub fn finishDeferredDestroy(m: *VM) void {
+    destroyVm(m);
+}
+
+/// 1 while the VM is executing on any thread, 0 otherwise.
+pub export fn ci_vm_busy(machine: ?*const VM) c_int {
+    const m = machine orelse return 0;
+    const state = m.run_state orelse return 0;
+    return if (state.isBusy()) 1 else 0;
+}
+
+/// Take the VM's execution right for a loader. Returns null on success, or the
+/// `CI_E_*` status the loader must return: a load may not replace the module,
+/// plans or plan cache while a run is using them, whichever thread asks.
+fn beginVmMutation(m: *VM) ?c_int {
+    const state = m.run_state orelse return null;
+    state.enter() catch |err| return switch (err) {
+        error.Busy, error.NestedRun => fail(m, error.Busy),
+        error.VmDestroyed => fail(m, error.VmDestroyed),
+    };
+    return null;
+}
+
+fn endVmMutation(m: *VM) void {
+    const state = m.run_state orelse return;
+    // A deferred destroy cannot be requested while this thread only mutates
+    // the VM (it owns no run frame), so the flag is only returned, not acted on.
+    _ = state.leave();
 }
 
 pub export fn ci_vm_load_module(machine: ?*VM, data: [*]const u8, size: usize) c_int {
     const m = machine orelse return CI_E_INVALID_ARGUMENT;
     if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);
+    if (beginVmMutation(m)) |status| return status;
+    defer endVmMutation(m);
     m.loadModuleBytes(data[0..size]) catch |err| return fail(m, err);
     m.clearError();
     return CI_OK;
@@ -2605,6 +3090,8 @@ pub export fn ci_vm_load_module(machine: ?*VM, data: [*]const u8, size: usize) c
 pub export fn ci_vm_load_plans(machine: ?*VM, data: [*]const u8, size: usize) c_int {
     const m = machine orelse return CI_E_INVALID_ARGUMENT;
     if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);
+    if (beginVmMutation(m)) |status| return status;
+    defer endVmMutation(m);
     m.loadPlans(data[0..size]) catch |err| return fail(m, err);
     m.clearError();
     return CI_OK;
@@ -2613,6 +3100,8 @@ pub export fn ci_vm_load_plans(machine: ?*VM, data: [*]const u8, size: usize) c_
 pub export fn ci_vm_load_package(machine: ?*VM, data: [*]const u8, size: usize) c_int {
     const m = machine orelse return CI_E_INVALID_ARGUMENT;
     if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);
+    if (beginVmMutation(m)) |status| return status;
+    defer endVmMutation(m);
     m.loadPackage(data[0..size]) catch |err| return fail(m, err);
     m.clearError();
     return CI_OK;
@@ -2621,17 +3110,42 @@ pub export fn ci_vm_load_package(machine: ?*VM, data: [*]const u8, size: usize) 
 pub export fn ci_vm_load_library(machine: ?*VM, path: [*:0]const u8) c_int {
     const m = machine orelse return CI_E_INVALID_ARGUMENT;
     if (@intFromPtr(path) == 0) return fail(m, error.InvalidArgument);
+    if (beginVmMutation(m)) |status| return status;
+    defer endVmMutation(m);
     m.loadLibrary(std.mem.span(path)) catch |err| return fail(m, err);
     m.clearError();
     return CI_OK;
 }
 
+/// Body of one run. Split out so the guard around it stays in one place.
+fn runVmBody(m: *VM, entry: []const u8, cargs: ?[]const []const u8) c_int {
+    if (cargs) |args| {
+        m.result = m.runEntryArgs(entry, args) catch |err| return fail(m, err);
+    } else {
+        m.result = m.runEntry(entry) catch |err| return fail(m, err);
+    }
+    m.clearError();
+    return CI_OK;
+}
+
+/// Run one entry point under the VM's execution lock. A second thread gets
+/// `CI_E_BUSY`, the owning thread gets `CI_E_RUNTIME`; different VMs have
+/// different locks and never block each other.
+fn runVmGuarded(m: *VM, entry: []const u8, cargs: ?[]const []const u8) c_int {
+    const state = m.run_state orelse return runVmBody(m, entry, cargs);
+    state.enter() catch |err| return fail(m, err);
+    const status = runVmBody(m, entry, cargs);
+    // A `ci_vm_destroy` issued from inside this run (a callback, or a native
+    // function calling back into the host) is deferred to here: this frame is
+    // the last one allowed to touch the VM.
+    if (state.leave()) destroyVm(m);
+    return status;
+}
+
 pub export fn ci_vm_run(machine: ?*VM, entry: [*:0]const u8) c_int {
     const m = machine orelse return CI_E_INVALID_ARGUMENT;
     if (@intFromPtr(entry) == 0) return fail(m, error.InvalidArgument);
-    m.result = m.runEntry(std.mem.span(entry)) catch |err| return fail(m, err);
-    m.clearError();
-    return CI_OK;
+    return runVmGuarded(m, std.mem.span(entry), null);
 }
 
 pub export fn ci_vm_run_args(
@@ -2653,9 +3167,7 @@ pub export fn ci_vm_run_args(
             args_buf[i] = std.mem.span(item);
         }
     }
-    m.result = m.runEntryArgs(std.mem.span(entry), args_buf[0..n]) catch |err| return fail(m, err);
-    m.clearError();
-    return CI_OK;
+    return runVmGuarded(m, std.mem.span(entry), args_buf[0..n]);
 }
 
 pub export fn ci_vm_result(machine: ?*VM) i64 {
@@ -2676,5 +3188,264 @@ pub export fn ci_vm_last_error_code(machine: ?*VM) c_int {
 pub export fn ci_vm_clear_error(machine: ?*VM) c_int {
     const m = machine orelse return CI_E_INVALID_ARGUMENT;
     m.clearError();
+    // The dispatch error has its own channel so a host whose native library
+    // swallowed the callback result can still observe a skipped callback; the
+    // same call clears both.
+    callback_mutex.lock();
+    m.callback_error = 0;
+    callback_mutex.unlock();
     return CI_OK;
+}
+
+/// Last failed callback dispatch for this VM as a `CI_E_*` category, or 0 when
+/// none is recorded. A callback that native code invoked while another thread
+/// was running the VM is skipped (fail-fast) and recorded as `CI_E_BUSY`; a VM
+/// being destroyed records `CI_E_DESTROYED`. The value stays until
+/// `ci_vm_clear_error`, so a host can inspect it after the run that triggered
+/// the callback returned.
+pub export fn ci_vm_callback_error(machine: ?*const VM) c_int {
+    const m = machine orelse return CI_E_INVALID_ARGUMENT;
+    callback_mutex.lock();
+    defer callback_mutex.unlock();
+    return m.callback_error;
+}
+
+/// Snapshot of the process-wide trampoline pool.
+///
+/// `total` is always 256. `live` slots are bound to a VM, `reusable` slots are
+/// free for the next acquire, and `retired` slots can never be used again
+/// (their VM was destroyed or reloaded its plans while they were still bound).
+/// Any output pointer may be null. This is additive to ABI 2: existing
+/// functions, values and semantics are unchanged.
+pub export fn ci_callback_pool_stats(
+    total: ?*u32,
+    live: ?*u32,
+    reusable: ?*u32,
+    retired: ?*u32,
+) void {
+    var live_count: u32 = 0;
+    var reusable_count: u32 = 0;
+    var retired_count: u32 = 0;
+    callback_mutex.lock();
+    for (0..callback_owners.len) |g| {
+        if (callback_owners[g] != null) {
+            live_count += 1;
+        } else if (callback_retired[g]) {
+            retired_count += 1;
+        } else {
+            reusable_count += 1;
+        }
+    }
+    callback_mutex.unlock();
+    if (total) |out| out.* = @intCast(callback_owners.len);
+    if (live) |out| out.* = live_count;
+    if (reusable) |out| out.* = reusable_count;
+    if (retired) |out| out.* = retired_count;
+}
+
+/// Upper bound on the VMs one `ci_process` owns. The multi-CIB use case is a
+/// handful of packages, so a fixed registry keeps loading allocation-free
+/// apart from the VM itself.
+pub const MAX_PROCESS_VMS: usize = 64;
+
+/// A process-level registry of independently runnable VMs, one per loaded CIB.
+///
+/// The registry owns VM lifetimes only; run policy (which VM, how often, on
+/// which thread) stays with the host. Each VM still holds exactly one package,
+/// and `ci_vm_load_package` keeps its transactional replacement semantics.
+pub const Process = struct {
+    mutex: std.Thread.Mutex = .{},
+    /// Normalized `ci_vm_config` every VM is created from.
+    stack_size: usize = 0,
+    memory_size: usize = 0,
+    vms: [MAX_PROCESS_VMS]?*VM = [_]?*VM{null} ** MAX_PROCESS_VMS,
+    /// Set while `ci_process_destroy` frees the registry, so a second destroy
+    /// cannot free it twice. Cleared again if a busy VM postpones the destroy.
+    closing: bool = false,
+    last_error: [128]u8 = [_]u8{0} ** 128,
+    last_error_code: c_int = 0,
+
+    fn setError(self: *Process, msg: []const u8) void {
+        const n = @min(msg.len, self.last_error.len - 1);
+        @memcpy(self.last_error[0..n], msg[0..n]);
+        self.last_error[n] = 0;
+    }
+
+    fn clearError(self: *Process) void {
+        self.last_error[0] = 0;
+        self.last_error_code = 0;
+    }
+};
+
+fn failProcess(p: *Process, err: anyerror) c_int {
+    const code = errorCode(err);
+    p.last_error_code = code;
+    p.setError(@errorName(err));
+    return code;
+}
+
+pub export fn ci_process_create(config: ?*const CiVmConfig) ?*Process {
+    var stack_size: usize = 0;
+    var memory_size: usize = 0;
+    if (config) |cfg| {
+        const minimum = @offsetOf(CiVmConfig, "stack_size") + @sizeOf(usize);
+        if (cfg.struct_size < minimum) return null;
+        if (cfg.flags != 0) return null;
+        stack_size = cfg.stack_size;
+        if (cfg.struct_size >= @sizeOf(CiVmConfig)) memory_size = cfg.memory_size;
+    }
+    // Reject an impossible config here so loading a package later can only
+    // fail on the package or on memory exhaustion.
+    const limit = if (stack_size == 0) MAX_STACK else stack_size;
+    if (limit == 0 or limit > MAX_STACK) return null;
+    const mem_size = if (memory_size == 0) DEFAULT_MEMORY else memory_size;
+    if (mem_size > MAX_MEMORY) return null;
+
+    const p = std.heap.page_allocator.create(Process) catch return null;
+    p.* = .{ .stack_size = stack_size, .memory_size = memory_size };
+    return p;
+}
+
+/// Destroy every idle VM the process owns and free the registry.
+///
+/// A VM that is still executing on another thread is left untouched: the
+/// process (and those VMs) stay alive, `ci_process_last_error` reports
+/// `CI_E_BUSY`, and the host must join the run threads and call
+/// `ci_process_destroy` again. Blocking here would mean waiting for an unknown
+/// thread and could deadlock a host that joins its threads afterwards.
+pub export fn ci_process_destroy(process: ?*Process) void {
+    const p = process orelse return;
+    p.mutex.lock();
+    if (p.closing) {
+        // Another thread is already destroying this registry.
+        p.mutex.unlock();
+        return;
+    }
+    p.closing = true;
+    var busy: usize = 0;
+    for (&p.vms) |*slot| {
+        const m = slot.* orelse continue;
+        if (m.run_state) |state| {
+            if (state.tryClose() != .idle) {
+                busy += 1;
+                continue;
+            }
+        }
+        slot.* = null;
+        destroyVm(m);
+    }
+    if (busy != 0) {
+        p.last_error_code = CI_E_BUSY;
+        p.setError("ci_process_destroy: VM still running");
+        // The registry stays alive so the error is observable and the host can
+        // retry after joining its run threads.
+        p.closing = false;
+        p.mutex.unlock();
+        return;
+    }
+    p.mutex.unlock();
+    std.heap.page_allocator.destroy(p);
+}
+
+/// Load a package into a freshly created VM and hand it back as a borrowed
+/// handle. The package bytes are copied; a failure leaves the registry
+/// unchanged and records the error on the process.
+pub export fn ci_process_load_package(
+    process: ?*Process,
+    data: [*]const u8,
+    size: usize,
+    out: ?*?*VM,
+) c_int {
+    const p = process orelse return CI_E_INVALID_ARGUMENT;
+    const vm_out = out orelse return CI_E_INVALID_ARGUMENT;
+    vm_out.* = null;
+    p.mutex.lock();
+    defer p.mutex.unlock();
+    if (size != 0 and @intFromPtr(data) == 0) return failProcess(p, error.InvalidArgument);
+    var slot: usize = 0;
+    while (slot < p.vms.len and p.vms[slot] != null) : (slot += 1) {}
+    if (slot == p.vms.len) return failProcess(p, error.ProcessFull);
+    const m = createVm(p.stack_size, p.memory_size) orelse return failProcess(p, error.OutOfMemory);
+    m.loadPackage(data[0..size]) catch |err| {
+        destroyVm(m);
+        return failProcess(p, err);
+    };
+    p.vms[slot] = m;
+    vm_out.* = m;
+    p.clearError();
+    return CI_OK;
+}
+
+/// Unload a VM owned by the process. The VM must be idle; a running VM is
+/// reported as `CI_E_BUSY` and stays registered.
+pub export fn ci_process_unload_package(process: ?*Process, vm: ?*VM) c_int {
+    const p = process orelse return CI_E_INVALID_ARGUMENT;
+    const m = vm orelse return CI_E_INVALID_ARGUMENT;
+    p.mutex.lock();
+    defer p.mutex.unlock();
+    var slot: usize = 0;
+    while (slot < p.vms.len and p.vms[slot] != m) : (slot += 1) {}
+    if (slot == p.vms.len) return failProcess(p, error.InvalidArgument);
+    if (m.run_state) |state| {
+        switch (state.tryClose()) {
+            .idle => {},
+            // Another thread runs it, or we are inside its own run.
+            else => return failProcess(p, error.Busy),
+        }
+    }
+    p.vms[slot] = null;
+    destroyVm(m);
+    p.clearError();
+    return CI_OK;
+}
+
+pub export fn ci_process_last_error(process: ?*const Process) [*:0]const u8 {
+    const p = process orelse return "";
+    return @ptrCast(&p.last_error[0]);
+}
+
+pub export fn ci_process_last_error_code(process: ?*const Process) c_int {
+    const p = process orelse return CI_E_INVALID_ARGUMENT;
+    return p.last_error_code;
+}
+
+// ---------------------------------------------------------------- test hooks
+//
+// The trampoline pool is process-wide and is never reset in production: a
+// retired slot stays retired. Unit tests need a known starting state, and they
+// need to hold a slot "in dispatch" without a real native call to check the
+// release/active rules. These are plain `pub` functions, not `export`ed: they
+// add nothing to the C ABI and are dropped from the library because nothing in
+// it references them.
+
+/// Unit-test hook: return every trampoline slot to the free set.
+pub fn resetCallbackPoolForTest() void {
+    callback_mutex.lock();
+    defer callback_mutex.unlock();
+    for (0..callback_owners.len) |g| {
+        callback_owners[g] = null;
+        callback_retired[g] = false;
+        callback_slot_active[g] = 0;
+    }
+}
+
+/// Unit-test hook: change the dispatch count of the slot `m` owns for `addr`,
+/// as if a native dispatcher were inside that callback. Production code only
+/// changes these counts from `ci_callback_dispatch`. Returns false when this VM
+/// owns no slot for `addr`.
+pub fn holdCallbackSlotForTest(m: *VM, addr: usize, delta: i32) bool {
+    callback_mutex.lock();
+    defer callback_mutex.unlock();
+    for (0..callback_owners.len) |g| {
+        if (callback_owners[g] != m) continue;
+        const table = platform.callbackTable(g) orelse continue;
+        if (@intFromPtr(table) != addr) continue;
+        if (delta >= 0) {
+            callback_slot_active[g] += @intCast(delta);
+        } else {
+            callback_slot_active[g] -= @min(callback_slot_active[g], @as(u32, @intCast(-delta)));
+        }
+        return true;
+    }
+    return false;
 }

@@ -52,10 +52,27 @@ cargo test --offline
   `Vm::last_error()` 返回其消息，`Vm::clear_error()` 会把两者都重置。
 - `Error::code` 就是该分类（`ci_vm_last_error_code`），`Error::status`
   是失败调用返回的负值，`Error::message` 是来自 `ci_vm_last_error()` 的
-  文本。`status_name(code)` 会把其中任一值映射到对应的 `CI_*` 名称，便于
-  记录日志。
+  文本。`status_name(code)` 会把 crate 已知的 `CI_*` 值映射到名称，未知值
+  返回 `UNKNOWN`；`CI_E_BUSY = -12` 已包含在 `status_name` 中。
 - `CI_ERROR` 表示运行时无法对该失败进行分类；其他所有失败都是
   具体的 `CI_E_*` 值。
+
+## 多 VM、线程与 callback
+
+- 每个 `Vm` 同一时间只允许一个执行上下文。需要并行执行时，请为每个任务创建独立的
+  `Vm` 实例；同一进程中的不同 `Vm` 可以在不同线程上并行运行。
+- 当前 crate 只封装了核心 `ci_vm_*` 函数。多 CIB 的 `ci_process_*` 注册表、
+  `ci_vm_busy`、`ci_vm_destroy_ex`、`ci_vm_callback_error` 和
+  `ci_callback_pool_stats` 尚未提供安全封装；需要这些能力时，请在 Rust 中直接声明
+  对应的 `extern "C"`（头文件见发布 tarball 的 `include/cinterp.h`），或使用 C 宿主。
+  此时的 busy 状态是 `CI_E_BUSY = -12`；`Error::status` 会保留该负值。
+- 回调 trampoline 是进程范围的固定 256 个静态槽。自动 `@cb`/`CREATE_CALLBACK` 槽绑定
+  到所属 `Vm`，跨重复运行保留，`Vm` 被销毁或计划重载时退休。CIB 内的 C 代码可以用
+  `ci_callback_acquire`/`ci_callback_release` 显式管理生命周期：release 成功后槽位可
+  复用，释放后的旧指针不得再次调用；未 release 的显式槽随 VM 销毁/重载退休。
+- 每次 `run` 都是全新镜像（线性内存/值栈/帧/`setjmp` 目标重置，`main` 重新安装
+  globals），`Vm::result()` 返回最后一次成功运行的结果。非 `main` 入口不会执行全局
+  安装代码。
 
 ## 示例代码
 
@@ -70,6 +87,8 @@ vm.run_args("main", &args).expect("run");
 println!("result = {}", vm.result());
 ```
 
-每个 `Vm` 都是单线程的。独立执行请使用单独的 `Vm` 实例；回调跳板是
-进程范围的，在其所属的 VM 被销毁时退役。参见发布 tarball 中的
-`docs/embedding.md` 和 `docs/compatibility.md`。
+每个 `Vm` 都是单执行上下文的。独立或并行执行请使用单独的 `Vm` 实例；回调跳板是
+进程范围的：自动槽在所属 `Vm` 被销毁或计划重载时退休，显式 acquire/release 的槽在
+release 后可复用。需要多 CIB 的进程级注册表时，请使用 C 头文件中的 `ci_process_*`，
+参见发布 tarball 中的 `docs/multi-cib.md`、`docs/embedding.md` 和
+`docs/compatibility.md`。

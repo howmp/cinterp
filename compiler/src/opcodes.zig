@@ -100,3 +100,13 @@ pub const OP_ALLOCA_ALIGNED: u8 = 0x9F;
 pub const OP_ALLOCA_DYN_ALIGN: u8 = 0xA0;
 pub const OP_CALL_VARIADIC_TYPED: u8 = 0xA1;
 pub const OP_FPCLASS: u8 = 0xA2;
+/// `OP_CALLBACK_ACQUIRE u16 plan_index, u16 func_index`: register `func_index`
+/// as a native callback with `plan_index` and push the trampoline address
+/// (NULL when the runtime pool is exhausted). Emitted for the compiler builtin
+/// `__ci_callback_acquire` from the force-included `data/cinterp_callbacks.h`.
+pub const OP_CALLBACK_ACQUIRE: u8 = 0xA3;
+/// `OP_CALLBACK_RELEASE`: pop a trampoline address pushed by
+/// `OP_CALLBACK_ACQUIRE`, release its slot and push the status
+/// (0 = released, negative = unknown/already released/still executing).
+/// Emitted for the compiler builtin `__ci_callback_release`.
+pub const OP_CALLBACK_RELEASE: u8 = 0xA4;

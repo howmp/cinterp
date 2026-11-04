@@ -22,6 +22,7 @@ pub const CI_E_ENTRY: c_int = -8;
 pub const CI_E_RESOURCE: c_int = -9;
 pub const CI_E_RUNTIME: c_int = -10;
 pub const CI_E_DESTROYED: c_int = -11;
+pub const CI_E_BUSY: c_int = -12;
 
 pub const CI_ABI_VERSION: c_int = 2;
 pub const DEFAULT_MEMORY: usize = 1024 * 1024;
@@ -90,6 +91,7 @@ pub fn status_name(code: c_int) -> &'static str {
         CI_E_RESOURCE => "CI_E_RESOURCE",
         CI_E_RUNTIME => "CI_E_RUNTIME",
         CI_E_DESTROYED => "CI_E_DESTROYED",
+        CI_E_BUSY => "CI_E_BUSY",
         _ => "UNKNOWN",
     }
 }
@@ -300,6 +302,7 @@ mod tests {
         assert_eq!(status_name(CI_E_INVALID_ARGUMENT), "CI_E_INVALID_ARGUMENT");
         assert_eq!(status_name(CI_E_TARGET), "CI_E_TARGET");
         assert_eq!(status_name(CI_E_DESTROYED), "CI_E_DESTROYED");
+        assert_eq!(status_name(CI_E_BUSY), "CI_E_BUSY");
         assert_eq!(status_name(-99), "UNKNOWN");
     }
 

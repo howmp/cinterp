@@ -12,6 +12,13 @@ const build_options = @import("build_options");
 
 const Allocator = std.mem.Allocator;
 
+/// Callback API header force-included into every CIB compilation. It is
+/// embedded in the compiler binary, written next to the temporary IR file and
+/// passed to `zig cc -include`, so CIB sources can call
+/// `ci_callback_acquire`/`ci_callback_release` without an `#include` and
+/// without an include path (and the tarball needs no extra installed header).
+const callbacks_header = @embedFile("data/cinterp_callbacks.h");
+
 const Target = struct {
     name: []const u8,
     triple: []const u8,
@@ -297,6 +304,10 @@ fn buildImportTable(
     var function_plan_count: usize = 0;
     for (plans) |plan| {
         if (std.mem.startsWith(u8, plan.name, "callback:")) continue;
+        // `lower_ast` already lowers the forced-include callback builtins to
+        // opcodes; keep them out of CIPI even if a hand-written module or a
+        // future frontend leaves them in the plan table.
+        if (lower_ast.isCallbackBuiltin(plan.name)) continue;
         function_plan_count += 1;
         try plan_names.put(plan.name, {});
     }
@@ -309,6 +320,7 @@ fn buildImportTable(
         // ones bytecode can reference) and drop the tail.
         if (table.entries.items.len >= max_data_entries) break;
         const name = if (raw_name.len > 0 and raw_name[0] == '@') raw_name[1..] else raw_name;
+        if (lower_ast.isCallbackBuiltin(name)) continue;
         // External-data indices are referenced directly by OP_ADDR_EXTERN.
         // Keep the table complete so those indices never shift. Windows
         // historically omits entries that are also function plans.
@@ -335,6 +347,7 @@ fn buildImportTable(
     if (auto_link) {
         for (plans, 0..) |plan, plan_index| {
             if (std.mem.startsWith(u8, plan.name, "callback:")) continue;
+            if (lower_ast.isCallbackBuiltin(plan.name)) continue;
             var providers: ?[]imports.Provider = null;
             var call_conv = plan.conv;
             if (target.os == 2) {
@@ -442,7 +455,7 @@ fn packageSerialize(
     return out.toOwnedSlice();
 }
 
-fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8) !void {
+fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8, callbacks_header_path: []const u8) !void {
     var argv = std.ArrayList([]const u8).init(allocator);
     try argv.append(opts.cc_path);
     try argv.append("cc");
@@ -458,6 +471,12 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8) !void {
     if (opts.target.os == 2) {
         try argv.appendSlice(&.{ "-fms-extensions", "-fdeclspec" });
     }
+    // `-include` comes before the source so the callback builtins are declared
+    // ahead of user code, exactly like a top-of-file `#include`. Arguments go
+    // through argv (no shell), and `std.process.Child` applies the Windows
+    // `CommandLineToArgvW` quoting rules itself, so paths with spaces must not
+    // be quoted by hand.
+    try argv.appendSlice(&.{ "-include", callbacks_header_path });
     try argv.append(opts.source);
     try argv.append("-o");
     try argv.append(ll_path);
@@ -496,6 +515,15 @@ fn lowerModule(allocator: Allocator, ir_text: []const u8, opts: Options) !abi.Co
         return error.IrTargetMismatch;
     };
     return lower_ast.compile(allocator, &module, opts.target.abi, opts.target.ptr_bits / 8);
+}
+
+/// Remove the per-compile temporary IR file and force-included header unless
+/// `--keep-ir` asked to keep them. Called from a `defer` and again on the
+/// early-exit diagnostics path, where `std.process.exit` skips defers.
+fn removeTempFiles(ll_path: []const u8, callbacks_header_path: []const u8, keep_ir: bool) void {
+    if (keep_ir) return;
+    std.fs.cwd().deleteFile(ll_path) catch {};
+    std.fs.cwd().deleteFile(callbacks_header_path) catch {};
 }
 
 fn parseCibVersion(value: []const u8) u8 {
@@ -615,8 +643,14 @@ pub fn main() !void {
         }
         break :blk try std.fmt.allocPrint(allocator, "{s}.cib", .{src});
     };
-    const ll_path = try std.fmt.allocPrint(allocator, "{s}.{x}.ll", .{ out, std.crypto.random.int(u64) });
-    defer if (!keep_ir) std.fs.cwd().deleteFile(ll_path) catch {};
+    const nonce = std.crypto.random.int(u64);
+    const ll_path = try std.fmt.allocPrint(allocator, "{s}.{x}.ll", .{ out, nonce });
+    // The forced-include header shares the temporary IR file's directory and
+    // nonce, so it is unique per compile, never collides with a user file and
+    // is removed together with the IR unless `--keep-ir` asks to inspect them.
+    const callbacks_header_path = try std.fmt.allocPrint(allocator, "{s}.{x}.cinterp_callbacks.h", .{ out, nonce });
+    defer removeTempFiles(ll_path, callbacks_header_path, keep_ir);
+    try std.fs.cwd().writeFile(.{ .sub_path = callbacks_header_path, .data = callbacks_header });
 
     try runZigCc(allocator, .{
         .source = src,
@@ -624,9 +658,9 @@ pub fn main() !void {
         .target = target,
         .cc_path = cc_path,
         .keep_ir = keep_ir,
-    }, ll_path);
+    }, ll_path, callbacks_header_path);
     const ir_text = try std.fs.cwd().readFileAlloc(allocator, ll_path, 64 * 1024 * 1024);
-    const result = try lowerModule(allocator, ir_text, .{
+    const result = lowerModule(allocator, ir_text, .{
         .source = src,
         .output = out,
         .target = target,
@@ -637,7 +671,15 @@ pub fn main() !void {
         .dump_imports = dump_imports,
         .cib_version = cib_version,
         .auto_link = auto_link,
-    });
+    }) catch |err| {
+        if (err == error.CallbackAcquireRequiresFunctionRef) {
+            std.debug.print("error: ci_callback_acquire requires a direct function reference\n", .{});
+            // `std.process.exit` skips defers, so drop the temporaries here.
+            removeTempFiles(ll_path, callbacks_header_path, keep_ir);
+            std.process.exit(1);
+        }
+        return err;
+    };
 
     // `data/link_wrappers.json` aliases a handful of same-signature symbols
     // that headers/IR spell differently (Windows `snprintf -> _snprintf`).
@@ -712,6 +754,50 @@ pub fn main() !void {
 test "target lookup" {
     try std.testing.expect(findTarget("x86_64-linux") != null);
     try std.testing.expect(findTarget("nope") == null);
+}
+
+test "callback acquire/release builtins never reach the CIPI table" {
+    // `buildImportTable` allocates provider lists per entry from `allocator`
+    // (arena-allocated in production), so only the table itself is freed here.
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var table = try buildImportTable(
+        allocator,
+        // A hand-written/legacy module may still carry the builtin as a plan;
+        // `lower_ast` filters it, this is the belt-and-braces path in `main`.
+        &.{
+            .{ .name = "__ci_callback_acquire", .args = &.{}, .ret_locs = &.{} },
+            .{ .name = "__ci_callback_release", .args = &.{}, .ret_locs = &.{} },
+            .{ .name = "puts", .args = &.{}, .ret_locs = &.{} },
+        },
+        &.{ "@__ci_callback_acquire", "@__ci_callback_release", "@errno" },
+        findTarget("x86_64-linux").?,
+        true,
+    );
+    defer table.deinit();
+
+    for (table.entries.items) |entry| {
+        try std.testing.expect(!std.mem.eql(u8, entry.name, "__ci_callback_acquire"));
+        try std.testing.expect(!std.mem.eql(u8, entry.name, "__ci_callback_release"));
+    }
+    // The unrelated symbols still get their entries.
+    var saw_errno = false;
+    var saw_puts_plan = false;
+    for (table.entries.items) |entry| {
+        if (std.mem.eql(u8, entry.name, "errno")) saw_errno = true;
+        if (std.mem.eql(u8, entry.name, "puts") and entry.plan_index != 0xffff) saw_puts_plan = true;
+    }
+    try std.testing.expect(saw_errno);
+    try std.testing.expect(saw_puts_plan);
+}
+
+test "embedded callback header declares the builtins and macros" {
+    try std.testing.expect(std.mem.indexOf(u8, callbacks_header, "ci_callback_fn __ci_callback_acquire(ci_callback_fn fn);") != null);
+    try std.testing.expect(std.mem.indexOf(u8, callbacks_header, "int __ci_callback_release(ci_callback_fn fn);") != null);
+    try std.testing.expect(std.mem.indexOf(u8, callbacks_header, "#define ci_callback_acquire(fn)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, callbacks_header, "#define ci_callback_release(fn)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, callbacks_header, "#ifndef CINTERP_CALLBACKS_H") != null);
 }
 
 test "package v1 uses the 15-byte legacy header" {
