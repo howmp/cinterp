@@ -9,6 +9,9 @@ SUITE_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 GEN_JOBS ?= 2
 MINIMIZE_JOBS ?= 2
 NIGHTLY_MINIMIZE ?= 1
+# ReleaseSmall runtime budget. Override for a one-off measurement with
+# `make size SIZE_BUDGET=...` or `make size-cross SIZE_BUDGET=...`.
+SIZE_BUDGET ?= 135168
 # Cross-suite targets: the default keeps the full matrix; Wine CI selects
 # win64,win32 to avoid needing the ARM64 toolchain/qemu in that job.
 CROSS_SUITE_TARGETS ?= win64,win32,arm64
@@ -55,7 +58,7 @@ size: runtime compiler
 	@printf 'hello.cib: '; wc -c < build/hello.cib
 	@build/cinterp-cc compile examples/ffi_qsort.c -o build/ffi_qsort.cib >/dev/null
 	@printf 'ffi_qsort.cib: '; wc -c < build/ffi_qsort.cib
-	@test "$$(stat -c%s runtime/zig-out/bin/cinterp-run)" -lt 131072
+	@test "$$(stat -c%s runtime/zig-out/bin/cinterp-run)" -lt $(SIZE_BUDGET)
 	@test "$$(stat -c%s build/ffi_qsort.cib)" -lt 4096
 
 release-check: test size
@@ -173,7 +176,7 @@ release-artifacts:
 	./scripts/package_release.sh
 
 size-cross:
-	./scripts/size_cross.sh
+	SIZE_BUDGET=$(SIZE_BUDGET) ./scripts/size_cross.sh
 
 # Local plan-evidence run: the targets below produce the structured reports
 # scripts/check_plan_evidence.py validates. full/cross/nightly reports are

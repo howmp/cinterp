@@ -69,3 +69,6 @@ no_clean:
     pop ebx
     leave
     ret
+
+.globl @feat.00
+.set @feat.00, 1

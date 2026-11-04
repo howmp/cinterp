@@ -99,12 +99,20 @@ copy_common() {
 split_debug() {
     local dest="$1" exe="$2" target="$3" oc=""
     case "$target" in
-        aarch64-*) oc="$(command -v aarch64-linux-gnu-objcopy || command -v objcopy || true)" ;;
-        *windows*) oc="$(command -v x86_64-w64-mingw32-objcopy || command -v objcopy || true)" ;;
-        *) oc="$(command -v objcopy || true)" ;;
+        aarch64-*) oc="$(command -v aarch64-linux-gnu-objcopy || command -v llvm-objcopy || command -v objcopy || true)" ;;
+        *windows*) oc="$(command -v llvm-objcopy || command -v x86_64-w64-mingw32-objcopy || command -v objcopy || true)" ;;
+        *) oc="$(command -v objcopy || command -v llvm-objcopy || true)" ;;
     esac
     if [ -z "$oc" ]; then
         echo "warning: objcopy not found; shipping unstripped $exe" >&2
+        return
+    fi
+    if [[ "$target" == *windows* ]]; then
+        # PE debug splitting is not portable across GNU/LLVM objcopy (PE has
+        # no ELF-style debuglink). Strip the runtime and drop unwind data;
+        # the release tarball does not ship a PE debug sidecar.
+        "$oc" --strip-all "$dest/$exe" 2>/dev/null || true
+        "$oc" --remove-section=.eh_fram "$dest/$exe" 2>/dev/null || true
         return
     fi
     mkdir -p "$dest/debug"

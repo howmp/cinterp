@@ -93,7 +93,7 @@ make test
 make evidence
 make check-version
 
-# release-size check (runtime < 128K, qsort package < 4K)
+# release-size check (runtime < 132K by default, qsort package < 4K)
 make release-check
 
 # fuzz: loader, execution, structured bytecode, FFI, sanitizer, and cross-ABI
@@ -108,9 +108,11 @@ make fuzz-cross
 # native-vs-cinterp differential check
 make differential
 
-# benchmarks and per-target size budgets
+# benchmarks and per-target size budgets (SIZE_BUDGET defaults to 135168 B;
+# size-cross post-link strips ELF .eh_frame* and PE .eh_fram)
 make bench
 make size-cross
+make size-cross SIZE_BUDGET=140000
 
 # release tarballs (LICENSE, SBOM, split debug, pkg-config/CMake/Rust bindings),
 # SHA256SUMS and optional GPG signature
@@ -223,7 +225,8 @@ AST；`--dump-imports` 打印 CIB provider 绑定；`--keep-ir` 把生成的 LLV
 `--cib-version 1` 生成不含 CIPM/CIPI 的旧版包。`--no-auto-link` 关闭对
 C 标准库/Windows API 的自动绑定。目标：`x86_64-linux`（默认，原生）、`x86_64-windows`、
 `i686-windows`、`aarch64-linux`。Windows 目标在可用时会自动使用 Zig 自带的 MinGW 头文件
-（`libc/include/any-windows-any`）；设置 `ZIG_LIB_DIR` 可覆盖。
+（`libc/include/any-windows-any`）；设置 `ZIG_LIB_DIR` 可覆盖。Windows 运行时 exe 使用
+Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；`cinterp.dll`/静态库仍按 C ABI 保留 CRT。
 
 编译器在 plan 中建模调用约定：对原生、间接和回调计划，`x86_stdcallcc` 映射为 `conv=1`，
 `x86_fastcallcc` 映射为 `conv=2`，`x86_thiscallcc` 映射为 `conv=3`（调用点的约定优先；

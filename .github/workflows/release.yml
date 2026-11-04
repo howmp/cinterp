@@ -23,7 +23,7 @@ jobs:
       - name: install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang python3 make binutils gcc g++ \
+          sudo apt-get install -y clang llvm python3 make binutils gcc g++ \
             gcc-aarch64-linux-gnu pkg-config cmake
           cargo --version
           rustc --version

@@ -133,7 +133,19 @@ fn dumpPackage(job: Job, dump_target: bool, dump_imports: bool, header: bool) vo
     }
 }
 
+fn initFpu() void {
+    if (comptime @import("builtin").cpu.arch == .x86 or
+        @import("builtin").cpu.arch == .x86_64)
+    {
+        // MinGW CRT normally resets the x87 control word during startup. A
+        // no-CRT Windows executable must do it explicitly so `long double`
+        // keeps extended precision.
+        asm volatile ("fninit" ::: "memory");
+    }
+}
+
 pub fn main() !void {
+    initFpu();
     const allocator = std.heap.page_allocator;
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
@@ -280,9 +292,9 @@ pub fn main() !void {
     }
     // ci_process_destroy is deliberately never called: a CIB may have registered
     // a libc atexit handler that still has to run against its VM, so the process
-    // and its VMs stay alive until the final libc exit (they only leak into the
-    // kernel at that point).
-    if (load_only) std.c.exit(0);
+    // and its VMs stay alive until the final process exit (they only leak into
+    // the kernel at that point).
+    if (load_only) std.process.exit(0);
 
     var runner = Runner{
         .targets = runs.items,
@@ -314,6 +326,6 @@ pub fn main() !void {
     // A failed run must not call std.process.exit off a worker thread, so the
     // main thread owns the final status.
     if (runner.failed.load(.monotonic)) std.process.exit(1);
-    // Keep every VM alive while libc runs ordinary atexit handlers.
-    std.c.exit(0);
+    // Keep every VM alive while the host runs ordinary atexit handlers.
+    std.process.exit(0);
 }

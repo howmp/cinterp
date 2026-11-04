@@ -1359,3 +1359,6 @@ _ci_cb_table:
     .long ci_cb_win32_253
     .long ci_cb_win32_254
     .long ci_cb_win32_255
+
+.globl @feat.00
+.set @feat.00, 1

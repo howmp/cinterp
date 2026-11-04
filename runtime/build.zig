@@ -34,7 +34,9 @@ fn addBackend(compile: *std.Build.Step.Compile, target: std.Build.ResolvedTarget
     compile.root_module.error_tracing = !release;
     compile.root_module.omit_frame_pointer = release;
     compile.root_module.strip = release and !keep_debug;
-    compile.linkLibC();
+    // Zig's Windows startup provides WinStartup/TLS for the exe, so the MinGW
+    // CRT is unnecessary there. C ABI libraries still need their CRT entry.
+    if (!(compile.kind == .exe and t.os.tag == .windows)) compile.linkLibC();
 }
 
 pub fn build(b: *std.Build) void {
