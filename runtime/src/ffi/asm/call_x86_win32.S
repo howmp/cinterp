@@ -72,3 +72,8 @@ no_clean:
 
 .globl @feat.00
 .set @feat.00, 1
+
+/* Merge read-only data into .text at link time. The PE loader keeps both
+   readable; this removes a section and its alignment padding. */
+.section .drectve,"yn"
+.ascii " /merge:.rdata=.text"

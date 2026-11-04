@@ -66,3 +66,7 @@ ci_win64_call:
     pop rbx
     leave
     ret
+
+/* Merge read-only data into .text at link time. */
+.section .drectve,"yn"
+.ascii " /merge:.rdata=.text"

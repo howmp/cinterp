@@ -1352,3 +1352,7 @@ ci_cb_table:
     .quad ci_cb_win64_253
     .quad ci_cb_win64_254
     .quad ci_cb_win64_255
+
+/* Merge read-only data into .text at link time. */
+.section .drectve,"yn"
+.ascii " /merge:.rdata=.text"

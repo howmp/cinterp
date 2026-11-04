@@ -1362,3 +1362,7 @@ _ci_cb_table:
 
 .globl @feat.00
 .set @feat.00, 1
+
+/* Merge read-only data into .text at link time. */
+.section .drectve,"yn"
+.ascii " /merge:.rdata=.text"

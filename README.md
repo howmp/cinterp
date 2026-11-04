@@ -227,6 +227,7 @@ C 标准库/Windows API 的自动绑定。目标：`x86_64-linux`（默认，原
 `i686-windows`、`aarch64-linux`。Windows 目标在可用时会自动使用 Zig 自带的 MinGW 头文件
 （`libc/include/any-windows-any`）；设置 `ZIG_LIB_DIR` 可覆盖。Windows 运行时 exe 使用
 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；`cinterp.dll`/静态库仍按 C ABI 保留 CRT。
+PE 运行时把 `.rdata` 合并进 `.text`，并在打包后删除 `.eh_fram`。
 
 编译器在 plan 中建模调用约定：对原生、间接和回调计划，`x86_stdcallcc` 映射为 `conv=1`，
 `x86_fastcallcc` 映射为 `conv=2`，`x86_thiscallcc` 映射为 `conv=3`（调用点的约定优先；
