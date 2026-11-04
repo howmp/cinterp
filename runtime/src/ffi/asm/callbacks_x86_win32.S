@@ -8,6 +8,8 @@
 .equ CB_X87, 24
 .equ CB_CLEANUP, 28
 .equ CB_ST0_F80, 32
+.equ CB_FAST_ECX, 48
+.equ CB_FAST_EDX, 52
 
 .text
 
@@ -20,6 +22,10 @@ ci_cb_win32_entry:
     sub esp, 64
     and esp, -16
     mov ebx, esp
+    /* Preserve the two `__fastcall` argument registers before the dispatcher
+       call; cdecl/stdcall plans simply ignore these frame fields. */
+    mov [ebx + CB_FAST_ECX], ecx
+    mov [ebx + CB_FAST_EDX], edx
     mov eax, [ebp + 4]
     mov [ebx + CB_SLOT], eax
     lea eax, [ebp + 12]

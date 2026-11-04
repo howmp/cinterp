@@ -227,6 +227,26 @@ if want win32; then
         -o "$OUT/ffi_callback_stdcall-i686-windows.cib" >/dev/null
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/libffi_callback_stdcall_helper32.dll" examples/ffi_callback_stdcall_helper.c
+    # __fastcall callback: first two int args arrive in ECX/EDX.
+    for required in examples/ffi_callback_fastcall.c examples/ffi_callback_fastcall_helper.c; do
+        if [ ! -f "$required" ]; then
+            echo "FAIL Win32: missing $required; the fastcall callback case cannot be verified" >&2
+            exit 1
+        fi
+    done
+    "$CINTERP_CC" compile examples/ffi_callback_fastcall.c --target i686-windows \
+        -o "$OUT/ffi_callback_fastcall-i686-windows.cib" >/dev/null
+    zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
+        -o "$OUT/libffi_callback_fastcall_helper32.dll" examples/ffi_callback_fastcall_helper.c
+    # __thiscall native call and callback: first arg in ECX, rest callee-popped stack.
+    "$CINTERP_CC" compile examples/ffi_thiscall.c --target i686-windows \
+        -o "$OUT/ffi_thiscall-i686-windows.cib" >/dev/null
+    zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
+        -o "$OUT/libffi_thiscall_helper32.dll" examples/ffi_thiscall_helper.c
+    "$CINTERP_CC" compile examples/ffi_callback_thiscall.c --target i686-windows \
+        -o "$OUT/ffi_callback_thiscall-i686-windows.cib" >/dev/null
+    zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
+        -o "$OUT/libffi_callback_thiscall_helper32.dll" examples/ffi_callback_thiscall_helper.c
     if [ -n "$HOST" ]; then
         scp "$OUT/cinterp-run32.exe" "$OUT"/*-i686-windows.cib "$OUT"/lib*32.dll "$HOST:$REMOTE" >/dev/null
     fi
@@ -253,6 +273,9 @@ if want win32; then
     win_run cinterp-run32.exe ffi_stdcall-i686-windows.cib libffi_stdcall_helper32.dll 60
     win_run cinterp-run32.exe ffi_fastcall-i686-windows.cib libffi_fastcall_helper32.dll 123
     win_run cinterp-run32.exe ffi_callback_stdcall-i686-windows.cib libffi_callback_stdcall_helper32.dll 42
+    win_run cinterp-run32.exe ffi_callback_fastcall-i686-windows.cib libffi_callback_fastcall_helper32.dll 42
+    win_run cinterp-run32.exe ffi_thiscall-i686-windows.cib libffi_thiscall_helper32.dll 123
+    win_run cinterp-run32.exe ffi_callback_thiscall-i686-windows.cib libffi_callback_thiscall_helper32.dll 42
     win_run cinterp-run32.exe winapi-i686-windows.cib "" 7
 fi
 

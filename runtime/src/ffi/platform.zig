@@ -154,6 +154,10 @@ pub const Win32CbFrame = extern struct {
     /// dword so the trampoline can use a memory operand for the stack adjust.
     cleanup: u32,
     ret_st0_f80: [16]u8,
+    /// Original ECX/EDX at trampoline entry, for `__fastcall`/`__thiscall`
+    /// callbacks (thiscall uses only ECX).
+    fast_ecx: u32,
+    fast_edx: u32,
 };
 
 pub const Arm64CbFrame = extern struct {
@@ -191,11 +195,13 @@ comptime {
             if (@offsetOf(Win64CbFrame, "saved_xmm6_15") != 160) @compileError("bad win64 cb saved");
         },
         .win32 => {
-            if (@sizeOf(Win32CbFrame) != 48) @compileError("bad win32 cb size");
+            if (@sizeOf(Win32CbFrame) != 56) @compileError("bad win32 cb size");
             if (@offsetOf(Win32CbFrame, "ret_st0") != 16) @compileError("bad win32 cb st0");
             // `callbacks_x86_win32.S` hardcodes CB_CLEANUP = 28.
             if (@offsetOf(Win32CbFrame, "cleanup") != 28) @compileError("bad win32 cb cleanup");
             if (@offsetOf(Win32CbFrame, "ret_st0_f80") != 32) @compileError("bad win32 cb st0 f80");
+            if (@offsetOf(Win32CbFrame, "fast_ecx") != 48) @compileError("bad win32 cb ecx");
+            if (@offsetOf(Win32CbFrame, "fast_edx") != 52) @compileError("bad win32 cb edx");
         },
         .aapcs64 => {
             if (@sizeOf(Arm64CbFrame) != 384) @compileError("bad arm64 cb size");
@@ -239,11 +245,19 @@ fn configureWin64(frame: *Win64Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, st
 /// EDX; aggregates, wider values and the hidden sret pointer stay on the stack,
 /// which the callee pops. Returns the register slot for `arg`, or null when the
 /// argument belongs to the stack.
-fn win32FastSlot(arg: abi.ArgPlan, gpr: *u8) ?u8 {
+pub fn win32FastSlot(arg: abi.ArgPlan, gpr: *u8) ?u8 {
     if (gpr.* >= 2 or arg.is_struct or arg.size != 4 or arg.locs.len != 1) return null;
     const slot = gpr.*;
     gpr.* += 1;
     return slot;
+}
+
+/// `__thiscall` has one register argument (the `this`/first 4-byte scalar) in
+/// ECX; the rest go on the stack and are popped by the callee.
+pub fn win32ThisSlot(arg: abi.ArgPlan, used: *bool) bool {
+    if (used.* or arg.is_struct or arg.size != 4 or arg.locs.len != 1) return false;
+    used.* = true;
+    return true;
 }
 
 const Win32FastLayout = struct {
@@ -251,8 +265,13 @@ const Win32FastLayout = struct {
     sret_offset: u32 = 0,
 };
 
+const Win32ThisLayout = struct {
+    stack_size: u32 = 0,
+    sret_offset: u32 = 0,
+};
+
 /// Bytes `arg` occupies in the outgoing stack area, on a 4-byte grid.
-fn win32StackBytes(arg: abi.ArgPlan) u32 {
+pub fn win32StackBytes(arg: abi.ArgPlan) u32 {
     var total: u32 = 0;
     for (arg.locs) |loc| total += loc.size;
     return std.mem.alignForward(u32, total, 4);
@@ -276,9 +295,29 @@ fn win32FastLayout(plan: abi.CallPlan) Win32FastLayout {
     return layout;
 }
 
+fn win32ThisLayout(plan: abi.CallPlan) Win32ThisLayout {
+    var layout = Win32ThisLayout{};
+    var used = false;
+    for (plan.args) |arg| {
+        const loc = arg.locs[0];
+        if (loc.kind == .sret) {
+            layout.sret_offset = layout.stack_size;
+            layout.stack_size += 4;
+            continue;
+        }
+        if (win32ThisSlot(arg, &used)) continue;
+        layout.stack_size += win32StackBytes(arg);
+    }
+    return layout;
+}
+
 fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     frame.stack = stack_buf;
-    frame.stack_size = if (plan.conv == 2) win32FastLayout(plan).stack_size else plan.stack_size;
+    frame.stack_size = switch (plan.conv) {
+        2 => win32FastLayout(plan).stack_size,
+        3 => win32ThisLayout(plan).stack_size,
+        else => plan.stack_size,
+    };
     frame.conv = plan.conv;
     frame.ret_x87 = 0;
     for (plan.ret_locs) |loc| {
@@ -295,12 +334,16 @@ fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, st
     if (plan.sret) {
         // The hidden return pointer is an ordinary stack argument on i686; the
         // `sret` loc's `index` is its offset in the outgoing argument area
-        // (`__fastcall` re-lays the area, so its slot moves with it).
+        // (`__fastcall`/`__thiscall` re-lay the area, so its slot moves with it).
         const ptr: u32 = @truncate(if (sret_ptr) |p| @intFromPtr(p) else @intFromPtr(ret_buf));
         for (plan.args) |arg| {
             for (arg.locs) |loc| {
                 if (loc.kind != .sret) continue;
-                const idx: usize = if (plan.conv == 2) win32FastLayout(plan).sret_offset else @intCast(loc.index);
+                const idx: usize = switch (plan.conv) {
+                    2 => win32FastLayout(plan).sret_offset,
+                    3 => win32ThisLayout(plan).sret_offset,
+                    else => @intCast(loc.index),
+                };
                 @as(*align(1) u32, @ptrCast(&stack_buf[idx])).* = ptr;
             }
         }
@@ -370,6 +413,7 @@ fn marshalWin64(frame: *Win64Frame, plan: abi.CallPlan, args: *const [4096]u8, s
 
 fn marshalWin32(frame: *Win32Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
     if (plan.conv == 2) return marshalWin32Fast(frame, plan, args, stack_buf);
+    if (plan.conv == 3) return marshalWin32This(frame, plan, args, stack_buf);
     for (plan.args) |arg| {
         for (arg.locs) |loc| {
             const off: usize = @intCast(loc.offset);
@@ -411,6 +455,35 @@ fn marshalWin32Fast(frame: *Win32Frame, plan: abi.CallPlan, args: *const [4096]u
             @memcpy(word[0..@min(n, 4)], args[off..][0..@min(n, 4)]);
             const value = std.mem.readInt(u32, &word, .little);
             if (slot == 0) frame.eax = value else frame.edx = value;
+            continue;
+        }
+        for (arg.locs) |loc| {
+            const off: usize = @intCast(loc.offset);
+            const n: usize = @intCast(loc.size);
+            @memcpy(stack_buf[stack_off..][0..n], args[off..][0..n]);
+            stack_off += n;
+        }
+        stack_off = std.mem.alignForward(usize, stack_off, 4);
+    }
+}
+
+/// `__thiscall` marshalling: the first 4-byte scalar (the `this`/first arg)
+/// goes in ECX (`frame.eax`, which the asm loads into ECX for conv=3); the rest
+/// fill the callee-popped stack area. Sret stays on the stack.
+fn marshalWin32This(frame: *Win32Frame, plan: abi.CallPlan, args: *const [4096]u8, stack_buf: *[4096]u8) void {
+    var stack_off: usize = 0;
+    var used = false;
+    for (plan.args) |arg| {
+        if (arg.locs[0].kind == .sret) {
+            stack_off += 4;
+            continue;
+        }
+        if (win32ThisSlot(arg, &used)) {
+            const off: usize = @intCast(arg.locs[0].offset);
+            const n: usize = @intCast(arg.locs[0].size);
+            var word: [4]u8 = [_]u8{0} ** 4;
+            @memcpy(word[0..@min(n, 4)], args[off..][0..@min(n, 4)]);
+            frame.eax = std.mem.readInt(u32, &word, .little);
             continue;
         }
         for (arg.locs) |loc| {
@@ -639,7 +712,7 @@ fn validateFor(kind: Kind, plan: abi.CallPlan) !void {
     // Only i686 carries a calling convention in the plan: 0 = cdecl,
     // 1 = stdcall, 2 = fastcall. Every other ABI has a single C convention and
     // ignores the byte, so it stays unconstrained there.
-    if (kind == .win32 and plan.conv > 2) return error.BadPlan;
+    if (kind == .win32 and plan.conv > 3) return error.BadPlan;
 
     const limits = limitsFor(kind);
     var sret_locs: usize = 0;
@@ -710,23 +783,21 @@ pub fn validate(plan: abi.CallPlan) !void {
 }
 
 /// Whether an i686 callback for `plan` can be dispatched through the
-/// `callbacks_x86_win32.S` trampolines.
-///
-/// The trampoline only records the outgoing argument area, so `__fastcall`'s
-/// ECX/EDX arguments would reach the VM as zeros; those are rejected outright.
-/// A `__stdcall` callback pops its own argument bytes; the trampoline reads
-/// that count from `Win32CbFrame.cleanup`. `__fastcall` callbacks are rejected
-/// because the trampoline only captures the stack argument area.
+/// `callbacks_x86_win32.S` trampolines. The trampoline saves ECX/EDX and the
+/// stack argument area, so cdecl, stdcall, fastcall and thiscall callbacks are
+/// all supported.
 pub fn win32CallbackSupported(plan: abi.CallPlan) bool {
-    return plan.conv != 2;
+    return plan.conv <= 3;
 }
 
 /// Argument bytes the i686 callback trampoline adds to ESP after it returns:
-/// `plan.stack_size` for `__stdcall` (the callee pops them) and 0 for
-/// `__cdecl` (the caller does).
+/// the callee-pops stack image for `__stdcall`/`__fastcall`/`__thiscall`, 0 for
+/// `__cdecl` (the caller pops). Register arguments do not live in this image.
 pub fn win32CallbackCleanup(plan: abi.CallPlan) u32 {
-    if (plan.conv != 1) return 0;
-    return plan.stack_size;
+    if (plan.conv == 1) return plan.stack_size;
+    if (plan.conv == 2) return win32FastLayout(plan).stack_size;
+    if (plan.conv == 3) return win32ThisLayout(plan).stack_size;
+    return 0;
 }
 
 extern const ci_cb_table: [256]*const anyopaque;
@@ -761,6 +832,32 @@ fn callbackReadWin32(frame: *Win32CbFrame, loc: abi.Loc) u64 {
         .sret => readCallbackU64(frame.stack_args),
         else => 0,
     };
+}
+
+/// Read one of the register arguments captured by the i686 trampoline (ECX/EDX
+/// for `__fastcall`, ECX/slot 0 for `__thiscall`).
+pub fn callbackReadFastReg(frame: *CallbackFrame, slot: u8) u64 {
+    const f: *const Win32CbFrame = @ptrCast(frame);
+    return switch (slot) {
+        0 => f.fast_ecx,
+        1 => f.fast_edx,
+        else => 0,
+    };
+}
+
+/// Read a scalar from the fastcall stack argument area (zero-extended), or
+/// return the address of a by-value aggregate at that offset.
+pub fn callbackReadFastStackValue(frame: *CallbackFrame, offset: usize, size: usize) u64 {
+    const f: *const Win32CbFrame = @ptrCast(frame);
+    var bits: u64 = 0;
+    const n = @min(size, 8);
+    @memcpy(std.mem.asBytes(&bits)[0..n], f.stack_args[offset..][0..n]);
+    return bits;
+}
+
+pub fn callbackReadFastStructPtr(frame: *CallbackFrame, offset: usize) u64 {
+    const f: *const Win32CbFrame = @ptrCast(frame);
+    return @intCast(@intFromPtr(f.stack_args + offset));
 }
 
 fn callbackReadArm64(frame: *Arm64CbFrame, loc: abi.Loc) u64 {
@@ -1117,12 +1214,12 @@ test "plan validation bounds stack locs by plan.stack_size" {
 }
 
 test "plan validation restricts the Win32 calling convention byte" {
-    for ([_]u8{ 0, 1, 2 }) |conv| {
+    for ([_]u8{ 0, 1, 2, 3 }) |conv| {
         try validateFor(.win32, .{ .args = &empty_args, .ret_locs = &.{}, .conv = conv });
     }
-    try std.testing.expectError(error.BadPlan, validateFor(.win32, .{ .args = &empty_args, .ret_locs = &.{}, .conv = 3 }));
+    try std.testing.expectError(error.BadPlan, validateFor(.win32, .{ .args = &empty_args, .ret_locs = &.{}, .conv = 4 }));
     // The byte is a Win32 decoration mapping only; other ABIs ignore it.
-    try validateFor(.sysv, .{ .args = &empty_args, .ret_locs = &.{}, .conv = 3 });
+    try validateFor(.sysv, .{ .args = &empty_args, .ret_locs = &.{}, .conv = 4 });
 }
 
 test "plan validation keeps a plain integer call valid on every ABI" {

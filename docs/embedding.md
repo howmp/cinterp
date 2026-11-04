@@ -209,11 +209,11 @@ VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划�
 - 原生代码在外部线程调用 callback 时：同一线程正在运行 VM 则重入；VM 空闲则 dispatch
   自行取得执行权；另一线程正在运行 VM 时 fail-fast，callback 被跳过、返回值置零并
   记录 `CI_E_BUSY`。不要通过 callback 等待 busy VM，否则可能与运行线程死锁。
-- 回调在 SysV x86-64、Win64、Win32 和 AArch64 上受支持。Win32 `__stdcall` 回调受
-  支持（trampoline 会弹出 stdcall 参数）；Win32 `__fastcall` 回调在注册时即被拒绝，
-  返回 `UnsupportedCallback`（`CI_E_RUNTIME`），因为 i686 trampoline 永远看不到
-  ECX/EDX 参数。HFA 返回值最多使用四个向量寄存器：1-4 个元素的 AArch64 HFA 在
-  `v0`-`v3` 中返回（包括四寄存器的情况）。
+- 回调在 SysV x86-64、Win64、Win32 和 AArch64 上受支持。Win32 cdecl/stdcall/fastcall/
+  thiscall 回调都受支持：stdcall/fastcall/thiscall trampoline 会按 callee-owned 栈参数
+  清理；fastcall 保存 ECX/EDX 供前两个 4 字节标量参数使用，thiscall 保存 ECX 供第一个
+  4 字节标量（`this`）使用。HFA 返回值最多使用四个向量寄存器：1-4 个元素的 AArch64 HFA
+  在 `v0`-`v3` 中返回（包括四寄存器的情况）。
 
 ## 版本与兼容性
 

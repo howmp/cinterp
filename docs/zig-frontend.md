@@ -94,15 +94,15 @@ lowering 会拒绝少数已被接受的形式（`frem`、`asm` 调用）。确�
 ## 代码生成约定
 
 - **调用约定。** `abi.convFromName` 把 `x86_stdcallcc` 映射为 `conv=1`、把
-  `x86_fastcallcc` 映射为 `conv=2`；其余所有 LLVM 约定以及缺失关键字都映射为
-  `0`（即目标默认值：cdecl / SysV / AAPCS64）。调用点的关键字优先于声明处的
-  关键字。间接调用采用 `call` 指令上的关键字（clang 把约定打印在那里，而不是
-  打印在函数指针类型里，因此没有其他地方可查）。回调计划使用定义函数的签名
-  约定，所以 Win32 的 `__stdcall` 回调得到 `conv=1`。运行时会用
-  `UnsupportedCallback` 拒绝 Win32 的 `__fastcall` 回调（`conv=2`），以及栈
-  参数区超过 255 字节的 `__stdcall` 回调（`runtime/src/ffi/platform.zig`、
-  `win32CallbackSupported`）。最后，`main.zig` 会依据生成的 MinGW 导入表为
-  已知的 WinAPI 导出覆盖 `conv`。
+  `x86_fastcallcc` 映射为 `conv=2`，`x86_thiscallcc` 映射为 `conv=3`；其余所有
+  LLVM 约定以及缺失关键字都映射为 `0`（即目标默认值：cdecl / SysV / AAPCS64）。
+  调用点的关键字优先于声明处的关键字。间接调用采用 `call` 指令上的关键字（clang
+  把约定打印在那里，而不是打印在函数指针类型里，因此没有其他地方可查）。回调计划
+  使用定义函数的签名约定，所以 Win32 的 `__stdcall`/`__fastcall`/`__thiscall`
+  回调分别得到 `conv=1`/`conv=2`/`conv=3`。i686 trampoline 会保存 ECX/EDX 以支持
+  fastcall/thiscall callback；`win32CallbackSupported` 只拒绝未知约定
+  （`runtime/src/ffi/platform.zig`）。最后，`main.zig` 会依据生成的 MinGW 导入表
+  为已知的 WinAPI 导出覆盖 `conv`。
 - **计划去重。** 计划按完整的序列化内容驻留（`lower_ast.plansEqual`：name、
   参数/返回位置、`stack_size`、`sret`、`sse_count`、`ret_size`、`conv`）。同一
   符号的相同签名共用一个计划；不同符号或不同 ABI 布局绝不合并。这减轻了大型

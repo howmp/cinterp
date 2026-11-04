@@ -698,16 +698,18 @@ pub fn buildPlanForAbi(allocator: Allocator, abi: u8, name: []const u8, ret_ty: 
 ///
 ///   0 = the target's default C convention (cdecl / SysV / AAPCS64),
 ///   1 = `x86_stdcallcc`,
-///   2 = `x86_fastcallcc`.
+///   2 = `x86_fastcallcc`,
+///   3 = `x86_thiscallcc`.
 ///
-/// Every other LLVM convention (`fastcc`, `coldcc`, `zeroext`, `thiscall`-like
-/// extensions, ...) has no runtime model and maps to 0. `null` (no keyword on
-/// the call/signature) is also 0. `main.zig` may overwrite the result with the
-/// WinAPI table for known Windows exports.
+/// Every other LLVM convention (`fastcc`, `coldcc`, zeroext, ...) has no
+/// runtime model and maps to 0. `null` (no keyword on the call/signature) is
+/// also 0. `main.zig` may overwrite the result with the WinAPI table for known
+/// Windows exports.
 pub fn convFromName(cc: ?[]const u8) u8 {
     const name = cc orelse return 0;
     if (std.mem.eql(u8, name, "x86_stdcallcc")) return 1;
     if (std.mem.eql(u8, name, "x86_fastcallcc")) return 2;
+    if (std.mem.eql(u8, name, "x86_thiscallcc")) return 3;
     return 0;
 }
 
@@ -1217,10 +1219,11 @@ test "AAPCS64 sret uses x8 and does not consume an argument GPR" {
     try std.testing.expectError(error.UnsupportedFfi, buildPlanForAbi(allocator, 4, "f", "{ i64, i64, double }", &.{}, false, null, 0, &.{}, 8));
 }
 
-test "convFromName maps stdcall/fastcall and defaults everything else" {
+test "convFromName maps stdcall/fastcall/thiscall and defaults everything else" {
     try std.testing.expectEqual(@as(u8, 0), convFromName(null));
     try std.testing.expectEqual(@as(u8, 1), convFromName("x86_stdcallcc"));
     try std.testing.expectEqual(@as(u8, 2), convFromName("x86_fastcallcc"));
+    try std.testing.expectEqual(@as(u8, 3), convFromName("x86_thiscallcc"));
     try std.testing.expectEqual(@as(u8, 0), convFromName("ccc"));
     try std.testing.expectEqual(@as(u8, 0), convFromName("fastcc"));
     try std.testing.expectEqual(@as(u8, 0), convFromName("coldcc"));

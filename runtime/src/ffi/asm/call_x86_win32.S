@@ -34,10 +34,17 @@ _ci_win32_call:
     mov edi, [esp + edx]
     mov esi, [esp + edx + 4]
     cmp edi, 2
-    jne no_fastcall
+    je load_fastcall
+    cmp edi, 3
+    je load_thiscall
+    jmp no_reg_args
+load_fastcall:
     mov ecx, [ebx + RET_EAX]
     mov edx, [ebx + RET_EDX]
-no_fastcall:
+    jmp no_reg_args
+load_thiscall:
+    mov ecx, [ebx + RET_EAX]
+no_reg_args:
     call esi
 
     mov [ebx + RET_EAX], eax

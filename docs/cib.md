@@ -122,7 +122,7 @@ offset size field
 2     plan_index       # CIPL 计划索引；0xffff 预留给 data 符号
 1     kind             # 0=function, 1=data
 1     flags            # bit0=required, bit1=lazy, bit2=allow_fallback, bit3=allow_override
-1     callconv         # 0=cdecl, 1=stdcall/winapi, 2=fastcall（仅 Win32）
+1     callconv         # 0=cdecl, 1=stdcall/winapi, 2=fastcall, 3=thiscall（后三者仅 Win32）
 1     arch_mask        # bit0=x86_64, bit1=x86, bit2=aarch64; 0=all
 2     min_os           # 0=unknown; Windows 编码为 (major<<8)|minor
 1     name_len
@@ -408,7 +408,7 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 2     stack_size
 1     sret（0/1）
 1     sse_count
-1     conv（仅 v3；Win32：0=cdecl、1=stdcall、2=fastcall；其他 ABI 忽略）
+1     conv（仅 v3；Win32：0=cdecl、1=stdcall、2=fastcall、3=thiscall；其他 ABI 忽略）
 2     ret_size
 ```
 
@@ -463,7 +463,7 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 - `is_struct=1`：参数的 VM 值是“指向结构体字节的指针”；运行时从该地址拷贝 `size` 字节到 arg block（byval/HFA/大结构体）。
 - `sret=1`：隐藏返回指针；`sret` loc 指示隐藏指针槽。
 - `sse_count`：SysV `%al` / Win64 varargs 的向量计数；其他 ABI 通常为 0。
-- `conv`：Win32 调用约定；0=cdecl，1=stdcall，2=fastcall；其他 ABI 忽略该字节。fastcall 只能用于原生调用计划，fastcall **callback** 会被运行时以 `UnsupportedCallback` 拒绝。
+- `conv`：Win32 调用约定；0=cdecl，1=stdcall，2=fastcall，3=thiscall；其他 ABI 忽略该字节。fastcall/thiscall 可用于原生、间接和 callback 计划；trampoline 会保存 ECX/EDX（thiscall 只用 ECX），并按对应的寄存器/栈 layout 读取参数。
 - `ret_size`：sret/聚合返回缓冲区的字节数。
 - `ret_count > 0`：普通返回 loc（`ret_count ≤ 8`）；多 loc、`st0` 或单 loc `size > 8` 时，运行时会把返回块复制到 `ret_buf` 并压入其地址（供 `extractvalue`/聚合 store）。AArch64 的 4 元素 HFA 用 `xmm0`-`xmm3` 四个返回 loc（kind 6/7/9/10）。
 - `stack_size`：计划需要的栈参数字节数；运行时校验不超过 4096。

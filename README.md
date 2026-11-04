@@ -217,7 +217,8 @@ C 标准库/Windows API 的自动绑定。目标：`x86_64-linux`（默认，原
 （`libc/include/any-windows-any`）；设置 `ZIG_LIB_DIR` 可覆盖。
 
 编译器在 plan 中建模调用约定：对原生、间接和回调计划，`x86_stdcallcc` 映射为 `conv=1`，
-`x86_fastcallcc` 映射为 `conv=2`（调用点的约定优先；声明是回退值）。已知的 Windows API
+`x86_fastcallcc` 映射为 `conv=2`，`x86_thiscallcc` 映射为 `conv=3`（调用点的约定优先；
+声明是回退值）。已知的 Windows API
 import 仍然采用 `win_defs` 中记录的 DLL/符号/callconv，对于 i686 stdcall 导出，这会覆盖
 plan 字节。
 
@@ -280,11 +281,13 @@ API 会在运行时而非加载时失败。自定义库仍然使用 `--lib`，�
   `examples/ffi_longdouble.c`）。Windows CRT 的 `%Lf` 行为与原生 MinGW 运行时一致。
 - 内部函数指针、间接调用、`phi`、VLA、packed 结构体、全局指针/函数指针重定位、
   HFA 3/4 和栈上 HFA（`examples/ffi_hfa.c`、`examples/ffi_hfa_stack.c`）
-- Win32 `__fastcall` 原生/间接调用（ECX/EDX + 栈，见 `examples/ffi_fastcall.c`）以及
-  Win32 `__stdcall` 调用/回调
+- Win32 `__fastcall`/`__thiscall` 原生/间接调用（fastcall ECX/EDX + 栈；thiscall
+  ECX + 栈，见 `examples/ffi_fastcall.c`、`examples/ffi_thiscall.c`）以及
+  Win32 cdecl/stdcall/fastcall/thiscall 回调（见 `examples/ffi_callback_fastcall.c`、
+  `examples/ffi_callback_thiscall.c`）
 
 明确不在当前 C/ABI 子集内的：向量类型、`_Complex` 和复杂/空结构体聚合的全局初始化器、
-Win64 的 `__vectorcall`/COM、Win32 `thiscall`、Win32 `__fastcall` 回调、SysV
+Win64 的 `__vectorcall`/COM、SysV
 `i128`/向量参数、内联汇编、`_Atomic`/`_Thread_local`，以及 CIB 到 CIB 的链接。Windows CRT
 的 `long double` printf 输出与原生 MinGW 运行时一致（后者本身在测试主机上并未实现 `%Lf`）。
 GCC builtin、外部 inline/weak 地址语义以及可增长的线性内存同样不在范围内。

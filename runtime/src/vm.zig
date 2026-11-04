@@ -1811,13 +1811,9 @@ pub const VM = struct {
                     // of silently dropping the callback when it is invoked.
                     const plan = store.callPlan(p);
                     try platform.validate(plan);
-                    // The i686 callback trampoline only captures the outgoing
-                    // argument area. `__fastcall` passes its first two scalar
-                    // arguments in ECX/EDX, which the trampoline never reads, so
-                    // such a callback would run with zeroed arguments; refuse it
-                    // here instead of calling the wrong code. (`__cdecl` and
-                    // `__stdcall` both keep their arguments on the stack and
-                    // stay supported.)
+                    // Win32 callback dispatch supports cdecl, stdcall, fastcall
+                    // and thiscall; reject only plans the platform cannot
+                    // marshal (unknown convention/ABI shape).
                     if (platform.abi_kind == .win32 and !platform.win32CallbackSupported(plan))
                         return error.UnsupportedCallback;
 
@@ -2548,7 +2544,51 @@ fn dispatchCallbackEntry(machine: *VM, entry: CallbackEntry, frame: *platform.Ca
     var scratch_used: usize = 0;
     var values: [plan_loader.MAX_ARGS]Value = undefined;
     if (n > values.len) return false;
+    const fast_win32 = platform.abi_kind == .win32 and entry.plan.conv == 2;
+    const this_win32 = platform.abi_kind == .win32 and entry.plan.conv == 3;
+    var fast_gpr: u8 = 0;
+    var fast_stack_off: usize = 0;
+    var this_used = false;
+    var this_stack_off: usize = 0;
     for (entry.plan.args, 0..) |arg, i| {
+        if (fast_win32) {
+            const loc = arg.locs[0];
+            if (loc.kind == .sret) {
+                values[i] = .{ .u = platform.callbackReadFastStackValue(frame, fast_stack_off, 4) };
+                fast_stack_off += 4;
+                continue;
+            }
+            if (platform.win32FastSlot(arg, &fast_gpr)) |slot| {
+                values[i] = .{ .u = platform.callbackReadFastReg(frame, slot) };
+                continue;
+            }
+            if (arg.is_struct or arg.locs.len > 1) {
+                values[i] = .{ .u = platform.callbackReadFastStructPtr(frame, fast_stack_off) };
+            } else {
+                values[i] = .{ .u = platform.callbackReadFastStackValue(frame, fast_stack_off, loc.size) };
+            }
+            fast_stack_off += platform.win32StackBytes(arg);
+            continue;
+        }
+        if (this_win32) {
+            const loc = arg.locs[0];
+            if (loc.kind == .sret) {
+                values[i] = .{ .u = platform.callbackReadFastStackValue(frame, this_stack_off, 4) };
+                this_stack_off += 4;
+                continue;
+            }
+            if (platform.win32ThisSlot(arg, &this_used)) {
+                values[i] = .{ .u = platform.callbackReadFastReg(frame, 0) };
+                continue;
+            }
+            if (arg.is_struct or arg.locs.len > 1) {
+                values[i] = .{ .u = platform.callbackReadFastStructPtr(frame, this_stack_off) };
+            } else {
+                values[i] = .{ .u = platform.callbackReadFastStackValue(frame, this_stack_off, loc.size) };
+            }
+            this_stack_off += platform.win32StackBytes(arg);
+            continue;
+        }
         if (arg.is_struct) {
             if (arg.locs.len == 1 and arg.locs[0].kind == .stack) {
                 values[i] = .{ .u = platform.callbackStructPtr(frame, arg.locs[0]) };
