@@ -79,6 +79,11 @@ compile() {
     "$CINTERP_CC" compile "examples/$name.c" --target "$target" -o "$OUT/$name-$target.cib" >/dev/null
 }
 
+compile_source() {
+    local target="$1" source="$2" name="$3"
+    "$CINTERP_CC" compile "$source" --target "$target" -o "$OUT/$name-$target.cib" >/dev/null
+}
+
 # Win32 __stdcall/__fastcall are only correct when the plan carries the calling
 # convention, so assert the plan dump instead of only checking the result.
 assert_conv() {
@@ -157,7 +162,7 @@ win_run() {
     echo "OK $package -> $expected x$repeat"
 }
 
-USUAL=(hello arrays structs ffi_malloc ffi_printf ffi_snprintf math ffi_float ffi_structs ffi_regstruct ffi_mixedstruct ffi_qsort ffi_callback ffi_callback_big ffi_longdouble ffi_edges ffi_hfa ffi_hfa_stack packed)
+USUAL=(hello arrays structs ffi_malloc ffi_printf ffi_printf_longdouble ffi_snprintf math ffi_float ffi_structs ffi_regstruct ffi_regstruct_live ffi_mixedstruct ffi_qsort ffi_callback ffi_callback_big ffi_longdouble ffi_longdouble_live ffi_edges ffi_hfa ffi_hfa_stack packed)
 HELPERS=(ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper ffi_longdouble_helper ffi_edges_helper ffi_hfa_helper ffi_hfa_stack_helper packed_helper)
 
 if want win64; then
@@ -166,6 +171,7 @@ if want win64; then
     cp runtime/zig-out/bin/cinterp-run.exe "$OUT/cinterp-run64.exe"
     for name in "${USUAL[@]}"; do compile x86_64-windows "$name"; done
     compile x86_64-windows winapi
+    compile_source x86_64-windows tests/csuite/external_data.c external_data
     for h in "${HELPERS[@]}"; do
         zig cc -target x86_64-windows-gnu -shared -O0 -Wl,--export-all-symbols \
             -o "$OUT/lib${h}64.dll" "examples/$h.c"
@@ -175,22 +181,26 @@ if want win64; then
     win_run cinterp-run64.exe structs-x86_64-windows.cib "" 34
     win_run cinterp-run64.exe ffi_malloc-x86_64-windows.cib "" 42
     win_run cinterp-run64.exe ffi_printf-x86_64-windows.cib "" 0
+    win_run cinterp-run64.exe ffi_printf_longdouble-x86_64-windows.cib "" 42
     win_run cinterp-run64.exe ffi_snprintf-x86_64-windows.cib "" 55
     win_run cinterp-run64.exe math-x86_64-windows.cib "" 8
     win_run cinterp-run64.exe ffi_float-x86_64-windows.cib libffi_float_helper64.dll 5
     win_run cinterp-run64.exe ffi_structs-x86_64-windows.cib libffi_structs_helper64.dll 28
     win_run cinterp-run64.exe ffi_regstruct-x86_64-windows.cib libffi_regstruct_helper64.dll 102
+    win_run cinterp-run64.exe ffi_regstruct_live-x86_64-windows.cib libffi_regstruct_helper64.dll 10
     win_run cinterp-run64.exe ffi_mixedstruct-x86_64-windows.cib libffi_mixedstruct_helper64.dll 11
     win_run cinterp-run64.exe ffi_qsort-x86_64-windows.cib "" 1
     win_run cinterp-run64.exe ffi_qsort-x86_64-windows.cib "" 1 2
     win_run cinterp-run64.exe ffi_callback-x86_64-windows.cib libffi_callback_helper64.dll 256
     win_run cinterp-run64.exe ffi_callback_big-x86_64-windows.cib libffi_callback_big_helper64.dll 246
     win_run cinterp-run64.exe ffi_longdouble-x86_64-windows.cib libffi_longdouble_helper64.dll 60
+    win_run cinterp-run64.exe ffi_longdouble_live-x86_64-windows.cib libffi_longdouble_helper64.dll 15
     win_run cinterp-run64.exe ffi_edges-x86_64-windows.cib libffi_edges_helper64.dll 55
     win_run cinterp-run64.exe ffi_hfa-x86_64-windows.cib libffi_hfa_helper64.dll 120
     win_run cinterp-run64.exe ffi_hfa_stack-x86_64-windows.cib libffi_hfa_stack_helper64.dll 45
     win_run cinterp-run64.exe packed-x86_64-windows.cib libpacked_helper64.dll 7
     win_run cinterp-run64.exe winapi-x86_64-windows.cib "" 7
+    win_run cinterp-run64.exe external_data-x86_64-windows.cib "" 42
 fi
 
 if want win32; then
@@ -199,6 +209,7 @@ if want win32; then
     cp runtime/zig-out/bin/cinterp-run.exe "$OUT/cinterp-run32.exe"
     for name in "${USUAL[@]}"; do compile i686-windows "$name"; done
     compile i686-windows winapi
+    compile_source i686-windows tests/csuite/external_data.c external_data
     for h in "${HELPERS[@]}"; do
         zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
             -o "$OUT/lib${h}32.dll" "examples/$h.c"
@@ -207,9 +218,12 @@ if want win32; then
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_stdcall_helper32.dll" examples/ffi_stdcall_helper.c
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_fastcall_helper32.dll" examples/ffi_fastcall_helper.c
     "$CINTERP_CC" compile examples/ffi_fastcall.c --target i686-windows -o "$OUT/ffi_fastcall-i686-windows.cib" >/dev/null
-    # Plan conv must be 1 (stdcall) / 2 (fastcall) for the Win32 FFI plans.
+    # Plan conv must be 1/2/3 for the Win32 stdcall/fastcall/thiscall plans.
     assert_conv ffi_stdcall c_std_add3 1
     assert_conv ffi_fastcall fast_add 2
+    assert_conv ffi_thiscall c_tc_add3 3
+    assert_conv ffi_callback_fastcall 'callback:' 2
+    assert_conv ffi_callback_thiscall 'callback:' 3
     # __stdcall callback (workstream E). The helper calls an int(__stdcall *)(int,int).
     for required in examples/ffi_callback_stdcall.c examples/ffi_callback_stdcall_helper.c; do
         if [ ! -f "$required" ]; then
@@ -246,17 +260,20 @@ if want win32; then
     win_run cinterp-run32.exe structs-i686-windows.cib "" 34
     win_run cinterp-run32.exe ffi_malloc-i686-windows.cib "" 42
     win_run cinterp-run32.exe ffi_printf-i686-windows.cib "" 0
+    win_run cinterp-run32.exe ffi_printf_longdouble-i686-windows.cib "" 42
     win_run cinterp-run32.exe ffi_snprintf-i686-windows.cib "" 55
     win_run cinterp-run32.exe math-i686-windows.cib "" 8
     win_run cinterp-run32.exe ffi_float-i686-windows.cib libffi_float_helper32.dll 5
     win_run cinterp-run32.exe ffi_structs-i686-windows.cib libffi_structs_helper32.dll 28
     win_run cinterp-run32.exe ffi_regstruct-i686-windows.cib libffi_regstruct_helper32.dll 102
+    win_run cinterp-run32.exe ffi_regstruct_live-i686-windows.cib libffi_regstruct_helper32.dll 10
     win_run cinterp-run32.exe ffi_mixedstruct-i686-windows.cib libffi_mixedstruct_helper32.dll 11
     win_run cinterp-run32.exe ffi_qsort-i686-windows.cib "" 1
     win_run cinterp-run32.exe ffi_qsort-i686-windows.cib "" 1 2
     win_run cinterp-run32.exe ffi_callback-i686-windows.cib libffi_callback_helper32.dll 256
     win_run cinterp-run32.exe ffi_callback_big-i686-windows.cib libffi_callback_big_helper32.dll 246
     win_run cinterp-run32.exe ffi_longdouble-i686-windows.cib libffi_longdouble_helper32.dll 60
+    win_run cinterp-run32.exe ffi_longdouble_live-i686-windows.cib libffi_longdouble_helper32.dll 15
     win_run cinterp-run32.exe ffi_edges-i686-windows.cib libffi_edges_helper32.dll 55
     win_run cinterp-run32.exe ffi_hfa-i686-windows.cib libffi_hfa_helper32.dll 120
     win_run cinterp-run32.exe ffi_hfa_stack-i686-windows.cib libffi_hfa_stack_helper32.dll 45
@@ -268,6 +285,7 @@ if want win32; then
     win_run cinterp-run32.exe ffi_thiscall-i686-windows.cib libffi_thiscall_helper32.dll 123
     win_run cinterp-run32.exe ffi_callback_thiscall-i686-windows.cib libffi_callback_thiscall_helper32.dll 42
     win_run cinterp-run32.exe winapi-i686-windows.cib "" 7
+    win_run cinterp-run32.exe external_data-i686-windows.cib "" 42
 fi
 
 if want arm64; then
@@ -299,17 +317,20 @@ if want arm64; then
     arm_run structs 34
     arm_run ffi_malloc 42
     arm_run ffi_printf 0
+    arm_run ffi_printf_longdouble 42
     arm_run ffi_snprintf 55
     arm_run math 8
     arm_run ffi_float 5 libffi_float_helper-arm64.so
     arm_run ffi_structs 28 libffi_structs_helper-arm64.so
     arm_run ffi_regstruct 102 libffi_regstruct_helper-arm64.so
+    arm_run ffi_regstruct_live 10 libffi_regstruct_helper-arm64.so
     arm_run ffi_mixedstruct 11 libffi_mixedstruct_helper-arm64.so
     arm_run ffi_qsort 1
     arm_run ffi_qsort 1 "" 2
     arm_run ffi_callback 256 libffi_callback_helper-arm64.so
     arm_run ffi_callback_big 246 libffi_callback_big_helper-arm64.so
     arm_run ffi_longdouble 60 libffi_longdouble_helper-arm64.so
+    arm_run ffi_longdouble_live 15 libffi_longdouble_helper-arm64.so
     arm_run ffi_edges 55 libffi_edges_helper-arm64.so
     arm_run ffi_hfa 120 libffi_hfa_helper-arm64.so
     arm_run ffi_hfa_stack 45 libffi_hfa_stack_helper-arm64.so

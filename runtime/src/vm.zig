@@ -556,6 +556,9 @@ pub const VM = struct {
     target: ?link_loader.TargetInfo = null,
     imports: link_loader.Table = .{},
     import_handles: [link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS]?*anyopaque = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS),
+    /// Data imports and function imports use different index spaces. Keep
+    /// separate handle caches so data entry 0 and plan 0 cannot share a slot.
+    data_import_handles: [link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS]?*anyopaque = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS),
     default_handles: [8]?*anyopaque = [_]?*anyopaque{null} ** 8,
     default_count: usize = 0,
     default_loaded: bool = false,
@@ -563,7 +566,6 @@ pub const VM = struct {
     library_count: usize = 0,
     symbol_buf: [256]u8 = undefined,
     path_buf: [256]u8 = undefined,
-    ret_buf: [4096]u8 align(16) = undefined,
     frames: [MAX_FRAMES]Frame = undefined,
     frame_count: usize = 0,
     jumps: [32]JumpEntry = [_]JumpEntry{.{}} ** 32,
@@ -602,6 +604,7 @@ pub const VM = struct {
 
     fn resetResolverCaches(self: *VM) void {
         self.import_handles = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS);
+        self.data_import_handles = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS);
         self.native_target_count = 0;
         self.clearNativeCache();
     }
@@ -937,16 +940,15 @@ pub const VM = struct {
         return null;
     }
 
-    fn cachedProvider(self: *VM, plan_index: u16, provider_index: usize, name: []const u8) !?*anyopaque {
-        const slot: usize = @as(usize, plan_index) * link_loader.MAX_PROVIDERS + provider_index;
-        if (slot >= self.import_handles.len) return null;
-        if (self.import_handles[slot]) |handle| return handle;
+    fn cachedProvider(self: *VM, cache: []?*anyopaque, slot: usize, name: []const u8) !?*anyopaque {
+        if (slot >= cache.len) return null;
+        if (cache[slot]) |handle| return handle;
         if (name.len >= self.path_buf.len) return error.PathTooLong;
         @memcpy(self.path_buf[0..name.len], name);
         self.path_buf[name.len] = 0;
         const cpath: [*:0]const u8 = @ptrCast(&self.path_buf[0]);
         const handle = native.load(cpath) orelse return null;
-        self.import_handles[slot] = handle;
+        cache[slot] = handle;
         return handle;
     }
 
@@ -959,7 +961,8 @@ pub const VM = struct {
             if (provider.kind != 0 and provider.kind != 1) continue;
             const lib_name = provider.name[0..provider.name_len];
             if (lib_name.len == 0 or std.mem.indexOfAny(u8, lib_name, "/\\:") != null) continue;
-            const handle = try self.cachedProvider(plan_index, pi, lib_name) orelse continue;
+            const slot = @as(usize, plan_index) * link_loader.MAX_PROVIDERS + pi;
+            const handle = try self.cachedProvider(&self.import_handles, slot, lib_name) orelse continue;
             if (provider.ordinal != 0) {
                 if (native.symbolOrdinal(handle, provider.ordinal)) |sym| return sym;
                 continue;
@@ -984,7 +987,8 @@ pub const VM = struct {
             if (provider.kind != 0 and provider.kind != 1) continue;
             const lib_name = provider.name[0..provider.name_len];
             if (lib_name.len == 0 or std.mem.indexOfAny(u8, lib_name, "/\\:") != null) continue;
-            const handle = try self.cachedProvider(@intCast(entry_index), pi, lib_name) orelse continue;
+            const slot = entry_index * link_loader.MAX_PROVIDERS + pi;
+            const handle = try self.cachedProvider(&self.data_import_handles, slot, lib_name) orelse continue;
             const sym_name = provider.symbol[0..provider.symbol_len];
             if (sym_name.len >= self.symbol_buf.len) return error.SymbolTooLong;
             @memcpy(self.symbol_buf[0..sym_name.len], sym_name);
@@ -1084,11 +1088,14 @@ pub const VM = struct {
 
         var stack_buf: [4096]u8 align(16) = [_]u8{0} ** 4096;
         var frame: platform.Frame = std.mem.zeroes(platform.Frame);
-        if (plan.sret and sret_ptr == null) {
+        var sret_dest = sret_ptr;
+        if (plan.sret and sret_dest == null) {
             const rs: usize = @intCast(plan.ret_size);
-            if (rs > self.ret_buf.len) return error.ReturnTooLarge;
+            if (rs > platform.block_size) return error.ReturnTooLarge;
+            const block = try self.allocTemp(rs, 16);
+            sret_dest = @ptrCast(block.ptr);
         }
-        platform.configure(&frame, plan, &self.ret_buf, &stack_buf, sret_ptr);
+        platform.configure(&frame, plan, &stack_buf, sret_dest);
         platform.marshal(&frame, plan, &arg_block, &stack_buf);
         platform.invoke(&frame, target);
 
@@ -1103,14 +1110,16 @@ pub const VM = struct {
             const n: usize = @intCast(loc.size);
             // A result that fits in one machine word travels as the value
             // itself; wide results (an `st0`/`long double` return, aggregates)
-            // stay in `ret_buf` and are surfaced as a pointer the bytecode
-            // loads from. Note `st0` is also the i686 return file for narrow
-            // `float`/`double` values, which are plain words.
+            // are copied into a caller-frame temporary and surfaced as a
+            // pointer the bytecode loads from. Note `st0` is also the i686
+            // return file for narrow `float`/`double` values, which are plain
+            // words.
             if (n > 8) {
                 const rs: usize = @intCast(plan.ret_size);
-                if (rs > self.ret_buf.len) return error.ReturnTooLarge;
-                @memcpy(self.ret_buf[0..rs], ret_block[off..][0..rs]);
-                const addr: u64 = @intCast(@intFromPtr(&self.ret_buf));
+                if (rs > platform.block_size) return error.ReturnTooLarge;
+                const block = try self.allocTemp(rs, 16);
+                @memcpy(block[0..rs], ret_block[off..][0..rs]);
+                const addr: u64 = @intCast(@intFromPtr(block.ptr));
                 try self.push(.{ .i = @bitCast(addr) });
             } else {
                 var bits: u64 = 0;
@@ -1119,9 +1128,10 @@ pub const VM = struct {
             }
         } else if (plan.ret_locs.len > 1) {
             const rs: usize = @intCast(plan.ret_size);
-            if (rs > self.ret_buf.len) return error.ReturnTooLarge;
-            @memcpy(self.ret_buf[0..rs], ret_block[0..rs]);
-            const ret_addr: u64 = @intCast(@intFromPtr(&self.ret_buf));
+            if (rs > platform.block_size) return error.ReturnTooLarge;
+            const block = try self.allocTemp(rs, 16);
+            @memcpy(block[0..rs], ret_block[0..rs]);
+            const ret_addr: u64 = @intCast(@intFromPtr(block.ptr));
             try self.push(.{ .i = @bitCast(ret_addr) });
         } else {
             try self.push(.{ .i = 0 });
@@ -2435,12 +2445,19 @@ pub const VM = struct {
         try self.push(.{ .i = @intCast(bits) });
     }
 
+    fn allocTemp(self: *VM, size: usize, alignment: usize) ![]u8 {
+        const start = std.mem.alignForward(usize, self.mem_top, alignment);
+        const limit = self.memLimit();
+        if (start > limit or size > limit - start) return error.OutOfMemory;
+        @memset(self.mem[start..][0..size], 0);
+        self.mem_top = start + size;
+        return self.mem[start..][0..size];
+    }
+
     fn pushF80(self: *VM, value: f80) !void {
-        const start = (self.mem_top + 15) & ~@as(usize, 15);
-        if (start + 16 > self.memLimit()) return error.OutOfMemory;
-        const p: *align(1) f80 = @ptrCast(&self.mem[start]);
+        const block = try self.allocTemp(16, 16);
+        const p: *align(1) f80 = @ptrCast(block.ptr);
         p.* = value;
-        self.mem_top = start + 16;
         const addr: u64 = @intCast(@intFromPtr(p));
         try self.push(.{ .i = @bitCast(addr) });
     }
@@ -2453,11 +2470,9 @@ pub const VM = struct {
     }
 
     fn pushF128(self: *VM, value: f128) !void {
-        const start = (self.mem_top + 15) & ~@as(usize, 15);
-        if (start + 16 > self.memLimit()) return error.OutOfMemory;
-        const p: *align(1) f128 = @ptrCast(&self.mem[start]);
+        const block = try self.allocTemp(16, 16);
+        const p: *align(1) f128 = @ptrCast(block.ptr);
         p.* = value;
-        self.mem_top = start + 16;
         const addr: u64 = @intCast(@intFromPtr(p));
         try self.push(.{ .i = @bitCast(addr) });
     }

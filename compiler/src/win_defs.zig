@@ -33,6 +33,8 @@ pub const Result = struct {
     /// Win32 call convention for this symbol: 1 = stdcall, 0 = cdecl.
     /// Ignored by the Win64 backend.
     conv: u8 = 0,
+    /// Raw `link_index.Entry.flags` bits; bit0 is the DATA export marker.
+    flags: u8 = 0,
 
     pub fn slice(self: *const Result) []const Provider {
         return self.providers[0..self.len];
@@ -71,6 +73,31 @@ pub fn lookup(arch: u8, name: []const u8) ?Result {
     return null;
 }
 
+const data_aliases = [_]struct { from: []const u8, to: []const u8 }{
+    .{ .from = "environ", .to = "_environ" },
+    .{ .from = "tzname", .to = "_tzname" },
+    .{ .from = "fmode", .to = "_fmode" },
+    .{ .from = "pgmptr", .to = "_pgmptr" },
+};
+
+/// Resolve a data export. MinGW `.def` indexes also contain functions; only
+/// entries marked DATA are accepted here so a data import cannot bind to an
+/// unrelated function address.
+pub fn lookupData(arch: u8, name: []const u8) ?Result {
+    if (lookupDataKey(arch, name)) |result| return result;
+    for (data_aliases) |alias| {
+        if (std.mem.eql(u8, normalize(name), alias.from)) {
+            if (lookupDataKey(arch, alias.to)) |result| return result;
+        }
+    }
+    return null;
+}
+
+fn lookupDataKey(arch: u8, name: []const u8) ?Result {
+    const result = lookup(arch, name) orelse return null;
+    return if (result.flags & 1 != 0) result else null;
+}
+
 fn lookupKey(arch: u8, key: []const u8) ?Result {
     const first = link_index.firstKey(generated.blob, header, key) catch return null;
     const mask = link_index.archMask(arch);
@@ -83,6 +110,7 @@ fn lookupKey(arch: u8, key: []const u8) ?Result {
         if (entry.arch_mask != 0 and (entry.arch_mask & mask) == 0) continue;
         const conv = entry.conv(arch);
         if (result.len == 0 or conv > result.conv) result.conv = conv;
+        result.flags |= entry.flags;
         const lib = link_index.libAt(generated.blob, header, entry.lib_id) catch continue;
         var duplicate = false;
         for (result.providers[0..result.len]) |provider| {
@@ -155,6 +183,14 @@ test "MinGW aliases resolve to the real export" {
 
     const underscore_close = lookup(1, "_close") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("_close", underscore_close.slice()[0].symbol);
+}
+
+test "data lookup never binds a function export" {
+    // The MinGW index may not carry every CRT data symbol; when it does,
+    // lookupData filters on the DATA flag. Function exports must always be
+    // rejected by this path.
+    try std.testing.expect(lookupData(1, "GetTickCount64") == null);
+    try std.testing.expect(lookupData(2, "GetSystemMetrics") == null);
 }
 
 test "CRT symbols and unknown names" {

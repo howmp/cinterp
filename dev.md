@@ -127,7 +127,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量�
 - 每 VM 有独立执行权（owner/depth/条件变量）：另一线程 `ci_vm_run` 返回 `CI_E_BUSY`；同一线程嵌套（callback 内再次 run）返回 `CI_E_RUNTIME`，避免清空外层镜像。
 - loader（`ci_vm_load_module`/`load_plans`/`load_package`/`load_library`）在执行期间返回 `CI_E_BUSY`。`ci_vm_busy` 查询状态；`ci_vm_destroy` 等待空闲，`ci_vm_destroy_ex(vm, CI_DESTROY_TRY)` 在 busy 时返回 `CI_E_BUSY`。
 - 不同 VM 使用不同锁，可并行；进程级只有 callback 槽位锁和 `ci_process` 注册表锁。
-- callback dispatch 的线程规则：同线程重入；空闲 VM 自行取得执行权；另一线程正在运行 VM 时 fail-fast，返回值置零并记录 `CI_E_BUSY`（`ci_vm_callback_error` 可读），不阻塞等待。
+- callback dispatch 的线程规则：同线程重入；空闲 VM 尝试取得执行权（并发 `ci_vm_run` 可能先取得，随后仍走 skip）；另一线程正在运行 VM 时 fail-fast，不排队、不阻塞，非 sret 返回值置零、sret 缓冲区保持不变，并记录 `CI_E_BUSY`（`ci_vm_callback_error` 可读，sticky 到 `ci_vm_clear_error`）。`libc-test/pthread_tsd` 因此显式 skip。
 
 ## 7. FFI
 
@@ -164,7 +164,7 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 - 显式槽使用 `ci_callback_acquire(fn)`/`ci_callback_release(fn)` 宏：`cinterp-cc` 通过 `zig cc -include` 强制包含内嵌的 `compiler/src/data/cinterp_callbacks.h`，CIB 源码不需要 `#include` 或 include path。编译器把 `__ci_callback_acquire`/`__ci_callback_release` 降为 CIVM 0xA3/0xA4，不生成 CIPI import。
 - acquire 只接受直接函数引用（可带 cast；运行期函数指针变量在编译期报 `ci_callback_acquire requires a direct function reference`），返回 trampoline 或 NULL（池耗尽）；release 成功返回 0、callback 仍在执行返回 `CI_E_BUSY`、指针不属于当前 VM/已释放返回 `CI_E_INVALID_ARGUMENT`。释放后的槽回到可复用集合，旧指针不得再调用；未释放的显式槽在 VM 销毁/plan 重载时退休。
 - `ci_callback_pool_stats(total, live, free_slots, retired)` 提供诊断；`ci_vm_callback_error` 记录因 VM 正被另一线程运行而跳过的 dispatch（`CI_E_BUSY`），`ci_vm_clear_error` 一并清除。
-- Win32 cdecl/stdcall/fastcall callback 支持；stdcall/fastcall 使用 `Win32CbFrame.cleanup` 在返回时跳过 callee-owned 栈参数。fastcall trampoline 在入口保存 ECX/EDX，dispatcher 按 fast layout 读取前两个 4 字节标量参数，其余参数从栈读取。
+- Win32 cdecl/stdcall/fastcall/thiscall callback 支持；stdcall/fastcall/thiscall 使用 `Win32CbFrame.cleanup` 在返回时跳过 callee-owned 栈参数。fastcall trampoline 在入口保存 ECX/EDX，thiscall 保存 ECX；dispatcher 按对应 layout 读取寄存器/栈参数。
 
 ### 7.4 结构体 FFI
 
@@ -353,19 +353,19 @@ make check-version        # VERSION 单一来源校验
 - **C/ABI**：`_Complex`、GCC builtins、外部 inline/weak 语义、Win64 `__vectorcall`/COM、SysV `i128`/向量参数、向量类型、内联汇编、`_Atomic`/`_Thread_local` 不支持。
 - **链接**：不支持 CIB-to-CIB 链接、包间导出/依赖；跨包复用需合并源码后重新生成 CIB，或通过 `--lib` 使用普通共享库。
 - **执行模型**：一个 VM 单执行上下文、单 CIB；进程可通过 `ci_process_*` 持有最多 64 个 VM，不同 VM 可并行。无进程内沙箱、无 Safe 模式；不可信输入由宿主隔离。
-- **Windows CRT**：`%Lf` 行为与原生 MinGW 一致，不额外提供格式化 shim。
-- **外部数据符号**：基础 provider（`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*`、Windows UCRT helper 等）已支持；更冷门的数据符号走 provider/fallback。
+- **Windows CRT**：`%Lf` 行为与原生 MinGW 一致，不额外提供格式化 shim；`examples/ffi_printf_longdouble.c` 只锁定 smoke 行为。
+- **外部数据符号**：基础 provider（`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*`、Windows `_environ`/`_fmode`/`_tzname` 等）已支持；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 是函数计划。更冷门的数据符号走 provider/fallback。
 
 ## 14. 已知限制与后续方向
 
-- **聚合返回值共享 `ret_buf`**：VM 只有一个 4 KiB 返回缓冲区；两个聚合返回值同时存活时会互相覆盖。修复需要结果所有权/生命周期重构，当前由宿主在跨调用保存聚合指针时自行复制。
+- **FFI 返回块生命周期**：宽值/多 loc 返回值现在按调用从调用方 VM 线性内存分配，存活到当前帧返回；不再共享 `ret_buf`。长循环中大量宽返回会按 `ret_size` 增长，最终受线性内存上限约束（与 f80/f128 临时值一致）。VM→VM 寄存器返回聚合仍依赖 callee 内存未被改写，属于后续独立 ownership 工作。
 - **Win32 `thiscall` 支持范围**：原生/间接调用和 callback 均支持；第一个 4 字节标量（`this`）走 ECX，其余走 callee 清理的栈。Win64 的 `__vectorcall`/COM 仍不支持。
 - **原生库句柄不卸载**：`--lib` 与 CIPI provider 的 `dlopen`/`LoadLibrary` 句柄随进程保留，没有 `dlclose`/`FreeLibrary`；长期多包宿主应自建进程边界。
 - **宿主堆、atexit/signal 与全局初始化**：`malloc` 等宿主堆分配跨 run 累积，不随 VM 线性内存重置；`atexit`/`signal` 是进程全局状态，多 VM/重复运行共享；非 `main` 入口不会执行编译器生成的 globals 安装代码。这些均已文档化，不在本次改变语义。
 - **callback 槽位**：固定 256 个进程级静态槽。自动 `CREATE_CALLBACK` 槽在 VM 销毁/plan 重载前一直占用（跨 run 复用）；显式 `ci_callback_acquire` 槽在 release 后回到可复用集合，未 release 的显式槽随 VM 销毁/重载退休。自动槽耗尽后返回 `TooManyCallbacks`。
-- **外部线程异步 callback**：VM 正在运行时，另一线程调用的 callback 默认 fail-fast（返回零值并记录 `CI_E_BUSY`），不排队、不阻塞；`libc-test/pthread_tsd` 因此显式 skip。需要异步回调的库应在 VM 空闲时调用，或改成同步 callback 设计。
+- **外部线程异步 callback**：VM 正在运行时，另一线程调用的 callback 默认 fail-fast（非 sret 返回值置零、sret 缓冲区不变，并记录 `CI_E_BUSY`），不排队、不阻塞；`libc-test/pthread_tsd` 因此显式 skip。需要异步回调的库应在 VM 空闲时调用，或改成同步 callback 设计。
 - **生成式差分**：YARPGen whitelist 已清空；nightly 的 7 个 skip 是 native 拒绝/超时或 `compiler limit:` 引擎上限。Csmith 仍有 3 条 known failure；报告保留 stale 检测，whitelist 条目开始通过会失败。
-- **后续方向**：向量/复杂 ABI、更多 external data、精确 Windows `%Lf` shim、跨 ABI 执行 fuzz 等按需扩展；不以放宽运行时上限或修改 expected 的方式“修复”。
+- **后续方向**：向量/复杂 ABI、更多 external data、精确 Windows `%Lf` shim（本轮仅 smoke/文档）、VM→VM 聚合返回 ownership、跨 ABI 执行 fuzz 等按需扩展；不以放宽运行时上限或修改 expected 的方式“修复”。
 
 ## 15. 参考资料
 

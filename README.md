@@ -12,7 +12,7 @@
   Zig 工具链生成（见下文）。
 - **运行时**（Zig 0.13）：带线性内存的栈式 VM、C ABI（`ci_vm_*` 和进程级
   `ci_process_*`）、编译期 ABI 选择、面向 SysV x86-64、Win64、Win32
-  cdecl/stdcall/fastcall 和 AArch64 AAPCS64 的固定汇编引擎、原生符号解析（Unix 上的
+  cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 的固定汇编引擎、原生符号解析（Unix 上的
   `dlopen`/`dlsym`，Windows 上的 `LoadLibraryA`/`GetProcAddress`）、从 `CIPI` 自动
   加载 provider，以及每个 ABI 上的静态回调池。一个 VM 持有一个 CIB；一个进程可以
   持有多个 VM 并在不同线程上运行它们。
@@ -256,8 +256,9 @@ API 会在运行时而非加载时失败。自定义库仍然使用 `--lib`，�
 - 外部标量/指针/varargs 调用（FFI 计划），例如 `puts`、`printf`、`malloc`、`free`、
   `snprintf`
 - 通过基础 CIPI 数据 provider 和运行时回退访问外部数据符号（`stdout`、`errno`、
-  `environ`、`stdin`、`tzname`、`opt*`，以及 Windows UCRT 的
-  `_errno`/`__acrt_iob_func`/`__p__environ` 辅助函数）
+  `environ`、`stdin`、`tzname`、`opt*`，以及 Windows 的 `_environ`/`_fmode`/`_tzname`
+  等数据导出）；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 是函数计划，
+  不属于 data provider
 - 跨四种 ABI 的 C varargs 函数（`va_start`/`va_arg`/`va_end`/`va_copy`），包括对
   `long double` 和聚合参数的复制
 - `main(argc, argv, envp)` 配合 `cinterp-run package -- arg...`
@@ -266,8 +267,8 @@ API 会在运行时而非加载时失败。自定义库仍然使用 `--lib`，�
   `examples/ffi_structs.c` + `--lib`）
 - 寄存器类的小结构体：强制转换的 8 字节（S8）和 16 字节 double-HFA 聚合返回值（D16），
   包括 `extractvalue` 和 `fptosi`（见 `examples/ffi_regstruct.c`）
-- 回调：作为 C 函数指针传入的 VM 函数会在 SysV x64、Win64、Win32（cdecl 和 stdcall）和
-  AArch64 上变成一个静态 trampoline；dispatcher 重新进入 VM 时不展开外层栈帧（见
+- 回调：作为 C 函数指针传入的 VM 函数会在 SysV x64、Win64、Win32（cdecl/stdcall/fastcall/
+  thiscall）和 AArch64 上变成一个静态 trampoline；dispatcher 重新进入 VM 时不展开外层栈帧（见
   `examples/ffi_qsort.c`、`examples/ffi_callback*.c`、`examples/ffi_callback_stdcall.c`）
 - 两个 eightbyte 的混合类别寄存器聚合（例如 `{ i64, double }` 在 RAX + XMM0 中返回；见
   `examples/ffi_mixedstruct.c`）
@@ -277,7 +278,8 @@ API 会在运行时而非加载时失败。自定义库仍然使用 `--lib`，�
 - 位域：经由 clang 的整数移位/掩码降低（见 `examples/bitfields.c`）
 - 内部精确的 `long double`：x86 目标上为 x86 `f80`，AArch64 上为 IEEE `f128`；
   算术/比较/转换以及 FFI/varargs 路径（`examples/longdouble.c`、
-  `examples/ffi_longdouble.c`）。Windows CRT 的 `%Lf` 行为与原生 MinGW 运行时一致。
+  `examples/ffi_longdouble.c`）。Windows CRT 的 `%Lf` 行为与原生 MinGW 运行时一致；
+  `examples/ffi_printf_longdouble.c` 只锁定这一 smoke 行为，不提供精确格式化 shim。
 - 内部函数指针、间接调用、`phi`、VLA、packed 结构体、全局指针/函数指针重定位、
   HFA 3/4 和栈上 HFA（`examples/ffi_hfa.c`、`examples/ffi_hfa_stack.c`）
 - Win32 `__fastcall`/`__thiscall` 原生/间接调用（fastcall ECX/EDX + 栈；thiscall
@@ -389,8 +391,12 @@ CIB 源码不需要 `#include`。释放后的旧指针不得再次调用（复�
 缓存，当包或计划表被替换时会清空 provider/target 缓存（显式的 `--lib` 句柄在包替换后仍然
 有效）。一个 VM 中超过 256 个不同的原生目标会返回 `TooManyNativeTargets`（`CI_E_LINK`）。
 库句柄永不卸载：`--lib` 和 provider 库会一直保持映射直到进程退出。静态回调 trampoline 可用于
-SysV x64、Win64、Win32 和 AArch64。VM 正在执行时，来自另一线程的 callback 默认 fail-fast
-（返回零值并记录 `CI_E_BUSY`）；需要异步回调的库应等待 VM 空闲或改用同步设计。
+SysV x64、Win64、Win32 和 AArch64。VM 正在执行时，来自另一线程的 callback 默认 fail-fast：
+不排队、不等待，非 sret 返回值置零，sret 缓冲区保持不变，并通过 `ci_vm_callback_error`
+记录 `CI_E_BUSY`（该记录 sticky，直到 `ci_vm_clear_error`）。空闲 VM 会尝试取得执行权，
+但并发的 `ci_vm_run` 可能先取得，此时 callback 仍走 skip 路径。远程 Windows runner 已移除，
+Windows 测试统一走 Wine。`libc-test/pthread_tsd` 因这一策略显式 skip；需要异步回调的库应
+等待 VM 空闲或改用同步设计。
 
 运行时执行受信任的 CIB 包，不提供进程内沙箱；`--load-only` 在不解执行的情况下校验包。
 不受支持的运行时（macOS/未知 OS 和 musl）会在加载时以 `UnsupportedOs`/`UnsupportedLibc`

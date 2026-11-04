@@ -44,6 +44,7 @@
 - 删除/重命名函数、改变参数或返回类型、改变结构体字段顺序属于破坏性变更，必须提升 `CI_ABI_VERSION`。
 - 共享库文件名跟随 `VERSION`（当前产物为 `libcinterp.so.0.1.0`），SONAME 为 `libcinterp.so.<VERSION 主版本>`（当前 `libcinterp.so.0`），并保留未版本化的 `libcinterp.so` 链接名。**0.x 阶段 SONAME 主版本取 `VERSION` 主版本（当前 0），`CI_ABI_VERSION`（当前 2）是独立编号**：`CI_ABI_VERSION` 提升不必然立即改变 SONAME，只有 `VERSION` 主版本提升时 SONAME 主版本才随之变化。嵌入方应通过 `ci_abi_version()` 检查 ABI，而不是从 `.so` 文件名推断兼容性。
 - 回调 trampoline 的进程级生命周期属于 ABI 合同：固定 **256** 个进程级静态槽，不生成可执行内存。自动 `CREATE_CALLBACK` 槽绑定到其 VM，并在 VM 销毁或计划重载后**永久退休、永不复用**；显式 `ci_callback_acquire`/`ci_callback_release` 槽在释放后回到可复用集合，未释放的显式槽在 VM 销毁/重载时退休。释放后的旧指针不得再次调用（复用后可能进入另一个 VM，属于调用方违约）。`ci_callback_pool_stats` 可查询 live/free/retired 数量。Win32 `__stdcall`、`__fastcall` 和 `__thiscall` callback 均受支持（fastcall/thiscall trampoline 保存寄存器参数，并按对应 layout 清理栈参数）。
+- 回调线程规则是稳定合同：VM 忙时其他线程的 callback **不排队、不等待**，非 sret 返回值置零、sret 缓冲区不变，并通过 `ci_vm_callback_error` 记录 `CI_E_BUSY`（sticky，直到 `ci_vm_clear_error`）；销毁路径可能记录 `CI_E_DESTROYED`。空闲 VM 会尝试取得执行权，但并发的 `ci_vm_run` 可能先取得，此时仍走 skip。`libc-test/pthread_tsd` 的 skip 是这一策略的预期结果。
 
 ## 编译器与运行时
 

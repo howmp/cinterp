@@ -180,8 +180,9 @@ int ci_vm_clear_error(ci_vm *vm);
  * A callback that native code invokes while another thread is running the VM
  * is skipped instead of waiting - waiting could deadlock with the run thread,
  * which may itself be waiting for that callback. The skipped call returns
- * deterministic zero return values and records CI_E_BUSY here; a VM that is
- * being destroyed records CI_E_DESTROYED. This is a separate channel from
+ * deterministic zero values for all non-sret results; an sret buffer supplied
+ * by the caller is left unchanged. The skip records CI_E_BUSY here; a VM that
+ * is being destroyed records CI_E_DESTROYED. This is a separate channel from
  * ci_vm_last_error/ci_vm_last_error_code, so a host whose native library
  * swallowed the callback result can still observe the skip; it stays until
  * ci_vm_clear_error. Appended to ABI 2.

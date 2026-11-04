@@ -9,6 +9,9 @@ SUITE_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 GEN_JOBS ?= 2
 MINIMIZE_JOBS ?= 2
 NIGHTLY_MINIMIZE ?= 1
+# Cross-suite targets: the default keeps the full matrix; Wine CI selects
+# win64,win32 to avoid needing the ARM64 toolchain/qemu in that job.
+CROSS_SUITE_TARGETS ?= win64,win32,arm64
 
 all: test
 
@@ -90,6 +93,8 @@ test-suites-report: test-suites-full
 	@test -s build/test-suites-full.json
 
 test-suites-cross: compiler runtime
+	mkdir -p build/cross
+ifneq ($(findstring win64,$(CROSS_SUITE_TARGETS)),)
 	cd runtime && zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run.exe build/cross/cinterp-run64.exe
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite csuite --target x86_64-windows --jobs 4 --report build/test-suites-win64.json
@@ -97,6 +102,8 @@ test-suites-cross: compiler runtime
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite tcc-smoke --target x86_64-windows --jobs 4 --report build/test-suites-tcc-win64.json
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite gcc-smoke --target x86_64-windows --jobs 4 --report build/test-suites-gcc-win64.json
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite compcert-smoke --target x86_64-windows --jobs 4 --report build/test-suites-compcert-win64.json
+endif
+ifneq ($(findstring win32,$(CROSS_SUITE_TARGETS)),)
 	cd runtime && zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run.exe build/cross/cinterp-run32.exe
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite csuite --target i686-windows --jobs 4 --report build/test-suites-win32.json
@@ -104,6 +111,8 @@ test-suites-cross: compiler runtime
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite tcc-smoke --target i686-windows --jobs 4 --report build/test-suites-tcc-win32.json
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite gcc-smoke --target i686-windows --jobs 4 --report build/test-suites-gcc-win32.json
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite compcert-smoke --target i686-windows --jobs 4 --report build/test-suites-compcert-win32.json
+endif
+ifneq ($(findstring arm64,$(CROSS_SUITE_TARGETS)),)
 	cd runtime && zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSmall
 	cp runtime/zig-out/bin/cinterp-run build/cross/cinterp-run-arm64
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite csuite --target aarch64-linux --jobs 4 --report build/test-suites-arm64.json
@@ -111,6 +120,8 @@ test-suites-cross: compiler runtime
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite tcc-smoke --target aarch64-linux --jobs 4 --report build/test-suites-tcc-arm64.json
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite gcc-smoke --target aarch64-linux --jobs 4 --report build/test-suites-gcc-arm64.json
 	python3 scripts/test_suites.py --compiler-path build/cinterp-cc --suite compcert-smoke --target aarch64-linux --jobs 4 --report build/test-suites-compcert-arm64.json
+endif
+	# Always restore the native runtime, including Windows-only CI runs.
 	cd runtime && zig build -Doptimize=ReleaseSmall
 
 generate-diff: compiler runtime

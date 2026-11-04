@@ -14,6 +14,10 @@ double c_take_d16(D16 s) {
     return s.a + s.b;
 }
 
+double c_sum_d16(D16 a, D16 b) {
+    return a.a + a.b + b.a + b.b;
+}
+
 D16 c_make_d16(double a, double b) {
     D16 s = { a, b };
     return s;

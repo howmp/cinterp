@@ -45,3 +45,42 @@ jobs:
           export PATH="/c/Program Files/LLVM/bin:$PATH"
           ./scripts/test_cross.sh --targets win64,win32
           python scripts/fuzz_cross.py --targets win64,win32 --iterations 100
+
+  windows-wine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y clang make wine wine64 wine32:i386
+          wine --version
+      - name: Build compiler
+        run: make compiler
+      - name: Win64 + Win32 FFI cross suite under Wine
+        run: ./scripts/test_cross.sh --targets win64,win32
+      - name: Win32 API imports under Wine
+        run: make test-winapi
+      - name: Fetch cross suites
+        run: >-
+          python3 scripts/fetch_suites.py
+          --suite c-testsuite --suite tcc --suite gcc-torture --suite CompCert
+          --support
+      - name: Win64 + Win32 smoke suites under Wine
+        run: make test-suites-cross CROSS_SUITE_TARGETS=win64,win32
+      - name: Win64 + Win32 load-only fuzz under Wine
+        run: python3 scripts/fuzz_cross.py --targets win64,win32 --iterations 100
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cross-abi-wine
+          path: |
+            build/test-suites-*win*.json
+          if-no-files-found: warn

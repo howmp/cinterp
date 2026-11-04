@@ -220,6 +220,7 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 - `OP_ADDR_CONST offset` 压入 `&mem[offset]` 的**宿主地址**（不是文件偏移）。
 - `OP_SET_MEM_TOP size` 将 `mem_top` 设为 size。
 - `OP_ALLOCA size` 在 8 字节对齐的 `mem_top` 分配并清零，压入宿主地址。
+- FFI 宽/多 loc 返回值使用同一 bump allocator 分配（16 字节对齐）；块在帧返回前不会回收，长循环可能耗尽线性内存。
 - `OP_ALLOCA_DYN` 从栈弹 size，做同样的动态分配（VLA）。
 - 全局数据没有独立 section；编译器在 `main` 开头生成：
   1. `SET_MEM_TOP <global_data_size>`
@@ -353,7 +354,7 @@ f80/f128 **不是** 8 字节栈值本身：
 - `*_CONST` 在 VM 线性内存分配一个 16B 对象，并把**对象地址**压栈。
 - 算术/比较 opcode 读取这些对象地址，结果再分配一个新对象并压地址。
 - `store/load` 对 f80/f128 使用 `MEMCPY`/指针别名语义；全局/内存布局由 C 类型大小决定。
-- FFI 返回 `st0`/多寄存器聚合时，`invokeFfi` 会把结果复制到运行时返回缓冲区并压入地址。
+- FFI 返回 `st0`/多寄存器聚合时，`invokeFfi` 会从调用方 VM 线性内存分配返回块、复制结果并压入地址；返回块存活到当前帧返回，不再共享固定缓冲区。
 
 ### 4.3 显式 callback acquire/release
 
@@ -465,7 +466,7 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 - `sse_count`：SysV `%al` / Win64 varargs 的向量计数；其他 ABI 通常为 0。
 - `conv`：Win32 调用约定；0=cdecl，1=stdcall，2=fastcall，3=thiscall；其他 ABI 忽略该字节。fastcall/thiscall 可用于原生、间接和 callback 计划；trampoline 会保存 ECX/EDX（thiscall 只用 ECX），并按对应的寄存器/栈 layout 读取参数。
 - `ret_size`：sret/聚合返回缓冲区的字节数。
-- `ret_count > 0`：普通返回 loc（`ret_count ≤ 8`）；多 loc、`st0` 或单 loc `size > 8` 时，运行时会把返回块复制到 `ret_buf` 并压入其地址（供 `extractvalue`/聚合 store）。AArch64 的 4 元素 HFA 用 `xmm0`-`xmm3` 四个返回 loc（kind 6/7/9/10）。
+- `ret_count > 0`：普通返回 loc（`ret_count ≤ 8`）；多 loc、`st0` 或单 loc `size > 8` 时，运行时会把返回块复制到按调用分配的 VM 临时块并压入其地址（供 `extractvalue`/聚合 store）。该块存活到当前帧返回；长循环中大量宽返回会消耗线性内存。AArch64 的 4 元素 HFA 用 `xmm0`-`xmm3` 四个返回 loc（kind 6/7/9/10）。
 - `stack_size`：计划需要的栈参数字节数；运行时校验不超过 4096。
 
 ### 5.4 ABI id 与 LocKind 的对应
@@ -608,4 +609,4 @@ xxd -g1 build/hello.cib
 - `CIVM` 函数名、CIPL 计划名、CIPI 名称都按字节计数，不是 Unicode 字符数；超限在解析阶段返回 `NameTooLong`。
 - 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。运行时不提供进程内沙箱或 Safe 模式。
 - 运行时共享宿主 libc/stdio；`malloc` 的宿主堆分配跨 run 累积，`dlopen`/`LoadLibrary` 句柄永不卸载，`atexit`/`signal` 是进程全局状态。非 `main` 入口不会执行全局安装代码。
-- 自动链接覆盖函数符号和基础 external data（`stdout`/`t_status` 等，`CIPI.kind=data` + `ADDR_EXTERN`）；向量、复杂聚合全局初始化仍不在范围内。`CIPKG` 本身不携带 `.so`/`.dll` 二进制。
+- 自动链接覆盖函数符号和基础 external data（`stdout`/`stderr`/`_environ` 等，`CIPI.kind=data` + `ADDR_EXTERN`）；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 是函数计划，不是 data provider。向量、复杂聚合全局初始化仍不在范围内。`CIPKG` 本身不携带 `.so`/`.dll` 二进制。

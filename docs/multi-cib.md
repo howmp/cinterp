@@ -363,14 +363,18 @@ ci_callback_pool_stats(&total, &live, &free_slots, &retired);
 ### 6.5 callback 的线程规则
 
 - 当前线程就是该 VM 的运行者：callback 直接重入 `runCallback`，不展开外层帧。
-- VM 空闲：dispatch 先取得执行权，执行完释放；不会与并发的 `ci_vm_run` 竞争内存。
-- VM 正被另一线程运行：**fail-fast**，callback 被跳过，返回值写为零，并在
-  `ci_vm_callback_error` 记录 `CI_E_BUSY`。这里不能阻塞等待，否则可能与正在等待
-  该 callback 的运行线程死锁。
-- VM 正在销毁：跳过并记录 `CI_E_DESTROYED`。
+- VM 空闲：dispatch **尝试**取得执行权，执行完释放；并发的 `ci_vm_run` 可能先取得，
+  此时 callback 仍走下面的 skip 路径。
+- VM 正被另一线程运行：**fail-fast**，callback 被跳过、不排队；非 sret 返回值写为零，
+  sret 缓冲区保持原样，并在 `ci_vm_callback_error` 记录 `CI_E_BUSY`。这里不能阻塞等待，
+  否则可能与正在等待该 callback 的运行线程死锁。
+- VM 正在销毁：跳过；通常记录 `CI_E_DESTROYED`（销毁快路径可能只返回零值）。
+- `ci_vm_callback_error` 是独立、sticky 的错误通道；读取不会清除，只有
+  `ci_vm_clear_error` 清除。
 
 原生库在后台线程异步调用 callback 时，应保证 VM 处于空闲状态，或在 VM 自己的运行
-线程上同步调用；运行中的 VM 不会为外部线程排队 callback。
+线程上同步调用；运行中的 VM 不会为外部线程排队 callback。`libc-test/pthread_tsd`
+因这一策略显式 skip。
 
 ## 7. 限制与已知边界
 

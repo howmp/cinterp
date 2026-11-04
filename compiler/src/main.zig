@@ -327,10 +327,15 @@ fn buildImportTable(
         if (target.os == 2 and plan_names.contains(name)) continue;
         var providers: []imports.Provider = undefined;
         if (target.os == 1) {
-            const out = try allocator.alloc(imports.Provider, 2);
-            out[0] = .{ .lib = "libc.so.6", .symbol = name };
-            out[1] = .{ .lib = "libm.so.6", .symbol = name };
+            const libs = [_][]const u8{
+                "libc.so.6",  "libm.so.6",    "libdl.so.2",     "libpthread.so.0",
+                "librt.so.1", "libutil.so.1", "libresolv.so.2",
+            };
+            const out = try allocator.alloc(imports.Provider, libs.len);
+            for (libs, 0..) |lib, i| out[i] = .{ .lib = lib, .symbol = name };
             providers = out;
+        } else if (win_defs.lookupData(target.arch, name)) |resolved| {
+            providers = try convertProviders(allocator, resolved.slice());
         } else {
             providers = try fallbackWindowsProviders(allocator, name);
         }

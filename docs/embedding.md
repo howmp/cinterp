@@ -207,8 +207,10 @@ VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划�
     `ci_vm_callback_error(vm)` 报告被跳过的 callback dispatch（例如 `CI_E_BUSY`），
     `ci_vm_clear_error(vm)` 会一并清除。
 - 原生代码在外部线程调用 callback 时：同一线程正在运行 VM 则重入；VM 空闲则 dispatch
-  自行取得执行权；另一线程正在运行 VM 时 fail-fast，callback 被跳过、返回值置零并
-  记录 `CI_E_BUSY`。不要通过 callback 等待 busy VM，否则可能与运行线程死锁。
+  尝试取得执行权（并发 `ci_vm_run` 可能先取得，随后仍走 skip）；另一线程正在运行 VM 时
+  fail-fast，callback 被跳过、不排队，非 sret 返回值置零、sret 缓冲区保持不变，并记录
+  `CI_E_BUSY`；`ci_vm_callback_error` 是 sticky 通道，直到 `ci_vm_clear_error`。不要通过
+  callback 等待 busy VM，否则可能与运行线程死锁。`libc-test/pthread_tsd` 因此显式 skip。
 - 回调在 SysV x86-64、Win64、Win32 和 AArch64 上受支持。Win32 cdecl/stdcall/fastcall/
   thiscall 回调都受支持：stdcall/fastcall/thiscall trampoline 会按 callee-owned 栈参数
   清理；fastcall 保存 ECX/EDX 供前两个 4 字节标量参数使用，thiscall 保存 ECX 供第一个

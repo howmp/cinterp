@@ -43,6 +43,7 @@ run_case ffi_malloc 42
 run_case arrays 10
 run_case structs 34
 run_case ffi_snprintf 55
+run_case ffi_printf_longdouble 42
 run_case longdouble 8
 
 echo "== bitfields"
@@ -77,6 +78,10 @@ compile examples/ffi_regstruct.c -o "$OUT/ffi_regstruct.cib" >/dev/null
 reg_out="$("$RUNTIME" --lib "$OUT/libregstruct_helpers.so" "$OUT/ffi_regstruct.cib" 2>&1)"
 printf '%s\n' "$reg_out" | grep -Fq "result: 102"
 echo "OK ffi_regstruct -> 102"
+compile examples/ffi_regstruct_live.c -o "$OUT/ffi_regstruct_live.cib" >/dev/null
+reglive_out="$("$RUNTIME" --lib "$OUT/libregstruct_helpers.so" "$OUT/ffi_regstruct_live.cib" 2>&1)"
+printf '%s\n' "$reglive_out" | grep -Fq "result: 10"
+echo "OK ffi_regstruct_live -> 10"
 
 echo "== mixed-class aggregate FFI (i64 + double)"
 cc -shared -fPIC -O0 examples/ffi_mixedstruct_helper.c -o "$OUT/libmixedstruct_helpers.so"
@@ -132,6 +137,10 @@ compile examples/ffi_longdouble.c -o "$OUT/ffi_longdouble.cib" >/dev/null
 ld_out="$("$RUNTIME" --lib "$OUT/libffi_longdouble_helper.so" "$OUT/ffi_longdouble.cib" 2>&1)"
 printf '%s\n' "$ld_out" | grep -Fq "result: 60"
 echo "OK ffi_longdouble -> 60"
+compile examples/ffi_longdouble_live.c -o "$OUT/ffi_longdouble_live.cib" >/dev/null
+ldlive_out="$("$RUNTIME" --lib "$OUT/libffi_longdouble_helper.so" "$OUT/ffi_longdouble_live.cib" 2>&1)"
+printf '%s\n' "$ldlive_out" | grep -Fq "result: 15"
+echo "OK ffi_longdouble_live -> 15"
 
 echo "== callback (qsort)"
 compile examples/ffi_qsort.c -o "$OUT/ffi_qsort.cib" >/dev/null

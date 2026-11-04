@@ -223,7 +223,7 @@ fn readU64(args: *const [4096]u8, off: usize) u64 {
     return @as(*align(1) const u64, @ptrCast(&args[off])).*;
 }
 
-fn configureSysV(frame: *SysVFrame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
+fn configureSysV(frame: *SysVFrame, plan: abi.CallPlan, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
     frame.sse_count = plan.sse_count;
@@ -231,14 +231,14 @@ fn configureSysV(frame: *SysVFrame, plan: abi.CallPlan, ret_buf: *[4096]u8, stac
     for (plan.ret_locs) |loc| {
         if (loc.kind == .st0) frame.ret_x87 = 1;
     }
-    if (plan.sret) frame.sret = sret_ptr orelse @ptrCast(ret_buf);
+    if (plan.sret) frame.sret = sret_ptr.?;
 }
 
-fn configureWin64(frame: *Win64Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
+fn configureWin64(frame: *Win64Frame, plan: abi.CallPlan, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
     frame.sse_count = plan.sse_count;
-    if (plan.sret) frame.sret = sret_ptr orelse @ptrCast(ret_buf);
+    if (plan.sret) frame.sret = sret_ptr.?;
 }
 
 /// i686 `__fastcall` takes its first two 4-byte scalar arguments in ECX and
@@ -311,7 +311,7 @@ fn win32ThisLayout(plan: abi.CallPlan) Win32ThisLayout {
     return layout;
 }
 
-fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
+fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     frame.stack = stack_buf;
     frame.stack_size = switch (plan.conv) {
         2 => win32FastLayout(plan).stack_size,
@@ -335,7 +335,7 @@ fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, st
         // The hidden return pointer is an ordinary stack argument on i686; the
         // `sret` loc's `index` is its offset in the outgoing argument area
         // (`__fastcall`/`__thiscall` re-lay the area, so its slot moves with it).
-        const ptr: u32 = @truncate(if (sret_ptr) |p| @intFromPtr(p) else @intFromPtr(ret_buf));
+        const ptr: u32 = @truncate(@intFromPtr(sret_ptr.?));
         for (plan.args) |arg| {
             for (arg.locs) |loc| {
                 if (loc.kind != .sret) continue;
@@ -350,18 +350,18 @@ fn configureWin32(frame: *Win32Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, st
     }
 }
 
-fn configureArm64(frame: *Arm64Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
+fn configureArm64(frame: *Arm64Frame, plan: abi.CallPlan, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     frame.stack = stack_buf;
     frame.stack_size = plan.stack_size;
-    if (plan.sret) frame.sret = if (sret_ptr) |p| @intFromPtr(p) else @intFromPtr(ret_buf);
+    if (plan.sret) frame.sret = @intFromPtr(sret_ptr.?);
 }
 
-pub fn configure(frame: *Frame, plan: abi.CallPlan, ret_buf: *[4096]u8, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
+pub fn configure(frame: *Frame, plan: abi.CallPlan, stack_buf: *[4096]u8, sret_ptr: ?*anyopaque) void {
     switch (abi_kind) {
-        .sysv => configureSysV(@ptrCast(frame), plan, ret_buf, stack_buf, sret_ptr),
-        .win64 => configureWin64(@ptrCast(frame), plan, ret_buf, stack_buf, sret_ptr),
-        .win32 => configureWin32(@ptrCast(frame), plan, ret_buf, stack_buf, sret_ptr),
-        .aapcs64 => configureArm64(@ptrCast(frame), plan, ret_buf, stack_buf, sret_ptr),
+        .sysv => configureSysV(@ptrCast(frame), plan, stack_buf, sret_ptr),
+        .win64 => configureWin64(@ptrCast(frame), plan, stack_buf, sret_ptr),
+        .win32 => configureWin32(@ptrCast(frame), plan, stack_buf, sret_ptr),
+        .aapcs64 => configureArm64(@ptrCast(frame), plan, stack_buf, sret_ptr),
     }
 }
 
@@ -1236,4 +1236,166 @@ test "plan validation keeps a plain integer call valid on every ABI" {
     try std.testing.expectError(error.BadPlan, validateFor(.win64, gpr_plan));
     try validateFor(.sysv, gpr_plan);
     try validateFor(.aapcs64, gpr_plan);
+}
+
+test "Win32 fastcall and thiscall register slot selection" {
+    const loc4 = [_]abi.Loc{.{ .kind = .stack, .size = 4, .offset = 0 }};
+    const arg4 = [_]abi.ArgPlan{.{ .locs = &loc4, .size = 4, .alignment = 4 }};
+    var gpr: u8 = 0;
+    try std.testing.expectEqual(@as(?u8, 0), win32FastSlot(arg4[0], &gpr));
+    try std.testing.expectEqual(@as(?u8, 1), win32FastSlot(arg4[0], &gpr));
+    try std.testing.expectEqual(@as(?u8, null), win32FastSlot(arg4[0], &gpr));
+
+    var struct_arg = arg4[0];
+    struct_arg.is_struct = true;
+    gpr = 0;
+    try std.testing.expectEqual(@as(?u8, null), win32FastSlot(struct_arg, &gpr));
+    try std.testing.expectEqual(@as(u8, 0), gpr);
+
+    const loc8 = [_]abi.Loc{.{ .kind = .stack, .size = 8, .offset = 0 }};
+    const arg8 = [_]abi.ArgPlan{.{ .locs = &loc8, .size = 8, .alignment = 8 }};
+    try std.testing.expectEqual(@as(?u8, null), win32FastSlot(arg8[0], &gpr));
+
+    const two_locs = [_]abi.Loc{
+        .{ .kind = .stack, .size = 4, .offset = 0 },
+        .{ .kind = .stack, .size = 4, .offset = 4 },
+    };
+    const multi = [_]abi.ArgPlan{.{ .locs = &two_locs, .size = 8, .alignment = 4 }};
+    try std.testing.expectEqual(@as(?u8, null), win32FastSlot(multi[0], &gpr));
+
+    var used = false;
+    try std.testing.expect(win32ThisSlot(arg4[0], &used));
+    try std.testing.expect(!win32ThisSlot(arg4[0], &used));
+    used = false;
+    try std.testing.expect(!win32ThisSlot(struct_arg, &used));
+    try std.testing.expect(!win32ThisSlot(arg8[0], &used));
+    try std.testing.expect(!win32ThisSlot(multi[0], &used));
+    try std.testing.expect(!used);
+}
+
+test "Win32 fastcall and thiscall stack layouts" {
+    var int_locs = [_]abi.Loc{
+        .{ .kind = .stack, .size = 4, .offset = 0 },
+        .{ .kind = .stack, .size = 4, .offset = 4 },
+        .{ .kind = .stack, .size = 4, .offset = 8 },
+        .{ .kind = .stack, .size = 4, .offset = 12 },
+    };
+    var int_args = [_]abi.ArgPlan{
+        .{ .locs = int_locs[0..1], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[1..2], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[2..3], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[3..4], .size = 4, .alignment = 4 },
+    };
+    try std.testing.expectEqual(@as(u32, 4), win32FastLayout(.{ .args = int_args[0..3], .ret_locs = &.{} }).stack_size);
+    try std.testing.expectEqual(@as(u32, 8), win32FastLayout(.{ .args = &int_args, .ret_locs = &.{} }).stack_size);
+    try std.testing.expectEqual(@as(u32, 8), win32ThisLayout(.{ .args = int_args[0..3], .ret_locs = &.{} }).stack_size);
+
+    var i64_loc = [_]abi.Loc{.{ .kind = .stack, .size = 8, .offset = 0 }};
+    var mixed_args = [_]abi.ArgPlan{
+        .{ .locs = int_locs[0..1], .size = 4, .alignment = 4 },
+        .{ .locs = i64_loc[0..1], .size = 8, .alignment = 8 },
+        .{ .locs = int_locs[1..2], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[2..3], .size = 4, .alignment = 4 },
+    };
+    try std.testing.expectEqual(@as(u32, 12), win32FastLayout(.{ .args = &mixed_args, .ret_locs = &.{} }).stack_size);
+
+    var sret_loc = [_]abi.Loc{.{ .kind = .sret, .size = 4, .offset = 0 }};
+    var sret_int_args = [_]abi.ArgPlan{
+        .{ .locs = sret_loc[0..1], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[0..1], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[1..2], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[2..3], .size = 4, .alignment = 4 },
+    };
+    const fast_sret = win32FastLayout(.{ .args = &sret_int_args, .ret_locs = &.{} });
+    try std.testing.expectEqual(@as(u32, 0), fast_sret.sret_offset);
+    try std.testing.expectEqual(@as(u32, 8), fast_sret.stack_size);
+    const this_sret = win32ThisLayout(.{ .args = &sret_int_args, .ret_locs = &.{} });
+    try std.testing.expectEqual(@as(u32, 0), this_sret.sret_offset);
+    try std.testing.expectEqual(@as(u32, 12), this_sret.stack_size);
+
+    const byte_loc4 = [_]abi.Loc{.{ .kind = .stack, .size = 4, .offset = 0 }};
+    const byte_arg4 = [_]abi.ArgPlan{.{ .locs = &byte_loc4, .size = 4, .alignment = 4 }};
+    const byte_loc8 = [_]abi.Loc{.{ .kind = .stack, .size = 8, .offset = 0 }};
+    const byte_arg8 = [_]abi.ArgPlan{.{ .locs = &byte_loc8, .size = 8, .alignment = 8 }};
+    const byte_locs = [_]abi.Loc{
+        .{ .kind = .stack, .size = 4, .offset = 0 },
+        .{ .kind = .stack, .size = 4, .offset = 4 },
+    };
+    const byte_multi = [_]abi.ArgPlan{.{ .locs = &byte_locs, .size = 8, .alignment = 4 }};
+    try std.testing.expectEqual(@as(u32, 4), win32StackBytes(byte_arg4[0]));
+    try std.testing.expectEqual(@as(u32, 8), win32StackBytes(byte_arg8[0]));
+    try std.testing.expectEqual(@as(u32, 8), win32StackBytes(byte_multi[0]));
+}
+
+test "Win32 configure and marshal use fastcall/thiscall layouts" {
+    var locs = [_]abi.Loc{
+        .{ .kind = .stack, .size = 4, .offset = 0 },
+        .{ .kind = .stack, .size = 4, .offset = 4 },
+        .{ .kind = .stack, .size = 4, .offset = 8 },
+    };
+    var args = [_]abi.ArgPlan{
+        .{ .locs = locs[0..1], .size = 4, .alignment = 4 },
+        .{ .locs = locs[1..2], .size = 4, .alignment = 4 },
+        .{ .locs = locs[2..3], .size = 4, .alignment = 4 },
+    };
+    var arg_bytes = [_]u8{0} ** 4096;
+    std.mem.writeInt(u32, arg_bytes[0..4], 11, .little);
+    std.mem.writeInt(u32, arg_bytes[4..8], 22, .little);
+    std.mem.writeInt(u32, arg_bytes[8..12], 33, .little);
+
+    var stack_buf = [_]u8{0} ** 4096;
+    var frame = std.mem.zeroes(Win32Frame);
+    const fast_plan = abi.CallPlan{ .args = &args, .ret_locs = &.{}, .stack_size = 12, .conv = 2 };
+    configureWin32(&frame, fast_plan, &stack_buf, null);
+    try std.testing.expectEqual(@as(u32, 4), frame.stack_size);
+    try std.testing.expectEqual(@as(u32, 2), frame.conv);
+    marshalWin32Fast(&frame, fast_plan, &arg_bytes, &stack_buf);
+    try std.testing.expectEqual(@as(u32, 11), frame.eax);
+    try std.testing.expectEqual(@as(u32, 22), frame.edx);
+    try std.testing.expectEqual(@as(u32, 33), std.mem.readInt(u32, stack_buf[0..4], .little));
+
+    @memset(&stack_buf, 0);
+    const this_plan = abi.CallPlan{ .args = &args, .ret_locs = &.{}, .stack_size = 12, .conv = 3 };
+    configureWin32(&frame, this_plan, &stack_buf, null);
+    try std.testing.expectEqual(@as(u32, 8), frame.stack_size);
+    marshalWin32This(&frame, this_plan, &arg_bytes, &stack_buf);
+    try std.testing.expectEqual(@as(u32, 11), frame.eax);
+    try std.testing.expectEqual(@as(u32, 22), std.mem.readInt(u32, stack_buf[0..4], .little));
+    try std.testing.expectEqual(@as(u32, 33), std.mem.readInt(u32, stack_buf[4..8], .little));
+}
+
+test "Win32 configure writes a relocated sret pointer" {
+    var sret_loc = [_]abi.Loc{.{ .kind = .sret, .size = 4, .offset = 0 }};
+    var int_loc = [_]abi.Loc{.{ .kind = .stack, .size = 4, .offset = 0 }};
+    var args = [_]abi.ArgPlan{
+        .{ .locs = sret_loc[0..1], .size = 4, .alignment = 4 },
+        .{ .locs = int_loc[0..1], .size = 4, .alignment = 4 },
+    };
+    const plan = abi.CallPlan{ .args = &args, .ret_locs = &.{}, .stack_size = 8, .conv = 2, .sret = true, .ret_size = 16 };
+    var stack_buf = [_]u8{0} ** 4096;
+    var frame = std.mem.zeroes(Win32Frame);
+    const ptr: *anyopaque = @ptrFromInt(0x1234);
+    configureWin32(&frame, plan, &stack_buf, ptr);
+    try std.testing.expectEqual(@as(u32, 0x1234), std.mem.readInt(u32, stack_buf[0..4], .little));
+    try std.testing.expectEqual(@as(u32, 4), frame.stack_size);
+}
+
+test "Win32 callback support and cleanup" {
+    var int_locs = [_]abi.Loc{
+        .{ .kind = .stack, .size = 4, .offset = 0 },
+        .{ .kind = .stack, .size = 4, .offset = 4 },
+        .{ .kind = .stack, .size = 4, .offset = 8 },
+    };
+    var int_args = [_]abi.ArgPlan{
+        .{ .locs = int_locs[0..1], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[1..2], .size = 4, .alignment = 4 },
+        .{ .locs = int_locs[2..3], .size = 4, .alignment = 4 },
+    };
+    try std.testing.expect(win32CallbackSupported(.{ .args = &int_args, .ret_locs = &.{}, .conv = 0 }));
+    try std.testing.expect(win32CallbackSupported(.{ .args = &int_args, .ret_locs = &.{}, .conv = 3 }));
+    try std.testing.expect(!win32CallbackSupported(.{ .args = &int_args, .ret_locs = &.{}, .conv = 4 }));
+    try std.testing.expectEqual(@as(u32, 0), win32CallbackCleanup(.{ .args = &int_args, .ret_locs = &.{}, .conv = 0 }));
+    try std.testing.expectEqual(@as(u32, 12), win32CallbackCleanup(.{ .args = &int_args, .ret_locs = &.{}, .stack_size = 12, .conv = 1 }));
+    try std.testing.expectEqual(@as(u32, 4), win32CallbackCleanup(.{ .args = &int_args, .ret_locs = &.{}, .conv = 2 }));
+    try std.testing.expectEqual(@as(u32, 8), win32CallbackCleanup(.{ .args = &int_args, .ret_locs = &.{}, .conv = 3 }));
 }
