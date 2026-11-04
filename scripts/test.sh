@@ -46,6 +46,35 @@ run_case ffi_snprintf 55
 run_case ffi_printf_longdouble 42
 run_case longdouble 8
 
+echo "== Linux command examples"
+compile examples/ifconfig.c -o "$OUT/ifconfig.cib" >/dev/null
+ifconfig_out="$("$RUNTIME" "$OUT/ifconfig.cib" 2>&1)"
+printf '%s\n' "$ifconfig_out" | grep -Fq "result: 42"
+printf '%s\n' "$ifconfig_out" | grep -Fq "interfaces:"
+printf '%s\n' "$ifconfig_out" | grep -Fq "lo:"
+echo "OK ifconfig"
+
+compile examples/ps.c -o "$OUT/ps.cib" >/dev/null
+ps_out="$("$RUNTIME" "$OUT/ps.cib" 2>&1)"
+printf '%s\n' "$ps_out" | grep -Fq "result: 42"
+printf '%s\n' "$ps_out" | grep -Fq "PID"
+printf '%s\n' "$ps_out" | grep -Fq "processes:"
+echo "OK ps"
+
+compile examples/netstat.c -o "$OUT/netstat.cib" >/dev/null
+netstat_out="$("$RUNTIME" "$OUT/netstat.cib" 2>&1)"
+printf '%s\n' "$netstat_out" | grep -Fq "result: 42"
+printf '%s\n' "$netstat_out" | grep -Fq "Active tcp connections"
+printf '%s\n' "$netstat_out" | grep -Fq "Proto"
+echo "OK netstat"
+
+compile examples/route.c -o "$OUT/route.cib" >/dev/null
+route_out="$("$RUNTIME" "$OUT/route.cib" 2>&1)"
+printf '%s\n' "$route_out" | grep -Fq "result: 42"
+printf '%s\n' "$route_out" | grep -Fq "IPv4 routes"
+printf '%s\n' "$route_out" | grep -Fq "Destination"
+echo "OK route"
+
 echo "== bitfields"
 compile examples/bitfields.c -o "$OUT/bitfields.cib" >/dev/null
 bits_out="$("$RUNTIME" "$OUT/bitfields.cib" 2>&1)"

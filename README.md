@@ -38,6 +38,16 @@ make compiler runtime
 # 7 2.5
 # result: 0
 
+# Linux command examples
+./build/cinterp-cc compile examples/ifconfig.c -o build/ifconfig.cib
+./runtime/zig-out/bin/cinterp-run build/ifconfig.cib
+./build/cinterp-cc compile examples/ps.c -o build/ps.cib
+./runtime/zig-out/bin/cinterp-run build/ps.cib
+./build/cinterp-cc compile examples/netstat.c -o build/netstat.cib
+./runtime/zig-out/bin/cinterp-run build/netstat.cib
+./build/cinterp-cc compile examples/route.c -o build/route.cib
+./runtime/zig-out/bin/cinterp-run build/route.cib
+
 # struct byval + sret FFI through a user shared library
 cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so
 ./build/cinterp-cc compile examples/ffi_structs.c -o build/ffi_structs.cib
@@ -436,7 +446,8 @@ runtime/               Zig VM/runtime (shipped)
   tests/               C API smoke/argv/fuzz hosts
 examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
                        MEMORY/register/mixed/HFA struct FFI, qsort/callback,
-                       fastcall/stdcall, math, float32 FFI, bitfields, long double
+                       fastcall/stdcall, math, float32 FFI, bitfields, long double,
+                       Linux ifconfig/ps/netstat/route command examples
 scripts/               Python test/fuzz/benchmark/release harnesses
 packaging/             pkg-config, CMake, Rust binding, release README template
 tests/                 local csuite, manifests and generator known failures
