@@ -11,12 +11,14 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import sys
 
 import re
 import subprocess
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -28,7 +30,11 @@ RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)
 EXPECT_RE = re.compile(rb"^// expect: *(-?\d+)\s*$", re.MULTILINE)
 TIERS = ["smoke", "standard", "full", "nightly"]
 TARGET_NAMES = ["aarch64-linux", "i686-windows", "x86_64-linux", "x86_64-windows"]
+WINDOWS_TARGETS = ("x86_64-windows", "i686-windows")
 STATUSES = ("ok", "skip", "compile", "load", "run", "timeout", "mismatch", "harness")
+
+WINE_LOCK = threading.Lock()
+WINE_ENVS: dict[tuple[str, str], dict[str, str]] = {}
 
 
 def norm_text(data: bytes) -> bytes:
@@ -296,43 +302,87 @@ def run_on_target(
         if not runtime.is_file():
             raise FileNotFoundError(runtime)
         return subprocess.run([qemu, "-L", sysroot, str(runtime), *args], cwd=ROOT, capture_output=True, timeout=timeout)
-    if target in ("x86_64-windows", "i686-windows"):
+    if target in WINDOWS_TARGETS:
         exe_name = "cinterp-run64.exe" if target == "x86_64-windows" else "cinterp-run32.exe"
         runtime = Path(runner["runtime_dir"]) / exe_name
         if not runtime.is_file():
             raise FileNotFoundError(runtime)
-        host = runner.get("windows_host")
-        if not host:
-            raise RuntimeError("--windows-host is required for Windows targets")
-        remote = runner.get("remote_dir") or "C:/Users/admin/AppData/Local/Temp/cinterp_test/suites"
-        remote = remote.rstrip("/")
-        subprocess.run(["ssh", host, f"cmd /c if not exist {remote} mkdir {remote}"], capture_output=True, timeout=30)
-        remote_cib = f"{remote}/{cib.name}"
-        try:
-            subprocess.run(["scp", "-q", str(cib), f"{host}:{remote_cib}"], check=True, capture_output=True, timeout=60)
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(f"scp package failed: {exc.stderr.decode('utf-8', 'replace').strip()}") from exc
-        remote_lib = ""
-        if extra_lib:
-            remote_lib_path = f"{remote}/{extra_lib.name}"
-            remote_lib = f' --lib "{remote_lib_path}"'
-        remote_runtime = f"{remote}/{exe_name}"
-        cmdline = f'cmd /c "{remote_runtime}"{remote_lib} "{remote_cib}"'
-        if case.get("entry"):
-            cmdline += f' "{case["entry"]}"'
-        if case.get("args"):
-            # Drop nothing here: the native path forwards program arguments
-            # after `--`, and the Windows path must behave the same.
-            cmdline += " -- " + " ".join(win_quote(str(a)) for a in case["args"])
-        return subprocess.run(["ssh", host, cmdline], capture_output=True, timeout=timeout)
+        if sys.platform == "win32":
+            return subprocess.run([str(runtime), *args], cwd=ROOT, capture_output=True, timeout=timeout)
+        return subprocess.run(
+            [*wine_runner(target), str(runtime), *args],
+            cwd=ROOT,
+            env=wine_env(target),
+            capture_output=True,
+            timeout=timeout,
+        )
     raise RuntimeError(f"unsupported target {target}")
 
 
-def win_quote(value: str) -> str:
-    """Quote one argument for the remote cmd.exe command line."""
-    if not value or any(ch in value for ch in ' \t"&|<>^'):
-        return '"' + value.replace('"', '\\"') + '"'
-    return value
+def wine_runner(target: str) -> list[str]:
+    """Wine command for a Windows target, overridable like test_cross.sh."""
+    if target == "x86_64-windows":
+        value = os.environ.get("WIN64_RUNNER", "")
+        if not value:
+            value = "wine64" if shutil.which("wine64") else "wine"
+    else:
+        value = os.environ.get("WIN32_RUNNER", "wine") or "wine"
+    return shlex.split(value) or ["wine"]
+
+
+def wine_env(target: str) -> dict[str, str]:
+    """Environment for local Wine runs.
+
+    `WINEDEBUG=-all` silences debug output; `ShowCrashDialog=0` in the prefix
+    registry disables Wine's modal crash dialog, which otherwise can block a
+    test run even when the failing process has already exited. Disabling
+    Mono/Gecko overrides prevents their install prompts as well.
+    """
+    arch = "win64" if target == "x86_64-windows" else "win32"
+    prefix = Path(os.environ.get("WINEPREFIX") or (ROOT / "build" / f"wine{arch}"))
+    key = (str(prefix), arch)
+    with WINE_LOCK:
+        cached = WINE_ENVS.get(key)
+        if cached is not None:
+            return dict(cached)
+        env = dict(os.environ)
+        env.update(
+            WINEPREFIX=str(prefix),
+            WINEARCH=arch,
+            WINEDEBUG="-all",
+            WINEDLLOVERRIDES="mscoree,mshtml=",
+        )
+        if not (prefix / "drive_c/windows/system32/kernel32.dll").exists():
+            wineboot = shutil.which("wineboot")
+            if wineboot:
+                subprocess.run(
+                    [wineboot, "-u"],
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+        subprocess.run(
+            [
+                *wine_runner(target),
+                "reg",
+                "add",
+                r"HKCU\Software\Wine\WineDbg",
+                "/v",
+                "ShowCrashDialog",
+                "/t",
+                "REG_DWORD",
+                "/d",
+                "0",
+                "/f",
+            ],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        WINE_ENVS[key] = env
+        return dict(env)
 
 
 def compiler_fingerprint(compiler_path: Path) -> str:
@@ -503,8 +553,6 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--runtime-dir", default=str(ROOT / "build/cross"))
-    ap.add_argument("--windows-host", default=os.environ.get("HOST", ""))
-    ap.add_argument("--remote-dir", default=os.environ.get("CINTERP_REMOTE_DIR", ""))
     ap.add_argument("--qemu", default=os.environ.get("QEMU", "qemu-aarch64"))
     ap.add_argument("--sysroot", default=os.environ.get("SYSROOT", "/usr/aarch64-linux-gnu"))
     ap.add_argument("--include-skipped", action="store_true", help="run skip-listed cases for re-triage")
@@ -549,37 +597,27 @@ def main() -> int:
     runner_cfg = {
         "native_runtime": ROOT / "runtime/zig-out/bin/cinterp-run",
         "runtime_dir": Path(args.runtime_dir),
-        "windows_host": args.windows_host,
-        "remote_dir": args.remote_dir,
         "qemu": args.qemu,
         "sysroot": args.sysroot,
         "include_skipped": args.include_skipped,
         "cib_cache": Path(args.cib_cache) if args.cib_cache else None,
         "compiler_path": str(compiler_path),
     }
-    if args.target in ("x86_64-windows", "i686-windows"):
-        if not runner_cfg["windows_host"]:
-            print("--windows-host (or HOST) is required for Windows targets", file=sys.stderr)
-            return 2
-        remote = (runner_cfg["remote_dir"] or "C:/Users/admin/AppData/Local/Temp/cinterp_test/suites").rstrip("/")
-        runner_cfg["remote_dir"] = remote
-        subprocess.run(
-            ["ssh", runner_cfg["windows_host"], f"cmd /c if not exist {remote.replace('/', chr(92))} mkdir {remote.replace('/', chr(92))}"],
-            capture_output=True, timeout=30,
-        )
+    if args.target in WINDOWS_TARGETS:
         exe = "cinterp-run64.exe" if args.target == "x86_64-windows" else "cinterp-run32.exe"
         runtime = Path(args.runtime_dir) / exe
         if not runtime.is_file():
             print(f"missing Windows runtime: {runtime}", file=sys.stderr)
             return 2
-        try:
-            subprocess.run(
-                ["scp", "-q", str(runtime), f"{runner_cfg['windows_host']}:{remote}/{exe}"],
-                check=True, capture_output=True, timeout=60,
-            )
-        except subprocess.CalledProcessError as exc:
-            print(f"cannot upload runtime: {exc.stderr.decode('utf-8', 'replace').strip()}", file=sys.stderr)
-            return 2
+        if sys.platform != "win32":
+            wine = wine_runner(args.target)
+            if shutil.which(wine[0]) is None:
+                print(
+                    f"missing Wine runner '{wine[0]}' for {args.target}; "
+                    "install Wine or set WIN64_RUNNER/WIN32_RUNNER",
+                    file=sys.stderr,
+                )
+                return 2
     results = []
     temp_root = Path(tempfile.mkdtemp(prefix="cinterp-suites-"))
     tasks = []
@@ -611,8 +649,6 @@ def main() -> int:
         for fut in as_completed(futures):
             results.append(fut.result())
     if not args.keep:
-        import shutil
-
         shutil.rmtree(temp_root, ignore_errors=True)
 
     results.sort(key=lambda x: (x["suite"], x["id"]))

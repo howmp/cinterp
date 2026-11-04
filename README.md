@@ -67,8 +67,7 @@ cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so
 ./build/cinterp-cc compile examples/hello.c \
   --target x86_64-windows -o build/hello-win64.cib
 cd runtime && zig build -Dtarget=x86_64-windows-gnu && cd ..
-# make cross-test        # Win64/Win32 (Wine or native Windows) + ARM64 (qemu)
-# optional remote runner: HOST=user@windows-box REMOTE='C:/tmp/cinterp/' make cross-test
+# make cross-test        # Win64/Win32 via Wine + ARM64 (qemu)
 
 # local C subset suite: 17 cases in tests/csuite
 make c-testsuite

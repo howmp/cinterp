@@ -5,8 +5,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 TARGETS="${CROSS_TARGETS:-win64,win32,arm64}"
-HOST="${HOST:-}"
-REMOTE="${REMOTE:-}"
 QEMU="${QEMU:-qemu-aarch64}"
 SYSROOT="${SYSROOT:-/usr/aarch64-linux-gnu}"
 OUT="$ROOT/build/cross"
@@ -107,15 +105,7 @@ assert_conv() {
 
 win_run() {
     local exe="$1" package="$2" lib="${3:-}" expected="$4" repeat="${5:-1}" out
-    if [ -n "$HOST" ]; then
-        [ -n "$REMOTE" ] || { echo "REMOTE must be set with HOST" >&2; exit 2; }
-        local prefix="C:\\Users\\admin\\AppData\\Local\\Temp\\cinterp_test"
-        local cmd="$prefix\\$exe"
-        if [[ -n "$lib" ]]; then cmd="$cmd --lib $prefix\\$lib"; fi
-        if [ "$repeat" != 1 ]; then cmd="$cmd --repeat $repeat"; fi
-        cmd="$cmd $prefix\\$package"
-        out="$(ssh "$HOST" "cmd /c \"$cmd\"" 2>&1)"
-    elif is_windows_shell; then
+    if is_windows_shell; then
         if [[ -n "$lib" ]]; then
             out="$(cd "$OUT" && "./$exe" --lib "$lib" --repeat "$repeat" "$package" 2>&1)"
         else
@@ -126,7 +116,7 @@ win_run() {
         runner="$(win_runner "$exe")"
         local first="${runner%% *}"
         if ! have "$first"; then
-            echo "missing Windows runner '$first'; install wine or set WIN64_RUNNER/WIN32_RUNNER or HOST" >&2
+            echo "missing Windows runner '$first'; install wine or set WIN64_RUNNER/WIN32_RUNNER" >&2
             exit 2
         fi
         local wine_prefix wine_arch
@@ -139,14 +129,22 @@ win_run() {
         fi
         if [ ! -f "$wine_prefix/drive_c/windows/system32/kernel32.dll" ]; then
             WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" WINEDEBUG=-all \
-                wineboot -u >/dev/null 2>&1 || true
+                WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u >/dev/null 2>&1 || true
         fi
+        # A crashing test must return an exit status, not open Wine's modal
+        # crash dialog and hang the suite.
+        WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" WINEDEBUG=-all \
+            WINEDLLOVERRIDES="mscoree,mshtml=" "$runner" reg add \
+            'HKCU\Software\Wine\WineDbg' /v ShowCrashDialog /t REG_DWORD /d 0 /f \
+            >/dev/null 2>&1 || true
         if [[ -n "$lib" ]]; then
             out="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
-                WINEDEBUG=-all "$runner" "$exe" --lib "$lib" --repeat "$repeat" "$package" 2>&1)"
+                WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
+                "$runner" "$exe" --lib "$lib" --repeat "$repeat" "$package" 2>&1)"
         else
             out="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
-                WINEDEBUG=-all "$runner" "$exe" --repeat "$repeat" "$package" 2>&1)"
+                WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
+                "$runner" "$exe" --repeat "$repeat" "$package" 2>&1)"
         fi
     fi
     local got
@@ -172,10 +170,6 @@ if want win64; then
         zig cc -target x86_64-windows-gnu -shared -O0 -Wl,--export-all-symbols \
             -o "$OUT/lib${h}64.dll" "examples/$h.c"
     done
-    if [ -n "$HOST" ]; then
-        ssh "$HOST" 'cmd /c if not exist C:\Users\admin\AppData\Local\Temp\cinterp_test mkdir C:\Users\admin\AppData\Local\Temp\cinterp_test' >/dev/null 2>&1 || true
-        scp "$OUT/cinterp-run64.exe" "$OUT"/*-x86_64-windows.cib "$OUT"/lib*64.dll "$HOST:$REMOTE" >/dev/null
-    fi
     win_run cinterp-run64.exe hello-x86_64-windows.cib "" 42
     win_run cinterp-run64.exe arrays-x86_64-windows.cib "" 10
     win_run cinterp-run64.exe structs-x86_64-windows.cib "" 34
@@ -247,9 +241,6 @@ if want win32; then
         -o "$OUT/ffi_callback_thiscall-i686-windows.cib" >/dev/null
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/libffi_callback_thiscall_helper32.dll" examples/ffi_callback_thiscall_helper.c
-    if [ -n "$HOST" ]; then
-        scp "$OUT/cinterp-run32.exe" "$OUT"/*-i686-windows.cib "$OUT"/lib*32.dll "$HOST:$REMOTE" >/dev/null
-    fi
     win_run cinterp-run32.exe hello-i686-windows.cib "" 42
     win_run cinterp-run32.exe arrays-i686-windows.cib "" 10
     win_run cinterp-run32.exe structs-i686-windows.cib "" 34
