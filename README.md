@@ -292,6 +292,9 @@ Win64 的 `__vectorcall`/COM、SysV
 `i128`/向量参数、内联汇编、`_Atomic`/`_Thread_local`，以及 CIB 到 CIB 的链接。Windows CRT
 的 `long double` printf 输出与原生 MinGW 运行时一致（后者本身在测试主机上并未实现 `%Lf`）。
 GCC builtin、外部 inline/weak 地址语义以及可增长的线性内存同样不在范围内。
+暂缓的大功能（CIB-to-CIB 链接、Win64 `__vectorcall`/COM、`_Atomic`/`_Thread_local`、
+沙箱、库卸载等）和已完成项遗留（VM→VM 聚合返回 ownership、精确 Windows `%Lf` shim）
+记录在 [`dev.md` §14.1/§14.2](./dev.md#14-已知限制与后续方向)。
 
 ## 二进制格式
 

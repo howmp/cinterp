@@ -365,7 +365,29 @@ make check-version        # VERSION 单一来源校验
 - **callback 槽位**：固定 256 个进程级静态槽。自动 `CREATE_CALLBACK` 槽在 VM 销毁/plan 重载前一直占用（跨 run 复用）；显式 `ci_callback_acquire` 槽在 release 后回到可复用集合，未 release 的显式槽随 VM 销毁/重载退休。自动槽耗尽后返回 `TooManyCallbacks`。
 - **外部线程异步 callback**：VM 正在运行时，另一线程调用的 callback 默认 fail-fast（非 sret 返回值置零、sret 缓冲区不变，并记录 `CI_E_BUSY`），不排队、不阻塞；`libc-test/pthread_tsd` 因此显式 skip。需要异步回调的库应在 VM 空闲时调用，或改成同步 callback 设计。
 - **生成式差分**：YARPGen whitelist 已清空；nightly 的 7 个 skip 是 native 拒绝/超时或 `compiler limit:` 引擎上限。Csmith 仍有 3 条 known failure；报告保留 stale 检测，whitelist 条目开始通过会失败。
-- **后续方向**：向量/复杂 ABI、更多 external data、精确 Windows `%Lf` shim（本轮仅 smoke/文档）、VM→VM 聚合返回 ownership、跨 ABI 执行 fuzz 等按需扩展；不以放宽运行时上限或修改 expected 的方式“修复”。
+
+### 14.1 暂缓的大功能（第 5 项）
+
+以下均**暂缓**，不进入当前批次，也不代表版本承诺；需要时按实际场景单独设计、评审和拆分：
+
+- **CIB-to-CIB 链接**：包间导出/依赖、跨包函数调用、版本/ABI 匹配；需要改 CIPKG/CIPI 模型和加载顺序。
+- **Win64 `__vectorcall`/COM**：`__vectorcall` ABI 分类、寄存器/栈布局、callback，以及 COM vtable/`this` 调用路径。
+- **SysV `i128`/向量参数**：AMD64 SysV 的 128 位整数和向量参数分类、传递与返回。
+- **向量类型/向量算术**：元素操作、shuffle、比较和算术；当前只把向量当数据块搬运。
+- **`_Complex`**：复数类型、算术、FFI ABI 以及全局初始化器。
+- **`_Atomic` / `_Thread_local`**：原子 load/store/RMW、内存序，以及每线程/每 VM 的 TLS 语义。
+- **原生库卸载**：`dlclose`/`FreeLibrary`、按包/VM 的句柄引用计数，以及卸载与仍存活的函数指针之间的关系。
+- **宿主堆生命周期**：跨 run 的 `malloc` 累积、宿主分配跟踪/释放策略；`atexit`/`signal` 目前仍是进程全局状态。
+- **进程内沙箱 / Safe 模式**：不可信 CIB 的隔离；如果要支持，还需配套包校验/签名和资源限额。
+- **平台扩展**：macOS、musl、Windows ARM64、Linux i386/ARM32；当前这些平台在编译或加载阶段显式拒绝。
+
+### 14.2 已完成项留下的尾巴
+
+- **VM→VM 寄存器聚合返回 ownership**：FFI 宽/多 loc 返回值已改为调用方 VM 临时块，但 VM 内部函数返回的寄存器聚合仍只是指向 callee 线性内存的指针，依赖该区域在下一次分配前未被改写。需要时再单独设计调用点复制或 hidden return pointer 协议。
+- **精确 Windows `%Lf` shim**：本轮 `examples/ffi_printf_longdouble.c` 只锁定当前 MinGW/CRT 的 smoke 行为，没有实现 80-bit `long double` 的精确格式化层。
+- **更多 external data / 跨 ABI 执行 fuzz**：继续按真实用例扩充 provider；跨 ABI fuzz 目前以 load-only 为主，执行级 fuzz 仍是后续方向。
+
+后续工作仍遵守现有约束：不以放宽运行时上限、修改 expected 或跳过失败用例的方式“修复”。
 
 ## 15. 参考资料
 
