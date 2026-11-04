@@ -1,20 +1,18 @@
-# Documentation index
+# 文档索引
 
-Reference material for the `cinterp` compiler (`compiler/`) and runtime
-(`runtime/`). The code is the source of truth; these pages describe the
-contracts the code implements and the commands that verify them.
+`cinterp` 编译器（`compiler/`）和运行时（`runtime/`）的参考资料。代码是事实的来源；
+这些页面描述代码所实现的契约以及用于验证它们的命令。
 
-| document | what it covers |
+| 文档 | 内容 |
 | --- | --- |
-| [`cib.md`](cib.md) | `.cib` package format: `CIPKG` v2/v1 container, `CIVM` bytecode, `CIPL` call plans, `CIPM` target header, `CIPI` link metadata, and runtime status codes |
-| [`embedding.md`](embedding.md) | embedding `libcinterp` in a C host: build/install, the `ci_vm_*` C ABI, error lifecycle, callback and memory-limit notes |
-| [`compatibility.md`](compatibility.md) | versioning and compatibility contract: single `VERSION` source, component versions, N−1 read guarantee, C ABI version, compiler/runtime pairing, deprecation policy |
-| [`ir-subset.md`](ir-subset.md) | the LLVM IR subset `cinterp-cc` accepts: module forms, types, constants, instructions, supported `llvm.*` intrinsics, and what is rejected with a diagnostic |
-| [`zig-frontend.md`](zig-frontend.md) | the Zig frontend: how `cinterp-cc` drives `zig cc`, the `compiler/src/ir` → `lower_ast.zig` pipeline, CLI flags, calling-convention/plan-dedup/limit contracts, external-symbol tables, release tarball contents |
-| [`ir-parser-differences.md`](ir-parser-differences.md) | IR frontend regression coverage (parser tests, lowering goldens) plus clearly marked historical notes on the retired string parser's bugs |
+| [`cib.md`](cib.md) | `.cib` 包格式：`CIPKG` v2/v1 容器、`CIVM` 字节码、`CIPL` 调用计划、`CIPM` 目标头、`CIPI` 链接元数据，以及运行时状态码 |
+| [`embedding.md`](embedding.md) | 在 C 宿主中嵌入 `libcinterp`：构建/安装、`ci_vm_*` C ABI、错误生命周期、回调与内存限制注意事项 |
+| [`compatibility.md`](compatibility.md) | 版本与兼容性契约：单一 `VERSION` 来源、各组件版本、N−1 读取保证、C ABI 版本、编译器/运行时配对、弃用策略 |
+| [`ir-subset.md`](ir-subset.md) | `cinterp-cc` 接受的 LLVM IR 子集：模块形式、类型、常量、指令、支持的 `llvm.*` intrinsic，以及会被拒绝并给出诊断的内容 |
+| [`zig-frontend.md`](zig-frontend.md) | Zig 前端：`cinterp-cc` 如何驱动 `zig cc`、`compiler/src/ir` → `lower_ast.zig` 流水线、CLI 标志、调用约定/计划去重/限制的契约、外部符号表、发布压缩包内容 |
+| [`ir-parser-differences.md`](ir-parser-differences.md) | IR 前端回归覆盖（解析器测试、降低 golden 用例），以及对已退役字符串解析器缺陷的明确标注为历史记录的说明 |
 
-`cib.md` and `compatibility.md` are written in Chinese; the other pages are in
-English.
+所有文档均用中文撰写；代码块、命令、路径、标识符和 ABI/工具名称保持原样。
 
-See also the repository [`README.md`](../README.md) (build, usage, support
-matrix) and [`dev.md`](../dev.md) (developer guide).
+另见仓库的 [`README.md`](../README.md)（构建、用法、支持矩阵）和 [`dev.md`](../dev.md)
+（开发者指南）。

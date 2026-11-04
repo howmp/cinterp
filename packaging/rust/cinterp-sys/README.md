@@ -1,28 +1,27 @@
 # cinterp-sys
 
-Raw FFI bindings and a small safe wrapper for the cinterp C embedding ABI.
+用于 cinterp C 嵌入 ABI 的原始 FFI 绑定以及一个小型安全封装。
 
-The crate is shipped inside cinterp release tarballs under `rust/cinterp-sys`.
-It expects the native library at `../../lib` and the header at `../../include`
-relative to the crate directory. Override these with:
+该 crate 随 cinterp 发布 tarball 一起分发，位于 `rust/cinterp-sys`。
+它期望原生库位于相对于 crate 目录的 `../../lib`，头文件位于
+`../../include`。可以用下面的方式覆盖这些路径：
 
 ```bash
 export CINTERP_LIB_DIR=/opt/cinterp/lib
 export CINTERP_INCLUDE_DIR=/opt/cinterp/include
 ```
 
-or add the crate as a path dependency:
+或者把该 crate 作为路径依赖加入：
 
 ```toml
 [dependencies]
 cinterp-sys = { path = "vendor/cinterp-sys" }
 ```
 
-## Run the example
+## 运行示例
 
-`examples/run_hello.rs` loads a package, runs an entry point and prints the
-result. `--expect N` turns it into a smoke test that exits non-zero when the
-result differs.
+`examples/run_hello.rs` 加载一个包，运行一个入口点并打印
+结果。`--expect N` 会把它变成一个冒烟测试：结果不同时以非零状态退出。
 
 ```bash
 cd rust/cinterp-sys
@@ -30,36 +29,35 @@ cargo run --offline --example run_hello -- /path/to/app.cib --expect 42
 # result = 42
 ```
 
-The example needs the shared library at run time as well; when the library is
-not installed system-wide, export the loader path first:
+该示例在运行时同样需要这个共享库；如果该库没有安装在系统范围内，
+请先导出加载器路径：
 
 ```bash
 export LD_LIBRARY_PATH="$PWD/../../lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 ```
 
-## Tests
+## 测试
 
 ```bash
 cargo test --offline
 ```
 
-The crate's unit tests cover the `CI_*` status names, `Error` formatting and
-the ABI version reported by the native library. They link `libcinterp`, so run
-them where `CINTERP_LIB_DIR` (or `../../lib`) resolves.
+该 crate 的单元测试覆盖 `CI_*` 状态名称、`Error` 格式化以及
+原生库报告的 ABI 版本。它们会链接 `libcinterp`，因此请在
+`CINTERP_LIB_DIR`（或 `../../lib`）能够解析的位置运行。
 
-## API notes
+## API 说明
 
-- `Vm::last_error_code()` returns the stable `CI_E_*` category of the last
-  failed call; `Vm::last_error()` returns its message and
-  `Vm::clear_error()` resets both.
-- `Error::code` is that category (`ci_vm_last_error_code`), `Error::status` is
-  the negative value the failing call returned, and `Error::message` is the
-  text from `ci_vm_last_error()`. `status_name(code)` maps either value to its
-  `CI_*` name for logging.
-- `CI_ERROR` means the runtime could not categorize the failure; every other
-  failure is a specific `CI_E_*` value.
+- `Vm::last_error_code()` 返回最近一次失败调用的稳定 `CI_E_*` 分类；
+  `Vm::last_error()` 返回其消息，`Vm::clear_error()` 会把两者都重置。
+- `Error::code` 就是该分类（`ci_vm_last_error_code`），`Error::status`
+  是失败调用返回的负值，`Error::message` 是来自 `ci_vm_last_error()` 的
+  文本。`status_name(code)` 会把其中任一值映射到对应的 `CI_*` 名称，便于
+  记录日志。
+- `CI_ERROR` 表示运行时无法对该失败进行分类；其他所有失败都是
+  具体的 `CI_E_*` 值。
 
-## Example code
+## 示例代码
 
 ```rust
 use cinterp_sys::Vm;
@@ -72,7 +70,6 @@ vm.run_args("main", &args).expect("run");
 println!("result = {}", vm.result());
 ```
 
-One `Vm` is single-threaded. Use separate `Vm` instances for independent
-execution; callback trampolines are process-wide and retired when their VM is
-destroyed. See `docs/embedding.md` and `docs/compatibility.md` in the release
-tarball.
+每个 `Vm` 都是单线程的。独立执行请使用单独的 `Vm` 实例；回调跳板是
+进程范围的，在其所属的 VM 被销毁时退役。参见发布 tarball 中的
+`docs/embedding.md` 和 `docs/compatibility.md`。

@@ -1,37 +1,35 @@
-# cinterp @VERSION@ — @TARGET@ release tarball
+# cinterp @VERSION@ — @TARGET@ 发布 tarball
 
-`cinterp` compiles C ahead of time into a compact stack-bytecode package
-(`.cib`) plus compile-time FFI call plans, then executes it in a small Zig VM
-that calls native C functions directly. There is no libffi, no JIT and no
-executable memory. This tarball is the **@TARGET@** build.
+`cinterp` 把 C 提前编译成一个紧凑的栈字节码包（`.cib`）以及编译期的 FFI
+调用计划，然后在一个小型 Zig VM 中执行，由该 VM 直接调用原生 C 函数。没有
+libffi，没有 JIT，也没有可执行内存。本 tarball 是 **@TARGET@** 构建。
 
-## What is in this tarball
+## 本 tarball 的内容
 
-| Path | Contents |
+| 路径 | 内容 |
 | --- | --- |
-| `@RUNNER@` | runtime executable: `@RUNNER@ [options] package.cib [entry]` |
-| `include/cinterp.h` | C embedding API (ABI 2) |
-| `lib/` | shared library plus static/import library for @TARGET@ |
-| `pkgconfig/cinterp.pc` | relocatable pkg-config metadata |
-| `cmake/` | `cinterpConfig.cmake` and `cinterpConfigVersion.cmake` |
-| `lib/cmake/cinterp/` | the same CMake package config, in the layout `find_package` searches |
-| `rust/cinterp-sys/` | Rust FFI crate with a safe `Vm` wrapper and a runnable example |
-| `docs/` | CIB format, embedding, ABI compatibility and C/IR subset documentation |
-| `examples/` | C sources used by the release smoke tests |
-| `debug/` | split debug files, when the build produced them |
-| `README.md`, `LICENSE`, `VERSION`, `SBOM.spdx.json` | this file, license, version, SPDX SBOM |
+| `@RUNNER@` | 运行时可执行文件：`@RUNNER@ [options] package.cib [entry]` |
+| `include/cinterp.h` | C 嵌入 API（ABI 2） |
+| `lib/` | @TARGET@ 的共享库以及静态/导入库 |
+| `pkgconfig/cinterp.pc` | 可重定位的 pkg-config 元数据 |
+| `cmake/` | `cinterpConfig.cmake` 和 `cinterpConfigVersion.cmake` |
+| `lib/cmake/cinterp/` | 同一份 CMake 包配置，放在 `find_package` 会搜索的布局中 |
+| `rust/cinterp-sys/` | 带安全 `Vm` 封装和可运行示例的 Rust FFI crate |
+| `docs/` | CIB 格式、嵌入、ABI 兼容性以及 C/IR 子集文档 |
+| `examples/` | 发布冒烟测试所用的 C 源码 |
+| `debug/` | 分离的调试文件（构建产生这些文件时存在） |
+| `README.md`, `LICENSE`, `VERSION`, `SBOM.spdx.json` | 本文件、许可证、版本、SPDX SBOM |
 
 <!-- compiler-only -->
-**This tarball ships the compiler.** In addition to the runtime files above it
-contains:
+**本 tarball 自带编译器（ships the compiler）。** 除上面的运行时文件外，它还包含：
 
-| Path | Contents |
+| 路径 | 内容 |
 | --- | --- |
-| `bin/cinterp-cc` | the C-to-CIB compiler (invokes `zig cc` as its frontend at compile time) |
-| `bin/cinterp` | wrapper script that execs `bin/cinterp-cc` |
-| `THIRD_PARTY_NOTICES.md` | attribution for the derived external-symbol data described below |
+| `bin/cinterp-cc` | C 到 CIB 的编译器（编译期调用 `zig cc` 作为其前端） |
+| `bin/cinterp` | 执行 `bin/cinterp-cc` 的包装脚本 |
+| `THIRD_PARTY_NOTICES.md` | 下文所述派生外部符号数据的署名信息 |
 
-Compile and run the bundled example:
+编译并运行随附的示例：
 
 ```sh
 ./bin/cinterp compile examples/hello.c -o hello.cib
@@ -39,40 +37,39 @@ Compile and run the bundled example:
 # result: 42
 ```
 
-`cinterp-cc compile app.c -o app.cib --target <target>` selects the package
-ABI: `x86_64-linux` (this tarball), `x86_64-windows`, `i686-windows` or
-`aarch64-linux`. Compile for the target whose runtime you will load the
-package into. `--dump-target` / `--dump-imports` inspect the result, and
-`--cc-path` points the frontend at a specific `zig` binary.
+`cinterp-cc compile app.c -o app.cib --target <target>` 选择包的
+ABI：`x86_64-linux`（本 tarball）、`x86_64-windows`、`i686-windows` 或
+`aarch64-linux`。要往哪个目标的运行时里加载包，就针对该目标编译。
+`--dump-target` / `--dump-imports` 用于检查结果，`--cc-path` 让前端指向
+特定的 `zig` 二进制文件。
 <!-- /compiler-only -->
 
 <!-- runtime-only -->
-**This is a runtime-only tarball.** It does **not** contain `bin/cinterp-cc`.
-Compile packages with a compiler build for the same target: the Linux x86-64
-release tarball ships one, or build the compiler from the source tree with Zig
-0.13:
+**这是一个仅含运行时的 tarball（runtime-only tarball）。** 它**不**包含 `bin/cinterp-cc`。
+请使用针对同一目标的编译器构建来编译包：Linux x86-64 发布 tarball
+自带一个，或者用 Zig 0.13 从源码树构建编译器：
 
 ```sh
 cd cinterp/compiler && zig build
 ./zig-out/bin/cinterp-cc compile --target x86_64-windows app.c -o app.cib
 ```
 
-The rest of this file explains how to load a prebuilt `.cib`.
+本文件的其余部分说明如何加载预构建的 `.cib`。
 <!-- /runtime-only -->
 
-## Release tarballs for @VERSION@
+## @VERSION@ 的发布 tarball
 
-| Tarball | Contents |
+| Tarball | 内容 |
 | --- | --- |
-| `cinterp-@VERSION@-sysv-x86_64` | **compiler + runtime**, Linux x86-64 (`bin/cinterp-cc`, `bin/cinterp`) |
-| `cinterp-@VERSION@-win64-x86_64` | runtime only, Windows x64 |
-| `cinterp-@VERSION@-win32-x86` | runtime only, Windows x86 |
-| `cinterp-@VERSION@-arm64` | runtime only, Linux AArch64 |
+| `cinterp-@VERSION@-sysv-x86_64` | **编译器 + 运行时**，Linux x86-64（`bin/cinterp-cc`、`bin/cinterp`） |
+| `cinterp-@VERSION@-win64-x86_64` | 仅运行时，Windows x64 |
+| `cinterp-@VERSION@-win32-x86` | 仅运行时，Windows x86 |
+| `cinterp-@VERSION@-arm64` | 仅运行时，Linux AArch64 |
 
-Only the Linux x86-64 tarball contains `bin/cinterp-cc` and
-`THIRD_PARTY_NOTICES.md`; the other three are runtime-only.
+只有 Linux x86-64 的 tarball 包含 `bin/cinterp-cc` 和
+`THIRD_PARTY_NOTICES.md`；其余三个仅含运行时。
 
-## Run a package
+## 运行包
 
 ```sh
 ./@RUNNER@ hello.cib                    # run entry point "main"
@@ -82,18 +79,15 @@ Only the Linux x86-64 tarball contains `bin/cinterp-cc` and
 ./@RUNNER@ --version
 ```
 
-`--lib PATH` registers an explicit `dlopen` (Unix) or `LoadLibraryA` (Windows)
-handle before execution. Packages normally name their native providers in the
-CIB link metadata (`CIPI`) and the runtime loads those libraries itself; use
-`--lib` for libraries the metadata does not mention, or to force a different
-build of one it does. Libraries are never unloaded — a handle stays valid
-until the process exits.
+`--lib PATH` 在执行前注册一个显式的 `dlopen`（Unix）或 `LoadLibraryA`（Windows）
+句柄。包通常会在 CIB 链接元数据（`CIPI`）中指明其原生提供者，由运行时
+自行加载这些库；对于元数据未提及的库，或者要强制改用元数据提到的某个库的
+其他构建，可以使用 `--lib`。库从不会被卸载 —— 句柄在进程退出前一直有效。
 
-Exit status is 0 on success, 1 for a load/run failure and 2 for a usage or I/O
-error. `main`'s return value is printed as `result: N` and is available as the
-VM result; it does not become the process exit code.
+成功时退出状态为 0，加载/运行失败为 1，用法或 I/O 错误为 2。`main` 的返回值
+会打印为 `result: N`，并可作为 VM 结果获取；它不会成为进程退出码。
 
-## C host through pkg-config
+## 通过 pkg-config 使用 C 宿主程序
 
 ```sh
 export PKG_CONFIG_PATH="$PWD/pkgconfig"
@@ -101,14 +95,14 @@ cc host.c $(pkg-config --cflags --libs cinterp) -o host
 LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ./host app.cib
 ```
 
-`cinterp.pc` is relocatable — `prefix` is derived from the location of the
-`.pc` file, so the tarball can be unpacked anywhere. `Libs.private` carries the
-extra system libraries needed for a static link (`-ldl -lpthread -lm` on Unix,
-empty on Windows): use `pkg-config --static --cflags --libs cinterp` when
-linking `libcinterp.a` (on Windows that is `cinterp_static.lib`). On Windows,
-put `lib/` on `PATH` instead of setting `LD_LIBRARY_PATH`.
+`cinterp.pc` 是可重定位的 —— `prefix` 由 `.pc` 文件所在位置推导而来，因此
+tarball 可以解压到任意位置。`Libs.private` 携带静态链接所需的额外系统库
+（Unix 上为 `-ldl -lpthread -lm`，Windows 上为空）：链接 `libcinterp.a` 时
+请使用 `pkg-config --static --cflags --libs cinterp`（在 Windows 上该文件是
+`cinterp_static.lib`）。在 Windows 上，请把 `lib/` 加入 `PATH`，而不是设置
+`LD_LIBRARY_PATH`。
 
-## CMake consumer
+## CMake 使用者
 
 ```cmake
 cmake_minimum_required(VERSION 3.16)
@@ -120,7 +114,7 @@ add_executable(host host.c)
 target_link_libraries(host PRIVATE cinterp::cinterp)
 ```
 
-Point CMake at the unpacked tarball:
+让 CMake 指向解压后的 tarball：
 
 ```sh
 cmake -S . -B build -DCMAKE_PREFIX_PATH="$PWD"
@@ -128,18 +122,18 @@ cmake --build build
 LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ./build/host app.cib
 ```
 
-The package config is installed both at `cmake/` and at
-`lib/cmake/cinterp/`; `-Dcinterp_DIR="$PWD/cmake"` works too if you prefer to
-name it explicitly. `cinterpConfigVersion.cmake` accepts requests up to
-@VERSION@ within the same major series, so `find_package(cinterp 0.1 REQUIRED)`
-matches this tarball while `find_package(cinterp 1.0)` fails.
+包配置同时安装在 `cmake/` 和 `lib/cmake/cinterp/` 两处；如果你更愿意显式
+指定路径，`-Dcinterp_DIR="$PWD/cmake"` 也可以。`cinterpConfigVersion.cmake`
+在同一主版本序列内接受最高到 @VERSION@ 的请求，因此
+`find_package(cinterp 0.1 REQUIRED)` 能匹配本 tarball，而
+`find_package(cinterp 1.0)` 会失败。
 
-## Rust binding
+## Rust 绑定
 
-`rust/cinterp-sys` contains the raw `ci_vm_*` bindings plus a small safe `Vm`
-wrapper. It expects the native library in `../../lib` and the header in
-`../../include` relative to the crate directory and links `-lcinterp` itself;
-override those paths with `CINTERP_LIB_DIR` / `CINTERP_INCLUDE_DIR`.
+`rust/cinterp-sys` 包含原始的 `ci_vm_*` 绑定以及一个小的安全 `Vm`
+封装。它期望原生库位于相对于 crate 目录的 `../../lib`、头文件位于
+`../../include`，并自行链接 `-lcinterp`；
+可以用 `CINTERP_LIB_DIR` / `CINTERP_INCLUDE_DIR` 覆盖这些路径。
 
 ```sh
 cd rust/cinterp-sys
@@ -148,68 +142,64 @@ cargo run --offline --example run_hello -- /path/to/app.cib --expect 42
 cargo test --offline
 ```
 
-The example prints `result = <value>` and, with `--expect N`, exits non-zero
-when the VM result differs. `Error::code` is the category reported by
-`ci_vm_last_error_code()` (a `CI_E_*` value), `Error::status` is the negative
-value the failing call returned, and `Error::message` is `ci_vm_last_error()`.
-To depend on the crate from another project:
+示例会打印 `result = <value>`，并且在带 `--expect N` 时，如果 VM 结果不同
+就以非零状态退出。`Error::code` 是 `ci_vm_last_error_code()` 报告的分类
+（一个 `CI_E_*` 值），`Error::status` 是失败调用返回的负值，
+`Error::message` 则是 `ci_vm_last_error()`。要在另一个项目中依赖该 crate：
 
 ```toml
 [dependencies]
 cinterp-sys = { path = "vendor/cinterp-sys" }
 ```
 
-One `Vm` is single-threaded. Use separate `Vm` instances for independent
-execution; callback trampolines are process-wide and retired when their owning
-VM is destroyed.
+每个 `Vm` 都是单线程的。独立执行请使用单独的 `Vm` 实例；回调跳板是
+进程范围的，在其所属的 VM 被销毁时退役。
 
-## Documentation
+## 文档
 
-- `docs/cib.md` — CIB package format, link metadata, status codes and tooling
-- `docs/embedding.md` — C embedding API and host integration
-- `docs/compatibility.md` — ABI, SONAME and versioning policy
-- `docs/ir-subset.md`, `docs/ir-parser-differences.md`, `docs/zig-frontend.md` — accepted C/IR subset
+- `docs/cib.md` — CIB 包格式、链接元数据、状态码与工具
+- `docs/embedding.md` — C 嵌入 API 与宿主集成
+- `docs/compatibility.md` — ABI、SONAME 与版本策略
+- `docs/ir-subset.md`, `docs/ir-parser-differences.md`, `docs/zig-frontend.md` — 可接受的 C/IR 子集
 - `rust/cinterp-sys/README.md` — Rust crate
 
 <!-- compiler-only -->
-## License and third-party notices
+## 许可证与第三方声明
 
-cinterp is MIT licensed; see `LICENSE`. `cinterp-cc` embeds an external-symbol
-index generated at build time from data bundled with Zig:
+cinterp 采用 MIT 许可证；参见 `LICENSE`。`cinterp-cc` 内嵌一个在构建时
+根据 Zig 自带数据生成的外部符号索引：
 
-- MinGW-w64 `.def` export lists — ZPL-2.1, Copyright (c) 2009-2013 the mingw-w64 project
-- glibc `abilists` symbol/version tables — LGPL-2.1-or-later, Copyright (C) Free Software Foundation, Inc.
+- MinGW-w64 `.def` 导出列表 — ZPL-2.1, Copyright (c) 2009-2013 the mingw-w64 project
+- glibc `abilists` 符号/版本表 — LGPL-2.1-or-later, Copyright (C) Free Software Foundation, Inc.
 
-Only factual symbol names, library names and calling conventions are
-reproduced; no upstream source code is copied. The full attribution is in
-`THIRD_PARTY_NOTICES.md` and every package above is recorded in
-`SBOM.spdx.json`.
+这里只复现事实性的符号名、库名和调用约定；没有复制任何上游源代码。
+完整的署名信息在 `THIRD_PARTY_NOTICES.md` 中，上面每个包都记录在
+`SBOM.spdx.json` 中。
 <!-- /compiler-only -->
 
 <!-- runtime-only -->
-## License
+## 许可证
 
-cinterp is MIT licensed; see `LICENSE`. This runtime-only tarball ships no data
-derived from MinGW-w64 or glibc, so it carries no third-party notice file;
-`SBOM.spdx.json` lists the runtime files and the build tools only.
+cinterp 采用 MIT 许可证；参见 `LICENSE`。这个仅含运行时的 tarball 不携带
+任何派生自 MinGW-w64 或 glibc 的数据，因此没有第三方声明文件；
+`SBOM.spdx.json` 只列出运行时文件和构建工具。
 <!-- /runtime-only -->
 
-## Verifying the download
+## 校验下载内容
 
-`SHA256SUMS` sits next to the tarball (it is not inside this archive) and
-covers every `.tar.gz` and `.spdx.json` artifact:
+`SHA256SUMS` 位于 tarball 旁边（它不在本归档内），涵盖每个 `.tar.gz` 和
+`.spdx.json` 制品：
 
 ```sh
 sha256sum -c SHA256SUMS
 ```
 
-When the release was signed, `SHA256SUMS.asc` and `KEYS.asc` are published as
-well:
+如果该发布已签名，还会一并发布 `SHA256SUMS.asc` 和 `KEYS.asc`：
 
 ```sh
 gpg --import KEYS.asc
 gpg --verify SHA256SUMS.asc SHA256SUMS
 ```
 
-If those two files are absent the release is **unsigned**: `SHA256SUMS` still
-detects corruption and tampering in transit, but it provides no provenance.
+如果这两个文件缺失，则该发布是**未签名**的：`SHA256SUMS` 仍能发现损坏
+和传输途中的篡改，但它不提供来源证明。

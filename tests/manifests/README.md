@@ -1,40 +1,40 @@
-# Test suite manifests
+# 测试套件清单
 
-Each `*.json` file describes one upstream or local C suite. The runner is
-`scripts/test_suites.py`; sources are fetched into `build/suites/` by
-`scripts/fetch_suites.py` and are not vendored.
+每个 `*.json` 文件描述一个上游或本地 C 测试套件。运行器是
+`scripts/test_suites.py`；源码由 `scripts/fetch_suites.py` 拉取到 `build/suites/`，
+不内置在仓库中。
 
-## Manifest fields
+## 清单字段
 
-| field | meaning |
+| 字段 | 含义 |
 | --- | --- |
-| `suite` | stable suite id |
-| `description`, `upstream`, `commit`, `license` | provenance metadata, not read by the runner |
-| `root` | suite root; `{SUITES}` expands to `build/suites` (or `CINTERP_SUITE_ROOT`) |
-| `source_glob` | files relative to `root` when `cases` is omitted |
-| `cases` | explicit case list (`id`, `source`, optional expected fields) |
-| `mode` | `compile` = compile-only suite: the package is built and validated but never executed (`gcc-torture-compile`, `compcert-compile`, `llvm-regression-c`, `llvm-singlesource`) |
-| `expected_ext` / `expected_dir` | expected stdout location; default `.expected` next to source |
-| `expected_required` | skip cases without a reference output (used by CompCert) |
-| `compare_stdout` | set false for suites whose test harness prints assertion chatter |
-| `normalize_source_paths` | replace absolute `__FILE__` paths with basenames before comparing |
-| `normalize_trailing_whitespace` | compare semantic lines ignoring trailing spaces |
-| `strip_compiler_diagnostics` | drop upstream compiler warning lines (TCC-specific expectations) |
-| `expect_marker` | read `// expect: N` from the source and compare the VM result |
-| `expected_exit` | expected process exit; `null` disables the check |
-| `prelude` | optional file prepended to a generated wrapper |
-| `cpath` | directories added to `CPATH` during compilation |
-| `case_args` | per-case extra host argv (`id` → list) |
-| `support_lib` | shared library passed as `--lib` (chibicc/libc harness) |
-| `rewrite` | literal source rewrites for harness-only shims (must be explicit) |
-| `tiers` | `smoke`, `standard`, `full`, `nightly` |
-| `repo_skip_file` | checked-in `ID<TAB>reason` skip list |
-| `skip` | inline `id: reason` map |
-| `skip_by_target` | per-case `target: reason` map for cross-ABI suites |
-| `repo_exclude_file` | checked-in `ID<TAB>reason` exclusion list (not run at all) |
-| `timeout`, `compile_timeout` | per-case wall-clock limits (seconds) |
+| `suite` | 稳定的套件 ID |
+| `description`、`upstream`、`commit`、`license` | 来源元数据，运行器不读取 |
+| `root` | 套件根目录；`{SUITES}` 展开为 `build/suites`（或 `CINTERP_SUITE_ROOT`） |
+| `source_glob` | 省略 `cases` 时，相对于 `root` 的文件 |
+| `cases` | 显式用例列表（`id`、`source`，以及可选的期望字段） |
+| `mode` | `compile` = 仅编译套件：包会被构建并校验，但从不执行（`gcc-torture-compile`、`compcert-compile`、`llvm-regression-c`、`llvm-singlesource`） |
+| `expected_ext` / `expected_dir` | 期望的 stdout 位置；默认为源码旁边的 `.expected` |
+| `expected_required` | 跳过没有参考输出的用例（CompCert 使用） |
+| `compare_stdout` | 对于测试脚手架会打印断言杂讯的套件，设为 false |
+| `normalize_source_paths` | 比较前把绝对的 `__FILE__` 路径替换为基本文件名 |
+| `normalize_trailing_whitespace` | 比较语义行时忽略行尾空格 |
+| `strip_compiler_diagnostics` | 丢弃上游编译器警告行（TCC 特有的期望） |
+| `expect_marker` | 从源码中读取 `// expect: N` 并比较 VM 结果 |
+| `expected_exit` | 期望的进程退出码；`null` 会关闭该检查 |
+| `prelude` | 可选文件，会被前置到生成的包装器中 |
+| `cpath` | 编译期间添加到 `CPATH` 的目录 |
+| `case_args` | 每个用例额外的宿主 argv（`id` → 列表） |
+| `support_lib` | 作为 `--lib` 传入的共享库（chibicc/libc 脚手架） |
+| `rewrite` | 仅供测试脚手架使用的字面源码重写（必须显式声明） |
+| `tiers` | `smoke`、`standard`、`full`、`nightly` |
+| `repo_skip_file` | 已提交到仓库的 `ID<TAB>reason` 跳过列表 |
+| `skip` | 内联的 `id: reason` 映射 |
+| `skip_by_target` | 跨 ABI 套件中每个用例的 `target: reason` 映射 |
+| `repo_exclude_file` | 已提交到仓库的 `ID<TAB>reason` 排除列表（完全不运行） |
+| `timeout`、`compile_timeout` | 每个用例的实际耗时上限（秒） |
 
-## Commands
+## 命令
 
 ```bash
 python3 scripts/fetch_suites.py --all --support
@@ -48,16 +48,16 @@ make test-suites-cross      # csuite + the four smoke suites on Win64/Win32/ARM6
 make generate-diff          # YARPGen differential smoke
 ```
 
-Tier membership is taken from each manifest's `tiers` list:
+层级归属取自每个清单的 `tiers` 列表：
 
-| tier | suites |
+| 层级 | 套件 |
 | --- | --- |
 | `smoke` | csuite |
 | `standard` | csuite, c-testsuite, tcc-tests2, chibicc, libc-test |
 | `full` | standard + gcc-torture, gcc-torture-compile, gcc-ieee, compcert, compcert-c, compcert-compile, llvm-singlesource, llvm-regression-c, libc-test-regression |
 | `nightly` | full + c-testsuite-smoke, tcc-smoke, gcc-smoke, compcert-smoke |
 
-Re-triage excluded candidates without editing baselines:
+在不修改基线的情况下重新分诊被排除的候选用例：
 
 ```bash
 python3 scripts/test_suites.py --suite gcc-torture --include-excluded \
@@ -68,130 +68,123 @@ python3 scripts/test_suites.py --suite gcc-torture --include-excluded \
 python3 scripts/test_suites.py --tier full --jobs 8 --cib-cache build/cib-cache
 ```
 
-`--include-excluded` bypasses `.excluded`, `--only` accepts comma-separated
-IDs, and `--emit-reasons` writes auditable `ID<TAB>status: reason` lines. Only
-delete verified passing IDs from the checked-in lists; expected outputs and
-comparison flags must remain unchanged.
+`--include-excluded` 会绕过 `.excluded`，`--only` 接受以逗号分隔的 ID，
+`--emit-reasons` 会写出可审计的 `ID<TAB>status: reason` 行。只能从已提交到仓库的
+列表中删除经核实已通过的 ID；期望输出和比较标志必须保持不变。
 
-## Skip policy
+## 跳过策略
 
-- Every non-`ok` entry in a generated `.skip` file was observed once and has a
-  reason. It is a known-support-subset skip, not a silent pass.
-- `compile:` is an unsupported compiler feature or an upstream test requiring
-  GNU/extensions; `runtime:` is a known runtime/ABI failure; `mismatch:` is a
-  known output difference; `timeout:` is a resource/time limit.
-- Replacing a skip with a fix requires re-running the suite and removing the
-  entry from the skip file. CI never updates expected outputs or skip files.
-- Expected outputs are never auto-updated in CI; `--update-baseline` is not
-  implemented for these manifests by design.
-- `.excluded` files are stricter than `.skip`: excluded IDs are removed before
-  the run and appear in no report at all, so they are neither passes nor skips.
-  Re-check them with `--include-excluded`.
+- 生成的 `.skip` 文件中每个非 `ok` 条目都曾被观察到一次，并且带有原因。它是
+  已知支持子集的跳过，而不是静默通过。
+- `compile:` 表示编译器不支持的特性，或需要 GNU/扩展的上游测试；`runtime:` 是已知的
+  运行时/ABI 失败；`mismatch:` 是已知的输出差异；`timeout:` 是资源/时间上限。
+- 用修复替换跳过需要重新运行套件，并从跳过文件中删除该条目。CI 从不更新期望输出
+  或跳过文件。
+- 期望输出在 CI 中从不自动更新；按照设计，`--update-baseline` 并未针对这些清单实现。
+- `.excluded` 文件比 `.skip` 更严格：被排除的 ID 在运行前就被移除，完全不会出现在
+  任何报告中，因此它们既不算通过也不算跳过。用 `--include-excluded` 重新复核它们。
 
-### Skip / exclude inventory (2026-11-03)
+### 跳过 / 排除清单（2026-11-03）
 
-- 11 manifests reference a `repo_skip_file`. Together those files hold **201**
-  non-comment `ID<TAB>reason` lines; `llvm-regression-c.json` adds one inline
-  skip, for **202** skips in `build/test-suites-full.json`.
-- `tests/manifests/gcc-torture-compile.skip` has three entries for
-  compile-only stress cases whose package would exceed a runtime cap
-  (`limits-externdecl` >512 imports, `pr37669-2` >64 arguments, `stuct` >2 MiB
-  module). `llvm-regression-c.json` inline-skips `pr60822` for the same reason.
-- `tests/manifests/c-testsuite.skip` is **orphaned**: no manifest references it
-  (`c-testsuite.json` keeps its two skips inline) and the standalone runner uses
-  `tests/csuite/cinterp.skip`, not this file. See the c-testsuite section below.
-- 4 exclusions files hold **1034** non-comment lines:
-  `gcc-torture.excluded` 394, `gcc-torture-compile.excluded` 605,
-  `compcert.excluded` 34, `tcc-tests2.excluded` 1.
+- 11 个清单引用了 `repo_skip_file`。这些文件合计包含 **201** 行非注释的
+  `ID<TAB>reason`；`llvm-regression-c.json` 另外增加一条内联跳过，因此在
+  `build/test-suites-full.json` 中共有 **202** 次跳过。
+- `tests/manifests/gcc-torture-compile.skip` 有三个条目，对应其包会超出运行时上限的
+  仅编译压力用例（`limits-externdecl` >512 个导入，`pr37669-2` >64 个参数，`stuct`
+  >2 MiB 模块）。`llvm-regression-c.json` 出于同样的原因内联跳过 `pr60822`。
+- `tests/manifests/c-testsuite.skip` 是**孤立的**：没有任何清单引用它
+  （`c-testsuite.json` 把它的两条跳过保留为内联），而独立运行器使用的是
+  `tests/csuite/cinterp.skip`，不是这个文件。参见下面的 c-testsuite 小节。
+- 4 个排除文件包含 **1034** 行非注释内容：
+  `gcc-torture.excluded` 394、`gcc-torture-compile.excluded` 605、
+  `compcert.excluded` 34、`tcc-tests2.excluded` 1。
 
-## Manifest hygiene: duplicate IDs
+## 清单卫生：重复 ID
 
-Duplicate case IDs silently double-run a case and corrupt the report, so
-`scripts/test_suites.py` now rejects them outright
-(`reject_duplicate_ids`): a manifest with a repeated ID fails the run with the
-duplicated ID list. `--allow-duplicate-ids` downgrades this to a warning and
-keeps the first occurrence, for local triage of an unedited manifest only.
+重复的用例 ID 会静默地让用例运行两次并破坏报告，因此
+`scripts/test_suites.py` 现在会直接拒绝它们
+（`reject_duplicate_ids`）：包含重复 ID 的清单会使运行失败，并给出
+重复 ID 列表。`--allow-duplicate-ids` 会将其降级为警告并
+保留第一次出现的条目，仅用于对未修改清单的本地分诊。
 
-`llvm-regression-c.json` contains the LLVM `SingleSource/.../builtins/lib/*.c`
-support files next to the cases that `#include` them. Those support files had
-IDs that collided with real test cases, so they were renamed with a
-`*-support` suffix (20 entries such as `memchr-support`). The manifest now holds
-**935 unique case IDs**, matching the `llvm-regression-c` row of the baseline
-below.
+`llvm-regression-c.json` 在那些 `#include` 它们的用例旁边，包含了 LLVM 的
+`SingleSource/.../builtins/lib/*.c` 支持文件。这些支持文件的
+ID 曾与真正的测试用例冲突，因此它们被重命名并加上
+`*-support` 后缀（共 20 个条目，例如 `memchr-support`）。清单现在包含
+**935 个唯一的用例 ID**，与下面基线的 `llvm-regression-c` 行一致。
 
-## Current native baseline (2026-11-03)
+## 当前原生基线（2026-11-03）
 
-`make test-suites-full` on `x86_64-linux`; the numbers are read directly from
-`build/test-suites-full.json` (`tier=full`, `counts = {ok: 4319, skip: 202}`,
-4521 results). TCC reference outputs are normalized for absolute `__FILE__`
-paths, trailing whitespace, and TCC compiler warnings; this recovered 4 cases
-without weakening semantic comparisons.
+在 `x86_64-linux` 上运行 `make test-suites-full`；这些数字直接读取自
+`build/test-suites-full.json`（`tier=full`，`counts = {ok: 4319, skip: 202}`，
+共 4521 条结果）。TCC 的参考输出会针对绝对的 `__FILE__`
+路径、行尾空格和 TCC 编译器警告做归一化处理；这样在不削弱语义比较的前提下
+多恢复了 4 个用例。
 
-| suite | cases | passed | skipped | notes |
+| 套件 | 用例数 | 通过 | 跳过 | 备注 |
 | --- | ---: | ---: | ---: | --- |
-| csuite | 17 | 17 | 0 | local subset, `// expect:` marker |
-| c-testsuite | 220 | 218 | 2 | inline skips (`00204`, `00216`) |
+| csuite | 17 | 17 | 0 | 本地子集，`// expect:` 标记 |
+| c-testsuite | 220 | 218 | 2 | 内联跳过（`00204`、`00216`） |
 | tcc-tests2 | 142 | 99 | 43 | |
 | chibicc | 41 | 15 | 26 | |
 | libc-test | 75 | 47 | 28 | |
 | libc-test-regression | 69 | 48 | 21 | |
-| gcc-torture | 1306 | 1287 | 19 | execute cases |
-| gcc-torture-compile | 1411 | 1408 | 3 | compile-only (`mode: compile`); 3 runtime-cap skips |
+| gcc-torture | 1306 | 1287 | 19 | 执行类用例 |
+| gcc-torture-compile | 1411 | 1408 | 3 | 仅编译（`mode: compile`）；3 条运行时上限跳过 |
 | gcc-ieee | 79 | 64 | 15 | |
 | compcert | 75 | 55 | 20 | |
 | compcert-c | 24 | 12 | 12 | |
-| compcert-compile | 34 | 30 | 4 | compile-only (`mode: compile`) |
-| llvm-singlesource | 93 | 85 | 8 | compile-only (`mode: compile`) |
-| llvm-regression-c | 935 | 934 | 1 | compile-only (`mode: compile`), deduplicated IDs; 1 runtime-cap skip |
-| **total** | **4521** | **4319** | **202** | |
+| compcert-compile | 34 | 30 | 4 | 仅编译（`mode: compile`） |
+| llvm-singlesource | 93 | 85 | 8 | 仅编译（`mode: compile`） |
+| llvm-regression-c | 935 | 934 | 1 | 仅编译（`mode: compile`），已去重 ID；1 条运行时上限跳过 |
+| **总计** | **4521** | **4319** | **202** | |
 
-### Compile-only share
+### 仅编译部分
 
-Cases whose suite sets `"mode": "compile"` are built and validated but never
-executed, so they do not prove program behaviour:
+套件设置了 `"mode": "compile"` 的用例会被构建并校验，但从不执行，
+因此它们不能证明程序行为：
 
-| suite | passed |
+| 套件 | 通过 |
 | --- | ---: |
 | gcc-torture-compile | 1408 |
 | llvm-regression-c | 934 |
 | compcert-compile | 30 |
-| **subtotal quoted as compile-only** | **2372** |
-| llvm-singlesource (also `mode: compile`) | 85 |
-| **all compile-mode passes** | **2457** |
+| **按仅编译统计的小计** | **2372** |
+| llvm-singlesource（同样是 `mode: compile`） | 85 |
+| **所有编译模式的通过数** | **2457** |
 
-The remaining 4319 − 2457 = **1862** passes are executable cases whose stdout /
-exit status / `// expect:` result is compared against the reference.
+其余 4319 − 2457 = **1862** 次通过是可执行用例，其 stdout /
+退出状态 / `// expect:` 结果会与参考结果进行比较。
 
-### Nightly/cross smoke suites (not part of the 4319)
+### 每日/交叉冒烟套件（不属于 4319 的一部分）
 
-The four smoke suites are `nightly`-tier only; they are exercised per target by
-`make test-suites-cross` and the `cross-abi` workflow, and their results land in
-`build/test-suites-cross-*.json`, not in `test-suites-full.json`:
+这四个冒烟套件只属于 `nightly` 层级；它们由
+`make test-suites-cross` 和 `cross-abi` 工作流按目标分别执行，结果落在
+`build/test-suites-cross-*.json` 中，而不是 `test-suites-full.json` 中：
 
-| suite | cases | target-specific skips (`skip_by_target`) |
+| 套件 | 用例数 | 目标特定的跳过（`skip_by_target`） |
 | --- | ---: | --- |
-| c-testsuite-smoke | 40 | `aarch64-linux`: `00040` (qemu timeout) → 39 + 1 |
-| tcc-smoke | 24 | `x86_64-windows`, `i686-windows`: `22_floating_point` → 23 + 1 |
-| gcc-smoke | 40 | none |
-| compcert-smoke | 24 | `x86_64-windows`, `i686-windows`: `binops` → 23 + 1 |
+| c-testsuite-smoke | 40 | `aarch64-linux`：`00040`（qemu 超时） → 39 + 1 |
+| tcc-smoke | 24 | `x86_64-windows`、`i686-windows`：`22_floating_point` → 23 + 1 |
+| gcc-smoke | 40 | 无 |
+| compcert-smoke | 24 | `x86_64-windows`、`i686-windows`：`binops` → 23 + 1 |
 
-`make test-suites-smoke` (smoke tier) only runs `csuite` (17/17 on the host).
-Generated YARPGen/Csmith known-failure seeds are recorded separately in
-`tests/generator-known-failures.json`. The YARPGen whitelist is currently
-empty; generated programs that exceed a documented runtime cap are reported as
-`cinterp engine limit:` skips, and a whitelisted seed that starts passing makes
-`scripts/generate_diff.py` fail as stale. The Csmith map still has three
-entries.
+`make test-suites-smoke`（smoke 层级）只运行 `csuite`（在宿主上为 17/17）。
+生成的 YARPGen/Csmith 已知失败种子单独记录在
+`tests/generator-known-failures.json` 中。YARPGen 白名单目前
+为空；超出已记录运行时上限的生成程序会被报告为
+`cinterp engine limit:` 跳过，而白名单中的种子一旦开始通过，就会让
+`scripts/generate_diff.py` 因 stale 而失败。Csmith 映射仍有三个
+条目。
 
-## Upstream c-testsuite: two different numbers
+## 上游 c-testsuite：两个不同的数字
 
-`c-testsuite.json` globs 220 single-exec sources and skips two inline
-(`00204` vector types, `00216` complex aggregate global initializers), so the
-manifest run is **218 passed / 2 skipped**, as in the baseline table.
+`c-testsuite.json` 以 glob 方式收集 220 个单次执行的源码，并内联跳过两个
+（`00204` 向量类型，`00216` 复杂聚合全局初始化器），因此
+清单运行的结果是 **218 通过 / 2 跳过**，与基线表一致。
 
-The standalone `scripts/c_testsuite_upstream.py` still defaults to the older
-`tests/csuite/cinterp.skip` list, which additionally lists `00189` (requires
-external data symbols). Its default run is therefore **217 passed / 3 skipped**
-out of the same 220. The two skip lists are not unified: quote **218/2** for
-manifest runs and **217/3** only for the standalone script. Do not average them
-or claim a single figure.
+独立的 `scripts/c_testsuite_upstream.py` 仍然默认使用较旧的
+`tests/csuite/cinterp.skip` 列表，该列表额外列出了 `00189`（需要
+外部数据符号）。因此它的默认运行在同 220 个用例中是 **217 通过 / 3 跳过**。
+这两个跳过列表并未统一：清单运行请引用 **218/2**，
+只有独立脚本才用 **217/3**。不要对它们取平均，也不要声称单一数字。

@@ -1,12 +1,11 @@
-# Zig compiler frontend
+# Zig 编译器前端
 
-`cinterp-cc` is the only build-time compiler. The compiler lives in
-`compiler/` (there is no `compiler-zig/` tree) and is a single Zig program: it
-invokes the `zig cc` C frontend, parses the resulting LLVM IR text with a typed
-lexer/parser/AST plus a subset verifier, and emits CIVM bytecode, CIPL plans
-and CIPKG v2 packages.
+`cinterp-cc` 是唯一的构建期编译器。编译器位于 `compiler/`（不存在
+`compiler-zig/` 目录树），它是一个单独的 Zig 程序：调用 `zig cc` C 前端，
+用带类型的词法分析器/语法分析器/AST 外加一个子集校验器解析得到的 LLVM IR
+文本，并输出 CIVM 字节码、CIPL 计划和 CIPKG v2 包。
 
-There is **one** IR frontend — the typed AST under `compiler/src/ir/`:
+IR 前端**只有一个** —— 即 `compiler/src/ir/` 下带类型的 AST：
 
 ```text
 compiler/src/ir/lexer.zig    spans/tokens (no-copy)
@@ -19,38 +18,37 @@ compiler/src/ir/tests.zig    parser fixtures and malformed-input tests
 compiler/src/ir/dump.zig     `zig build ir-dump -- file.ll` (debug aid, not installed)
 ```
 
-The former string/text lowerer (a separate `lower.zig` implementation inside
-`compiler/src/`, now deleted) and the original Python compiler have both been
-removed, and nothing in `compiler/src/main.zig` selects a parser at run time:
-there is no `--ir-parser` flag, no `legacy` parser mode and no
-`make parser-parity` target. `compiler/src/lower_ast.zig` is the only lowering
-implementation.
+原先的字符串/文本 lowering 实现（`compiler/src/` 内一个独立的 `lower.zig`
+实现，现已删除）和最初的 Python 编译器都已被移除，`compiler/src/main.zig`
+中也没有任何代码会在运行期选择解析器：既没有 `--ir-parser` 选项，也没有
+`legacy` 解析器模式，也没有 `make parser-parity` 目标。
+`compiler/src/lower_ast.zig` 是唯一的 lowering 实现。
 
-## Requirements
+## 依赖要求
 
-- Zig 0.13 (bundled clang/LLVM 18). Zig is required at build time and at
-  `cinterp-cc compile` time (it is the C frontend), but not to *run* a `.cib`.
-- No libclang, libLLVM, external clang, or Python dependency is required to
-  compile C with `cinterp-cc`.
+- Zig 0.13（内置 clang/LLVM 18）。构建期和 `cinterp-cc compile` 时都需要
+  Zig（它就是 C 前端），但*运行* `.cib` 不需要。
+- 用 `cinterp-cc` 编译 C 不需要 libclang、libLLVM、外部 clang 或 Python
+  依赖。
 
-## Flags passed to `zig cc`
+## 传给 `zig cc` 的编译选项
 
 ```text
 -S -emit-llvm -O0 -g0 -fno-discard-value-names
 -fno-sanitize=all -fno-stack-protector -ffine-grained-bitfield-accesses
 ```
 
-Windows targets add `-fms-extensions -fdeclspec`; a `--target=` is passed for
-every target other than a native x86-64 Linux host
-(`compiler/src/main.zig`, `runZigCc`).
+Windows 目标会额外加上 `-fms-extensions -fdeclspec`；除原生 x86-64 Linux
+宿主机之外，每个目标都会传入一个 `--target=`（`compiler/src/main.zig`、
+`runZigCc`）。
 
-`-fno-sanitize=all` is required because Zig's Debug `-O0` would otherwise emit
-`llvm.sadd.with.overflow` / `llvm.ubsantrap` intrinsics that are not part of the
-CIVM lowering contract. `-fno-stack-protector` removes compiler-inserted stack
-checks that have no runtime counterpart. `-fno-discard-value-names` keeps local
-names readable in the IR and in `--dump-ast` output.
+之所以需要 `-fno-sanitize=all`，是因为 Zig 的 Debug `-O0` 否则会生成
+`llvm.sadd.with.overflow` / `llvm.ubsantrap` intrinsic，而它们并不属于 CIVM
+lowering 约定的一部分。`-fno-stack-protector` 去掉了编译器插入的、在运行时
+中没有对应实现的栈检查。`-fno-discard-value-names` 让局部名称在 IR 和
+`--dump-ast` 输出中都保持可读。
 
-## Command line
+## 命令行
 
 ```text
 cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir]
@@ -59,25 +57,24 @@ cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-
 cinterp-cc --version
 ```
 
-| flag | behaviour |
+| 选项 | 行为 |
 | --- | --- |
-| `-o`, `--output PATH` | output package; default is the source path with its last extension replaced by `.cib` |
-| `--target T` | `x86_64-linux` (default), `x86_64-windows`, `i686-windows`, `aarch64-linux`; anything else exits 2 |
-| `--cc-path PATH` | C frontend executable (default `zig`) |
-| `--cc NAME` | C compiler selector; only `zig` is implemented, any other value exits 2 |
-| `--keep-ir` | keep the temporary `<out>.<random>.ll` next to the output |
-| `--dump` | print per-function sizes and every plan (`args= ret= stack= conv=`) to stdout |
-| `--dump-ast` | print the parsed module summary and per-function block/instruction counts to stderr |
-| `--dump-imports` | print the CIPI table (plan index, symbol, providers) |
-| `--cib-version 1\|2` | package version to write (default 2) |
-| `--no-auto-link` | skip the generated CIPI provider entries |
+| `-o`, `--output PATH` | 输出包；默认取源文件路径，并把它的最后一个扩展名替换为 `.cib` |
+| `--target T` | `x86_64-linux`（默认）、`x86_64-windows`、`i686-windows`、`aarch64-linux`；其他任何值都以退出码 2 结束 |
+| `--cc-path PATH` | C 前端可执行文件（默认 `zig`） |
+| `--cc NAME` | C 编译器选择项；只实现了 `zig`，任何其他值都以退出码 2 结束 |
+| `--keep-ir` | 在输出文件旁保留临时的 `<out>.<random>.ll` |
+| `--dump` | 向 stdout 打印每个函数的大小以及每一个计划（`args= ret= stack= conv=`） |
+| `--dump-ast` | 向 stderr 打印解析出的模块摘要以及每个函数的块/指令数量 |
+| `--dump-imports` | 打印 CIPI 表（计划索引、符号、提供者） |
+| `--cib-version 1\|2` | 要写入的包版本（默认 2） |
+| `--no-auto-link` | 跳过生成的 CIPI 提供者条目 |
 
-`--dump-ast` is the in-compiler structural dump
-(`lower_ast.dumpModule`): it reports type-def/global/declare/function counts
-plus `blocks`/`instructions` per function. `zig build ir-dump -- file.ll` runs
-the same parse phase standalone and prints a per-instruction dump.
+`--dump-ast` 是编译器内部的结构化转储（`lower_ast.dumpModule`）：它会报告
+类型定义/全局变量/declare/函数的数量，以及每个函数的 `blocks`/`instructions`。
+`zig build ir-dump -- file.ll` 单独运行同一个解析阶段，并打印逐条指令的转储。
 
-## IR pipeline
+## IR 流水线
 
 ```text
 LLVM IR text
@@ -88,69 +85,61 @@ LLVM IR text
   -> abi.zig             CIPL call plans (SysV/Win64/Win32/AAPCS64)
 ```
 
-The parser only accepts the instruction/type/intrinsic subset consumed by the
-lowerer. Instructions it does not implement produce a `line:column` diagnostic
-instead of a panic or a silent zero, and the lowerer rejects a few accepted
-forms (`frem`, `asm` calls). The exact allowlist, including the constructs that
-are accepted but only partly modelled, is in [`ir-subset.md`](ir-subset.md).
-Target triple/OS/pointer-width and little-endian consistency are checked before
-lowering.
+解析器只接受 lowering 所消费的指令/类型/intrinsic 子集。它未实现的指令会
+产生形如 `line:column` 的诊断信息，而不是 panic，也不会静默地给出零值；同时
+lowering 会拒绝少数已被接受的形式（`frem`、`asm` 调用）。确切的白名单（包括
+那些被接受但只做了部分建模的构造）见 [`ir-subset.md`](ir-subset.md)。
+目标 triple/OS/指针宽度以及小端一致性会在 lowering 之前检查。
 
-## Codegen contracts
+## 代码生成约定
 
-- **Calling conventions.** `abi.convFromName` maps `x86_stdcallcc` → `conv=1`
-  and `x86_fastcallcc` → `conv=2`; every other LLVM convention and a missing
-  keyword map to `0` (the target default: cdecl / SysV / AAPCS64). The
-  call-site keyword wins over the declaration's. Indirect calls take the `call`
-  instruction's keyword (clang prints the convention there, not in the
-  function-pointer type, so there is nothing else to consult). Callback plans
-  use the defining function's signature convention, so a Win32 `__stdcall`
-  callback gets `conv=1`. The runtime rejects Win32 `__fastcall` callbacks
-  (`conv=2`) and `__stdcall` callbacks whose stack argument area exceeds 255
-  bytes with `UnsupportedCallback` (`runtime/src/ffi/platform.zig`,
-  `win32CallbackSupported`). `main.zig` finally overrides `conv` for known
-  WinAPI exports from the generated MinGW import table.
-- **Plan deduplication.** Plans are interned by full serialized content
-  (`lower_ast.plansEqual`: name, argument/return locations, `stack_size`,
-  `sret`, `sse_count`, `ret_size`, `conv`). Identical signatures of the same
-  symbol share one plan; different symbols or different ABI layouts never
-  merge. This keeps `MAX_PLANS` pressure down for large modules.
-- **Limits are enforced before serialization.** `main.validateLimits` runs on
-  the complete `CompileResult` and CIPI table before any bytes are written and
-  fails with `compiler limit: ...` instead of emitting a package the runtime
-  loaders would reject or truncate: ≤512 functions, ≤1024 plans, ≤64 args and
-  ≤8 locations per plan, ≤128-byte function/plan names, ≤512 imports, ≤8
-  providers per import, ≤64-byte import/provider/symbol names, ≤32-byte
-  provider versions, ≤2 MiB CIVM module.
+- **调用约定。** `abi.convFromName` 把 `x86_stdcallcc` 映射为 `conv=1`、把
+  `x86_fastcallcc` 映射为 `conv=2`；其余所有 LLVM 约定以及缺失关键字都映射为
+  `0`（即目标默认值：cdecl / SysV / AAPCS64）。调用点的关键字优先于声明处的
+  关键字。间接调用采用 `call` 指令上的关键字（clang 把约定打印在那里，而不是
+  打印在函数指针类型里，因此没有其他地方可查）。回调计划使用定义函数的签名
+  约定，所以 Win32 的 `__stdcall` 回调得到 `conv=1`。运行时会用
+  `UnsupportedCallback` 拒绝 Win32 的 `__fastcall` 回调（`conv=2`），以及栈
+  参数区超过 255 字节的 `__stdcall` 回调（`runtime/src/ffi/platform.zig`、
+  `win32CallbackSupported`）。最后，`main.zig` 会依据生成的 MinGW 导入表为
+  已知的 WinAPI 导出覆盖 `conv`。
+- **计划去重。** 计划按完整的序列化内容驻留（`lower_ast.plansEqual`：name、
+  参数/返回位置、`stack_size`、`sret`、`sse_count`、`ret_size`、`conv`）。同一
+  符号的相同签名共用一个计划；不同符号或不同 ABI 布局绝不合并。这减轻了大型
+  模块对 `MAX_PLANS` 的压力。
+- **各项限制在序列化之前强制执行。** `main.validateLimits` 在任何字节写出之前
+  对完整的 `CompileResult` 和 CIPI 表运行，并以 `compiler limit: ...` 失败，
+  而不是生成一个会被运行时加载器拒绝或截断的包：函数 ≤512 个、计划 ≤1024 个、
+  每个计划的参数 ≤64 个且位置 ≤8 个、函数/计划名 ≤128 字节、导入 ≤512 个、
+  每个导入的提供者 ≤8 个、导入/提供者/符号名 ≤64 字节、提供者版本 ≤32 字节、
+  CIVM 模块 ≤2 MiB。
 
-## External symbol resolution (build-time indexes)
+## 外部符号解析（构建期索引）
 
-`cinterp-cc` does not ship a checked-in link database. `compiler/build.zig`
-builds `compiler/tools/gen_link_index.zig` as a host tool and runs it twice; the
-outputs are a compact binary table plus a wrapper module that `@embedFile`s it,
-injected as the `win_defs_generated` / `libc_defs_generated` anonymous imports.
+`cinterp-cc` 不附带任何签入仓库的链接数据库。`compiler/build.zig` 把
+`compiler/tools/gen_link_index.zig` 构建为宿主机工具并运行两次；产物是一张
+紧凑的二进制表，外加一个用 `@embedFile` 嵌入它的包装模块，二者以
+`win_defs_generated` / `libc_defs_generated` 匿名导入的形式注入。
 
-- Windows (`compiler/src/win_defs.zig`): `<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def`
-  plus the `*.def.in` templates preprocessed with `zig cc -E`, giving DLL,
-  exported symbol, `arch_mask` and call convention. Windows API names
-  (including Win32 stdcall decoration such as `\01_GetTickCount64@0`) resolve
-  to `kernel32.dll`/`user32.dll`/`api-ms-win-*`, with concrete DLLs preferred
-  over API sets. `make test-winapi` compiles `examples/winapi.c` for
-  Win64/Win32 and runs it under Wine; it exits non-zero when no target can
-  actually be executed (use `python3 scripts/test_winapi.py --allow-skip` for a
-  local no-op run).
-- Linux (`compiler/src/libc_defs.zig`): `<zig lib>/libc/glibc/abilists`
-  restricted to `x86_64-linux-gnu` and `aarch64-linux-gnu`, giving the exporting
-  soname (`libc.so.6`, `libm.so.6`, `libpthread.so.0`, ...).
-- Symbols the indexes do not describe are left out of CIPI and resolved by the
-  runtime fallback (process symbols, `--lib`, default CRT libraries).
-  `compiler/src/data/link_wrappers.json` is the only remaining checked-in link
-  metadata and only holds same-signature aliases (`snprintf -> _snprintf`).
+- Windows（`compiler/src/win_defs.zig`）：
+  `<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def`，外加用 `zig cc -E`
+  预处理过的 `*.def.in` 模板，从中得到 DLL、导出符号、`arch_mask` 和调用
+  约定。Windows API 名称（包括诸如 `\01_GetTickCount64@0` 这样的 Win32
+  stdcall 修饰名）会解析到 `kernel32.dll`/`user32.dll`/`api-ms-win-*`，并优先
+  选择具体 DLL 而不是 API set。`make test-winapi` 会为 Win64/Win32 编译
+  `examples/winapi.c` 并在 Wine 下运行它；当没有任何目标能够实际执行时，它以
+  非零码退出（本地只想空跑时可用 `python3 scripts/test_winapi.py --allow-skip`）。
+- Linux（`compiler/src/libc_defs.zig`）：`<zig lib>/libc/glibc/abilists`，
+  限定为 `x86_64-linux-gnu` 和 `aarch64-linux-gnu`，从中得到作为导出方的
+  soname（`libc.so.6`、`libm.so.6`、`libpthread.so.0`、……）。
+- 索引未描述的符号不进入 CIPI，而由运行时回退机制解析（进程符号、`--lib`、
+  默认 CRT 库）。`compiler/src/data/link_wrappers.json` 是仅存的签入链接
+  元数据，且只保存同签名别名（`snprintf -> _snprintf`）。
 
-`zig build gen-link-index` regenerates both tables on their own (it prints
-entry/library/blob sizes) without building the rest of the compiler.
+`zig build gen-link-index` 可以单独重新生成这两张表（它会打印条目/库/blob
+大小），无需构建编译器的其余部分。
 
-## Build and use
+## 构建与使用
 
 ```bash
 make compiler                                     # builds compiler/zig-out/bin/cinterp-cc
@@ -159,7 +148,7 @@ make compiler                                     # builds compiler/zig-out/bin/
 ./runtime/zig-out/bin/cinterp-run build/hello.cib
 ```
 
-For cross targets use `--target`:
+交叉目标请使用 `--target`：
 
 ```bash
 ./build/cinterp-cc compile --target aarch64-linux examples/hello.c -o build/hello-arm64.cib
@@ -167,22 +156,21 @@ For cross targets use `--target`:
 ./build/cinterp-cc compile --target i686-windows examples/hello.c -o build/hello-win32.cib
 ```
 
-## Testing
+## 测试
 
-Python is used only by the test, fuzz and benchmark harnesses. The compiler
-itself has no Python dependency, and its external-symbol tables are generated
-from the Zig toolchain by `zig build` (or `zig build gen-link-index`).
+Python 只供测试、fuzz 和基准测试框架使用。编译器本身不依赖 Python，它的
+外部符号表由 `zig build`（或 `zig build gen-link-index`）从 Zig 工具链生成。
 
-- `make test` builds the compiler and runs `scripts/test.sh`: runtime unit
-  tests, `cd compiler && zig build test`, and the end-to-end integration cases.
-- `make compiler-test` runs only `cd compiler && zig build test` (main, abi,
-  ir, lower_ast, imports, link_index, link_wrappers, win_defs, libc_defs).
-- There is no `make parser-parity` target any more: lowerer regressions are
-  covered by the golden CIVM/CIPL comparisons described in
-  [`ir-parser-differences.md`](ir-parser-differences.md).
+- `make test` 构建编译器并运行 `scripts/test.sh`：运行时单元测试、
+  `cd compiler && zig build test`，以及端到端集成用例。
+- `make compiler-test` 只运行 `cd compiler && zig build test`（main、abi、
+  ir、lower_ast、imports、link_index、link_wrappers、win_defs、libc_defs）。
+- 已不再有 `make parser-parity` 目标：lowering 的回归由
+  [`ir-parser-differences.md`](ir-parser-differences.md) 中描述的 golden
+  CIVM/CIPL 比对来覆盖。
 
-Release tarballs (`make release-artifacts`): only
-`cinterp-<VERSION>-sysv-x86_64` (Linux x86-64) ships the compiler —
-`bin/cinterp-cc` plus the `bin/cinterp` wrapper script that execs it. The
-`win64-x86_64`, `win32-x86` and `arm64` tarballs are runtime-only. See
-`packaging/README.release.md.in`.
+发布 tarball（`make release-artifacts`）：只有
+`cinterp-<VERSION>-sysv-x86_64`（Linux x86-64）包含编译器 —— 即
+`bin/cinterp-cc` 加上 exec 它的 `bin/cinterp` 包装脚本。`win64-x86_64`、
+`win32-x86` 和 `arm64` 的 tarball 仅含运行时。参见
+`packaging/README.release.md.in`。
