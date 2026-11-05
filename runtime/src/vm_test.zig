@@ -97,14 +97,14 @@ fn buildEmptyPlans(buf: []u8) []const u8 {
     return a.code();
 }
 
-/// A v1 CIPKG package: 15-byte header, then the module and plans sections.
-fn buildPackageV1(buf: []u8, module: []const u8, plans: []const u8) []const u8 {
+/// A v3 trusted CIPKG package: 18-byte header, then module/plans.
+fn buildPackage(buf: []u8, module: []const u8, plans: []const u8) []const u8 {
     var a = Asm{ .buf = buf };
     a.bytes("CIPKG");
-    a.u8v(1);
-    a.u8v(0);
+    a.u8v(3);
     a.u32v(@intCast(module.len));
     a.u32v(@intCast(plans.len));
+    a.u32v(0);
     a.bytes(module);
     a.bytes(plans);
     return a.code();
@@ -160,34 +160,6 @@ fn putU64(buf: []u8, p: *usize, v: u64) void {
     p.* += 8;
 }
 
-fn targetMeta(arch: u8, os: u8, abi_id: u8, ptr_bits: u8) [29]u8 {
-    var meta: [29]u8 = undefined;
-    var p: usize = 0;
-    @memcpy(meta[0..4], "CIPM");
-    p = 4;
-    meta[p] = 1;
-    p += 1;
-    putU16(&meta, &p, 29);
-    meta[p] = arch;
-    p += 1;
-    meta[p] = os;
-    p += 1;
-    meta[p] = abi_id;
-    p += 1;
-    meta[p] = ptr_bits;
-    p += 1;
-    meta[p] = 1;
-    p += 1;
-    meta[p] = 0;
-    p += 1;
-    putU64(&meta, &p, 0);
-    putU16(&meta, &p, 1);
-    putU16(&meta, &p, 0);
-    putU16(&meta, &p, 0);
-    putU16(&meta, &p, 0);
-    return meta;
-}
-
 test "CIVM module returns 42" {
     var module: [128]u8 = undefined;
     var p: usize = 0;
@@ -228,27 +200,6 @@ test "CIVM module returns 42" {
 test "bad package" {
     var machine = vm.VM{};
     try std.testing.expectError(error.BadPackage, machine.loadPackage("x"));
-}
-
-test "v2 target metadata rejects another architecture" {
-    var package: [128]u8 = undefined;
-    var p: usize = 0;
-    @memcpy(package[0..5], "CIPKG");
-    p = 5;
-    package[p] = 2;
-    p += 1;
-    package[p] = 1;
-    p += 1;
-    putU16(&package, &p, 25);
-    putU32(&package, &p, 0);
-    putU32(&package, &p, 0);
-    putU32(&package, &p, 29);
-    putU32(&package, &p, 0);
-    const meta = targetMeta(if (platform.arch_id == 1) 2 else 1, platform.os_id, platform.abi_id, platform.ptr_bits);
-    @memcpy(package[p .. p + 29], &meta);
-    p += 29;
-    var machine = vm.VM{};
-    try std.testing.expectError(error.TargetMismatch, machine.loadPackage(package[0..p]));
 }
 
 test "plan validation rejects bad ABI locations" {
@@ -419,10 +370,6 @@ test "error names map to their documented CI_E category" {
     try std.testing.expectEqual(vm.CI_E_BAD_PACKAGE, vm.errorCode(error.BadImportVersion));
     try std.testing.expectEqual(vm.CI_E_BAD_PACKAGE, vm.errorCode(error.TooManyImports));
     try std.testing.expectEqual(vm.CI_E_BAD_PACKAGE, vm.errorCode(error.TooManyProviders));
-    try std.testing.expectEqual(vm.CI_E_TARGET, vm.errorCode(error.BadTargetMagic));
-    try std.testing.expectEqual(vm.CI_E_TARGET, vm.errorCode(error.BadTargetVersion));
-    try std.testing.expectEqual(vm.CI_E_TARGET, vm.errorCode(error.BadTargetHeader));
-    try std.testing.expectEqual(vm.CI_E_TARGET, vm.errorCode(error.TargetMismatch));
     try std.testing.expectEqual(vm.CI_E_PLANS, vm.errorCode(error.TooManyPlans));
     try std.testing.expectEqual(vm.CI_E_PLANS, vm.errorCode(error.TooManyLocs));
     try std.testing.expectEqual(vm.CI_E_PLANS, vm.errorCode(error.BadLocKind));
@@ -1029,7 +976,7 @@ test "loaders report CI_E_BUSY while the VM executes" {
     var plans_buf: [32]u8 = undefined;
     const plans = buildEmptyPlans(&plans_buf);
     var package_buf: [192]u8 = undefined;
-    const package = buildPackageV1(&package_buf, module, plans);
+    const package = buildPackage(&package_buf, module, plans);
 
     const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
     defer vm.ci_vm_destroy(machine);
@@ -1247,7 +1194,7 @@ test "a process loads, runs, unloads and destroys independent VMs" {
     var module_buf: [128]u8 = undefined;
     var plans_buf: [32]u8 = undefined;
     var package_buf: [192]u8 = undefined;
-    const package = buildPackageV1(&package_buf, buildModule(&module_buf, &funcs), buildEmptyPlans(&plans_buf));
+    const package = buildPackage(&package_buf, buildModule(&module_buf, &funcs), buildEmptyPlans(&plans_buf));
 
     const process = vm.ci_process_create(null) orelse return error.OutOfMemory;
     var first: ?*vm.VM = null;
@@ -1295,7 +1242,7 @@ test "a process reports busy VMs instead of freeing them" {
     var module_buf: [128]u8 = undefined;
     var plans_buf: [32]u8 = undefined;
     var package_buf: [192]u8 = undefined;
-    const package = buildPackageV1(&package_buf, buildModule(&module_buf, &funcs), buildEmptyPlans(&plans_buf));
+    const package = buildPackage(&package_buf, buildModule(&module_buf, &funcs), buildEmptyPlans(&plans_buf));
 
     const process = vm.ci_process_create(null) orelse return error.OutOfMemory;
     var handle: ?*vm.VM = null;

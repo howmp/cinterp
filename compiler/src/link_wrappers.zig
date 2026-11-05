@@ -28,7 +28,7 @@ pub const Wrappers = struct {
         self.arena.deinit();
     }
 
-    /// Target-specific same-signature alias. `os_id` matches CIPM: 1 = linux,
+    /// Target-specific same-signature alias. `os_id` uses 1 = linux,
     /// 2 = windows.
     pub fn alias(self: *const Wrappers, os_id: u8, name: []const u8) ?[]const u8 {
         const aliases = objectField(self.root, "aliases") orelse return null;

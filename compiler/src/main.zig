@@ -21,21 +21,18 @@ const callbacks_header = @embedFile("data/cinterp_callbacks.h");
 
 const Target = struct {
     name: []const u8,
-    triple: []const u8,
     zig_triple: []const u8,
     arch: u8,
     os: u8,
     abi: u8,
     ptr_bits: u8,
-    features: u64,
-    link_db: []const u8 = "",
 };
 
 const targets = [_]Target{
-    .{ .name = "x86_64-linux", .triple = "x86_64-pc-linux-gnu", .zig_triple = "x86_64-linux-gnu", .arch = 1, .os = 1, .abi = 1, .ptr_bits = 64, .features = 61 },
-    .{ .name = "x86_64-windows", .triple = "x86_64-pc-windows-gnu", .zig_triple = "x86_64-windows-gnu", .arch = 1, .os = 2, .abi = 2, .ptr_bits = 64, .features = 61 },
-    .{ .name = "i686-windows", .triple = "i686-pc-windows-gnu", .zig_triple = "x86-windows-gnu", .arch = 2, .os = 2, .abi = 3, .ptr_bits = 32, .features = 61 },
-    .{ .name = "aarch64-linux", .triple = "aarch64-linux-gnu", .zig_triple = "aarch64-linux-gnu", .arch = 3, .os = 1, .abi = 4, .ptr_bits = 64, .features = 62 },
+    .{ .name = "x86_64-linux", .zig_triple = "x86_64-linux-gnu", .arch = 1, .os = 1, .abi = 1, .ptr_bits = 64 },
+    .{ .name = "x86_64-windows", .zig_triple = "x86_64-windows-gnu", .arch = 1, .os = 2, .abi = 2, .ptr_bits = 64 },
+    .{ .name = "i686-windows", .zig_triple = "x86-windows-gnu", .arch = 2, .os = 2, .abi = 3, .ptr_bits = 32 },
+    .{ .name = "aarch64-linux", .zig_triple = "aarch64-linux-gnu", .arch = 3, .os = 1, .abi = 4, .ptr_bits = 64 },
 };
 
 fn findTarget(name: []const u8) ?Target {
@@ -161,7 +158,6 @@ const Options = struct {
     dump: bool = false,
     dump_ast: bool = false,
     dump_imports: bool = false,
-    cib_version: u8 = 2,
     auto_link: bool = true,
 };
 
@@ -190,33 +186,6 @@ fn archMask(arch: u8) u8 {
         3 => 4,
         else => 0,
     };
-}
-
-fn targetSerialize(allocator: Allocator, target: Target) ![]u8 {
-    const producer = try std.fmt.allocPrint(allocator, "cinterp {s}", .{build_options.version});
-    const link_db = target.link_db;
-    // CIPM stores the lengths as u16 and the runtime copies into fixed
-    // 96/128/64-byte fields, so reject before narrowing.
-    if (target.triple.len > 96 or link_db.len > 128 or producer.len > 64) return error.NameTooLong;
-    var out = std.ArrayList(u8).init(allocator);
-    try out.appendSlice("CIPM");
-    try out.append(1);
-    try writeU16(&out, 29);
-    try out.append(target.arch);
-    try out.append(target.os);
-    try out.append(target.abi);
-    try out.append(target.ptr_bits);
-    try out.append(1);
-    try out.append(0);
-    try writeU64(&out, target.features);
-    try writeU16(&out, 1);
-    try writeU16(&out, @intCast(target.triple.len));
-    try writeU16(&out, @intCast(link_db.len));
-    try writeU16(&out, @intCast(producer.len));
-    try out.appendSlice(target.triple);
-    try out.appendSlice(link_db);
-    try out.appendSlice(producer);
-    return out.toOwnedSlice();
 }
 
 fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]u8 {
@@ -327,13 +296,10 @@ fn buildImportTable(
         if (target.os == 2 and plan_names.contains(name)) continue;
         var providers: []imports.Provider = undefined;
         if (target.os == 1) {
-            const libs = [_][]const u8{
-                "libc.so.6",  "libm.so.6",    "libdl.so.2",     "libpthread.so.0",
-                "librt.so.1", "libutil.so.1", "libresolv.so.2",
-            };
-            const out = try allocator.alloc(imports.Provider, libs.len);
-            for (libs, 0..) |lib, i| out[i] = .{ .lib = lib, .symbol = name };
-            providers = out;
+            // Linux data symbols are resolved by loadImportedData's fallback
+            // through the process, --lib handles, and the default CRT
+            // libraries. Do not repeat that library list in every entry.
+            providers = &.{};
         } else if (win_defs.lookupData(target.arch, name)) |resolved| {
             providers = try convertProviders(allocator, resolved.slice());
         } else {
@@ -425,37 +391,20 @@ fn packageSerialize(
     allocator: Allocator,
     module: []const u8,
     plans: []const u8,
-    meta: []const u8,
     import_bytes: []const u8,
-    cib_version: u8,
 ) ![]u8 {
     // CIPKG lengths are u32; every section is bounded by validateLimits, but
     // guard the narrowing casts locally as well.
     if (module.len > std.math.maxInt(u32) or plans.len > std.math.maxInt(u32) or
-        meta.len > std.math.maxInt(u32) or import_bytes.len > std.math.maxInt(u32)) return error.PackageTooLarge;
+        import_bytes.len > std.math.maxInt(u32)) return error.PackageTooLarge;
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPKG");
-    if (cib_version == 1) {
-        try out.append(1);
-        try out.append(0);
-        try writeU32(&out, @intCast(module.len));
-        try writeU32(&out, @intCast(plans.len));
-        try out.appendSlice(module);
-        try out.appendSlice(plans);
-        return out.toOwnedSlice();
-    }
-    var flags: u8 = 0x1;
-    if (import_bytes.len > 0) flags |= 0x2;
-    try out.append(2);
-    try out.append(flags);
-    try writeU16(&out, 25);
+    try out.append(3);
     try writeU32(&out, @intCast(module.len));
     try writeU32(&out, @intCast(plans.len));
-    try writeU32(&out, @intCast(meta.len));
     try writeU32(&out, @intCast(import_bytes.len));
     try out.appendSlice(module);
     try out.appendSlice(plans);
-    try out.appendSlice(meta);
     try out.appendSlice(import_bytes);
     return out.toOwnedSlice();
 }
@@ -499,8 +448,7 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8, callbacks_
 
 fn usage() void {
     std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir]\n" ++
-        "                      [--dump] [--dump-ast] [--dump-imports]\n" ++
-        "                      [--cib-version 1|2] [--no-auto-link]\n", .{});
+        "                      [--dump] [--dump-ast] [--dump-imports] [--no-auto-link]\n", .{});
 }
 
 /// Parse the IR text into the typed AST, verify target consistency and lower it.
@@ -529,18 +477,6 @@ fn removeTempFiles(ll_path: []const u8, callbacks_header_path: []const u8, keep_
     if (keep_ir) return;
     std.fs.cwd().deleteFile(ll_path) catch {};
     std.fs.cwd().deleteFile(callbacks_header_path) catch {};
-}
-
-fn parseCibVersion(value: []const u8) u8 {
-    const version = std.fmt.parseInt(u8, value, 10) catch {
-        std.debug.print("invalid --cib-version: {s}\n", .{value});
-        std.process.exit(2);
-    };
-    if (version != 1 and version != 2) {
-        std.debug.print("invalid --cib-version: {s} (expected 1 or 2)\n", .{value});
-        std.process.exit(2);
-    }
-    return version;
 }
 
 pub fn main() !void {
@@ -572,7 +508,6 @@ pub fn main() !void {
     var dump = false;
     var dump_ast = false;
     var dump_imports = false;
-    var cib_version: u8 = 2;
     var auto_link = true;
 
     var i: usize = 2;
@@ -620,15 +555,6 @@ pub fn main() !void {
             dump_ast = true;
         } else if (std.mem.eql(u8, a, "--dump-imports")) {
             dump_imports = true;
-        } else if (std.mem.eql(u8, a, "--cib-version")) {
-            i += 1;
-            if (i >= argv.len) {
-                usage();
-                std.process.exit(2);
-            }
-            cib_version = parseCibVersion(argv[i]);
-        } else if (std.mem.startsWith(u8, a, "--cib-version=")) {
-            cib_version = parseCibVersion(a["--cib-version=".len..]);
         } else if (std.mem.eql(u8, a, "--no-auto-link")) {
             auto_link = false;
         } else if (a.len > 0 and a[0] == '-') {
@@ -674,7 +600,6 @@ pub fn main() !void {
         .dump = dump,
         .dump_ast = dump_ast,
         .dump_imports = dump_imports,
-        .cib_version = cib_version,
         .auto_link = auto_link,
     }) catch |err| {
         if (err == error.CallbackAcquireRequiresFunctionRef) {
@@ -710,12 +635,6 @@ pub fn main() !void {
     );
     defer import_table.deinit();
 
-    if (auto_link and result.plans.len > 0) {
-        // Diagnostic provenance of the build-time table; no checked-in link
-        // snapshots are involved any more.
-        target.link_db = if (target.os == 2) win_defs.source_id else libc_defs.source_id;
-    }
-
     // Fail before writing a package the runtime loaders would reject or
     // truncate. `moduleByteLen` is the exact CIVM size; `serializePlans` and
     // friends re-check their own narrowing casts.
@@ -727,17 +646,16 @@ pub fn main() !void {
 
     const module = try moduleSerialize(allocator, result.functions);
     const plans = try serializePlans(allocator, result.plans, target.abi);
-    const meta = try targetSerialize(allocator, target);
     const import_bytes = try import_table.serialize(allocator);
-    const package = try packageSerialize(allocator, module, plans, meta, import_bytes, cib_version);
+    const package = try packageSerialize(allocator, module, plans, import_bytes);
     const file = try std.fs.cwd().createFile(out, .{});
     defer file.close();
     try file.writeAll(package);
 
     const stdout = std.io.getStdOut().writer();
     try stdout.print(
-        "{s}: {d}B module, {d}B plans, {d} functions, {d} external plans, target={s}, cib=v{d}, imports={d}, cc=zig\n",
-        .{ out, module.len, plans.len, result.functions.len, result.plans.len, target.name, cib_version, import_table.count() },
+        "{s}: {d}B module, {d}B plans, {d} functions, {d} external plans, target={s}, cib=v3, imports={d}, cc=zig\n",
+        .{ out, module.len, plans.len, result.functions.len, result.plans.len, target.name, import_table.count() },
     );
     if (dump) {
         for (result.functions) |func| {
@@ -805,17 +723,17 @@ test "embedded callback header declares the builtins and macros" {
     try std.testing.expect(std.mem.indexOf(u8, callbacks_header, "#ifndef CINTERP_CALLBACKS_H") != null);
 }
 
-test "package v1 uses the 15-byte legacy header" {
+test "package v3 uses the 18-byte trusted header" {
     const module = "CIVM";
     const plans = "CIPL";
-    const package = try packageSerialize(std.testing.allocator, module, plans, "", "", 1);
+    const package = try packageSerialize(std.testing.allocator, module, plans, "");
     defer std.testing.allocator.free(package);
     try std.testing.expectEqualSlices(u8, "CIPKG", package[0..5]);
-    try std.testing.expectEqual(@as(u8, 1), package[5]);
-    try std.testing.expectEqual(@as(u8, 0), package[6]);
-    try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, package[7..11], .little));
-    try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, package[11..15], .little));
-    try std.testing.expectEqual(@as(usize, 23), package.len);
+    try std.testing.expectEqual(@as(u8, 3), package[5]);
+    try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, package[6..10], .little));
+    try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, package[10..14], .little));
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, package[14..18], .little));
+    try std.testing.expectEqual(@as(usize, 26), package.len);
 }
 
 test "lowerModule parses and lowers IR through the AST frontend" {

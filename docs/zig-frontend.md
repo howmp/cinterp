@@ -3,7 +3,7 @@
 `cinterp-cc` 是唯一的构建期编译器。编译器位于 `compiler/`（不存在
 `compiler-zig/` 目录树），它是一个单独的 Zig 程序：调用 `zig cc` C 前端，
 用带类型的词法分析器/语法分析器/AST 外加一个子集校验器解析得到的 LLVM IR
-文本，并输出 CIVM 字节码、CIPL 计划和 CIPKG v2 包。
+文本，并输出 CIVM 字节码、CIPL 计划和 CIPKG v3 trusted 包。
 
 IR 前端**只有一个** —— 即 `compiler/src/ir/` 下带类型的 AST：
 
@@ -53,7 +53,7 @@ lowering 约定的一部分。`-fno-stack-protector` 去掉了编译器插入的
 ```text
 cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir]
                     [--dump] [--dump-ast] [--dump-imports]
-                    [--cib-version 1|2] [--no-auto-link]
+                    [--no-auto-link]
 cinterp-cc --version
 ```
 
@@ -67,7 +67,6 @@ cinterp-cc --version
 | `--dump` | 向 stdout 打印每个函数的大小以及每一个计划（`args= ret= stack= conv=`） |
 | `--dump-ast` | 向 stderr 打印解析出的模块摘要以及每个函数的块/指令数量 |
 | `--dump-imports` | 打印 CIPI 表（计划索引、符号、提供者） |
-| `--cib-version 1\|2` | 要写入的包版本（默认 2） |
 | `--no-auto-link` | 跳过生成的 CIPI 提供者条目 |
 
 `--dump-ast` 是编译器内部的结构化转储（`lower_ast.dumpModule`）：它会报告

@@ -41,19 +41,10 @@ def compile_seed(name: str, out: Path) -> Path:
 
 
 def module_span(data: bytes) -> tuple[int, int] | None:
-    if len(data) < 15 or data[:5] != b"CIPKG":
+    if len(data) < 18 or data[:5] != b"CIPKG" or data[5] != 3:
         return None
-    version = data[5]
-    if version == 1:
-        module_len = struct.unpack_from("<I", data, 7)[0]
-        start = 15
-    elif version == 2:
-        if len(data) < 25:
-            return None
-        module_len = struct.unpack_from("<I", data, 9)[0]
-        start = 25
-    else:
-        return None
+    module_len = struct.unpack_from("<I", data, 6)[0]
+    start = 18
     if start + module_len > len(data):
         return None
     return start, module_len

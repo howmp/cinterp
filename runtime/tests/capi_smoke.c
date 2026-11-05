@@ -84,32 +84,28 @@ int main(int argc, char **argv) {
     free(bad);
     if (ci_vm_run(vm, "main") != CI_OK || ci_vm_result(vm) != 42) return 13;
 
-    /* Each package section reports its own category on a bad header. */
-    if (hello_size < 25 || memcmp(hello, "CIPKG", 5) != 0 || hello[5] != 2) return 30;
-    uint32_t module_len = read_u32(hello + 9);
-    uint32_t plan_len = read_u32(hello + 13);
-    uint32_t meta_len = read_u32(hello + 17);
-    uint32_t import_len = read_u32(hello + 21);
-    size_t plan_off = 25 + (size_t)module_len;
-    size_t meta_off = plan_off + (size_t)plan_len;
-    size_t import_off = meta_off + (size_t)meta_len;
-    if (plan_len < 10 || meta_len < 1 || import_len < 4) return 31;
-    if (import_off + (size_t)import_len > hello_size) return 31;
+    /* v3 trusted package: 18-byte header, then module/plans/imports. */
+    if (hello_size < 18 || memcmp(hello, "CIPKG", 5) != 0 || hello[5] != 3) return 30;
+    uint32_t module_len = read_u32(hello + 6);
+    uint32_t plan_len = read_u32(hello + 10);
+    uint32_t import_len = read_u32(hello + 14);
+    size_t plan_off = 18 + (size_t)module_len;
+    size_t import_off = plan_off + (size_t)plan_len;
+    if (plan_len < 10) return 31;
+    if (import_off + (size_t)import_len != hello_size) return 31;
 
     unsigned char *broken = malloc(hello_size);
     if (!broken) return 11;
-    memcpy(broken, hello, hello_size);
-    broken[meta_off] = 'X';
-    if (!expect_load_error(vm, broken, hello_size, CI_E_TARGET)) return 32;
-
     memcpy(broken, hello, hello_size);
     broken[plan_off + 6] = 0xFF;
     broken[plan_off + 7] = 0xFF;
     if (!expect_load_error(vm, broken, hello_size, CI_E_PLANS)) return 33;
 
-    memcpy(broken, hello, hello_size);
-    broken[import_off] = 'X';
-    if (!expect_load_error(vm, broken, hello_size, CI_E_BAD_PACKAGE)) return 34;
+    if (import_len > 0) {
+        memcpy(broken, hello, hello_size);
+        broken[import_off] = 'X';
+        if (!expect_load_error(vm, broken, hello_size, CI_E_BAD_PACKAGE)) return 34;
+    }
     free(broken);
     if (ci_vm_run(vm, "main") != CI_OK || ci_vm_result(vm) != 42) return 13;
 

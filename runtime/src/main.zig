@@ -117,13 +117,7 @@ fn countValue(args: []const [:0]u8, i: *usize, flag: []const u8) usize {
 fn dumpPackage(job: Job, dump_target: bool, dump_imports: bool, header: bool) void {
     if (header) std.debug.print("package: {s}\n", .{job.path});
     if (dump_target) {
-        if (job.machine.target) |t| {
-            std.debug.print("target: {s} arch={d} os={d} abi={d} ptr={d} endian={d} features=0x{x} link_db={s}\n", .{
-                t.triple[0..t.triple_len], t.arch, t.os, t.abi, t.ptr_bits, t.endian, t.features, t.link_db[0..t.link_db_len],
-            });
-        } else {
-            std.debug.print("target: legacy-v1 (inferred)\n", .{});
-        }
+        std.debug.print("target: unchecked (host)\n", .{});
     }
     if (dump_imports) {
         var ii: usize = 0;

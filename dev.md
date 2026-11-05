@@ -42,7 +42,7 @@ C 源码
   → zig cc -S -emit-llvm -O0
   → compiler/src/ir（typed lexer/parser/AST/verifier）
   → lower_ast.zig（CIVM 字节码 + FFI 计划）
-  → main.zig（CIPKG v2：CIVM + CIPL + CIPM + CIPI）
+  → main.zig（CIPKG v3：CIVM + CIPL + CIPI）
   → cinterp-cc（可选 --dump/--dump-ast/--dump-imports）
 ```
 
@@ -50,7 +50,7 @@ C 源码
 
 ```text
 CIPKG loader（事务性）
-  → CIVM 模块 + CIPL 计划 + CIPM 目标校验 + CIPI provider
+  → CIVM 模块 + CIPL 计划 + CIPI provider
   → 字节码执行（8 字节栈槽 + 线性内存）
   → CALL_NATIVE/CALL_VARARG
   → platform.zig 按 ABI 填充 ABIFrame
@@ -211,7 +211,6 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 - 唯一保留的签入链接元数据是 [`compiler/src/data/link_wrappers.json`](./compiler/src/data/link_wrappers.json)，只描述同签名别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）。`atexit -> __cxa_atexit` 的参数适配在 `lower_ast.zig` 中处理；`signal` 按普通 callback 使用。
 - 编译器把命中的 provider 写入 CIPI；未命中的符号不写 entry，留给运行期 fallback。
 - 运行期解析顺序：显式 `--lib` → CIPI provider（缓存 handle）→ 进程符号/默认 CRT。自动 provider 只接受库名，拒绝路径分隔符；绝对路径只允许显式 `--lib`。直接原生调用目标按 plan index 在首次调用后缓存；包/plan 重载会清空 provider/target 缓存。
-- CIPM 的 `link_db` 只记录索引来源（`mingw-defs@<zig version>` / `glibc-abilists@<zig version>`）。
 - MinGW defs 不含 `min_os`，新包统一写 0，旧包仍按原字段校验；glibc abilists 的 `ld` 库、objects/TLS 段不进入 Linux provider 索引。构建需要 Zig 0.13 自带的 `libc/mingw` 与 `libc/glibc/abilists`，缺失时 `zig build` 直接失败。
 
 ## 10. 包格式、C ABI 与上限
@@ -219,9 +218,8 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 ### 10.1 包格式
 
 - **CIVM v1**：magic/版本/arch、函数表、代码；模块上限 2 MiB，函数上限 512，函数名上限 128。
-- **CIPL v3**：命名 CallPlan 表；运行时兼容 v2。计划上限 1024，每 plan 64 args、8 ret locs、每 arg 8 locs，名称上限 128。
-- **CIPKG v2**：25 字节头 + CIVM + CIPL + CIPM + CIPI；v1 旧包仍可读。
-- **CIPM v1**：arch/OS/ABI/指针宽度/端序/features/min_runtime/triple/link_db/producer；加载前校验目标。
+- **CIPL v3**：命名 CallPlan 表。计划上限 1024，每 plan 64 args、8 ret locs、每 arg 8 locs，名称上限 128。
+- **CIPKG v3（trusted）**：18 字节头（magic + version + module/plan/import 三个 u32 长度）+ CIVM + CIPL + CIPI；不写目标元数据，运行时不做目标校验，包必须由匹配的运行时加载。
 - **CIPI v1**：plan index → provider 库/真实符号/别名/ordinal/callconv/arch_mask/min_os；上限 512 entry、每 entry 8 provider，名称/符号 64 字节。
 - 详细字段和错误码见 [`docs/cib.md`](./docs/cib.md)；版本兼容策略见 [`docs/compatibility.md`](./docs/compatibility.md)。
 
@@ -276,7 +274,7 @@ const char *ci_version(void);
 compiler/
   build.zig                    # 构建期运行 gen_link_index
   tools/gen_link_index.zig     # MinGW defs / glibc abilists → 内嵌索引
-  src/main.zig                 # CLI、CIPKG/CIPM/CIPI writer、validateLimits
+  src/main.zig                 # CLI、CIPKG/CIPI writer、validateLimits
   src/opcodes.zig              # CIVM opcode 唯一定义
   src/abi.zig                  # Plan/ArgPlan/Loc、buildPlanForAbi、convFromName
   src/lower_ast.zig            # AST → CIVM、internPlan、callback 计划
@@ -297,7 +295,7 @@ runtime/
   src/vm_test.zig              # 运行时单测
   src/ffi/abi.zig              # 运行时 Loc/ArgPlan/CallPlan
   src/ffi/plan_loader.zig      # CIPL 解码与 plan store
-  src/ffi/link_loader.zig      # CIPM/CIPI 解析与校验
+  src/ffi/link_loader.zig      # CIPI 解析与校验
   src/ffi/native.zig           # dlopen/LoadLibrary 符号解析
   src/ffi/platform.zig         # ABI 选择、frame、marshal、invoke、validate
   src/ffi/asm/                 # 四个调用引擎 + 四个 callback trampoline
@@ -345,13 +343,12 @@ make check-version        # VERSION 单一来源校验
 ```bash
 ./build/cinterp-cc compile source.c -o out.cib \
   [--dump] [--dump-ast] [--dump-imports] [--keep-ir] [--target TARGET] \
-  [--cc zig] [--cc-path PATH] [--cib-version 1|2] [--no-auto-link]
+  [--cc zig] [--cc-path PATH] [--no-auto-link]
 ```
 
 `--dump` 打印函数和 FFI 计划（包括 `conv`）；`--dump-ast` 打印解析后的 typed AST；
 `--dump-imports` 打印 CIB provider 绑定；`--keep-ir` 保留生成的 LLVM IR。
-`--cc-path` 选择作为 C 前端的 `zig`，`--cc` 目前只接受 `zig`；`--cib-version 1`
-生成不带 CIPM/CIPI 的旧包；`--no-auto-link` 关闭 C 标准库/Windows API 自动绑定。
+`--cc-path` 选择作为 C 前端的 `zig`，`--cc` 目前只接受 `zig`；输出固定为 CIPKG v3 trusted 包，`--no-auto-link` 关闭 C 标准库/Windows API 自动绑定。
 目标为 `x86_64-linux`（默认）、`x86_64-windows`、`i686-windows`、`aarch64-linux`。
 Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖；Windows exe 使用
 `WinStartup`/TLS 入口而不链接 MinGW CRT，静态库/共享库仍保留 CRT。
@@ -373,7 +370,7 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 `ReleaseSmall`（`make runtime` 的默认值）剥离 unwind 表、帧指针、panic 跟踪和符号，
 ELF 发布产物还会去掉 `.eh_frame`/`.eh_frame_hdr`。错误名表仅 Debug 构建保留；
 ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当前 Linux x64
-体积约为 Debug 8.8 MiB、ReleaseSmall 106,832 B。详细体积和 post-link 处理见下文。
+体积约为 Debug 8.8 MiB、ReleaseSmall 104,096 B。详细体积和 post-link 处理见下文。
 
 ### 12.2 当前基线
 
@@ -385,7 +382,7 @@ ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当
 - `scripts/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
 - 多 CIB/线程：`scripts/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）以及 CLI `--repeat 300` 的自动/显式 callback 用例。
 - 本地 c-testsuite 17/17；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
-- ReleaseSmall：native Linux x64 106,832 B；size-cross static sysv 94,416 B、Win64 83,968 B、Win32 90,112 B、ARM64 106,448 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
+- ReleaseSmall：native Linux x64 104,096 B；size-cross static sysv 93,152 B、Win64 81,408 B、Win32 87,552 B、ARM64 103,552 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
 
 ### 12.3 发布压缩包
 

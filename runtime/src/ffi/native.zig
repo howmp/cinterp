@@ -78,7 +78,7 @@ const linux_default_libraries = [_][:0]const u8{
 };
 
 /// Default libraries searched after the process namespace and explicit
-/// `--lib` handles. These cover v1 packages, `--no-auto-link` packages and
+/// `--lib` handles. These cover `--no-auto-link` packages and
 /// symbols the build-time link indexes do not know about. Missing entries are
 /// skipped by the caller (for example libdl/librt are merged into libc on
 /// newer glibc systems).

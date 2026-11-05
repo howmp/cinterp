@@ -206,10 +206,6 @@ fn fpClassValue(v: Value, kind: u8) u16 {
     };
 }
 
-fn readU16At(bytes: []const u8, off: usize) u16 {
-    return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
-}
-
 fn readU32At(bytes: []const u8, off: usize) u32 {
     return @as(u32, bytes[off]) |
         (@as(u32, bytes[off + 1]) << 8) |
@@ -555,7 +551,6 @@ pub const VM = struct {
     /// zero means no area is reserved and the whole region is allocatable.
     arg_area_start: usize = 0,
     plan_store: ?*plan_loader.Store = null,
-    target: ?link_loader.TargetInfo = null,
     imports: link_loader.Table = .{},
     import_handles: [link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS]?*anyopaque = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS),
     /// Data imports and function imports use different index spaces. Keep
@@ -778,43 +773,21 @@ pub const VM = struct {
 
     fn loadPackageInPlace(self: *VM, bytes: []const u8) !void {
         if (!platform.libc_supported) return error.UnsupportedLibc;
-        if (bytes.len < 15) return error.BadPackage;
+        if (bytes.len < 18) return error.BadPackage;
         if (!std.mem.eql(u8, bytes[0..5], "CIPKG")) return error.BadPackageMagic;
-        const version = bytes[5];
-        if (version == 1) {
-            const module_len = readU32At(bytes, 7);
-            const plan_len = readU32At(bytes, 11);
-            const m: usize = module_len;
-            const p: usize = plan_len;
-            if (15 + m + p != bytes.len) return error.BadPackageSize;
-            self.target = null;
-            self.imports = .{};
-            try self.loadModuleBytesInPlace(bytes[15 .. 15 + m]);
-            try self.loadPlans(bytes[15 + m .. 15 + m + p]);
-            return;
-        }
-        if (version != 2) return error.BadPackageVersion;
-        if (bytes.len < 25) return error.BadPackage;
-        const header_size = readU16At(bytes, 7);
-        if (header_size != 25) return error.BadPackageHeader;
-        const module_len = readU32At(bytes, 9);
-        const plan_len = readU32At(bytes, 13);
-        const meta_len = readU32At(bytes, 17);
-        const import_len = readU32At(bytes, 21);
+        if (bytes[5] != 3) return error.BadPackageVersion;
+        const module_len = readU32At(bytes, 6);
+        const plan_len = readU32At(bytes, 10);
+        const import_len = readU32At(bytes, 14);
         const m: usize = module_len;
         const p: usize = plan_len;
-        const mt: usize = meta_len;
         const im: usize = import_len;
-        if (25 + m + p + mt + im != bytes.len) return error.BadPackageSize;
-        const meta = bytes[25 + m + p .. 25 + m + p + mt];
-        const target = try link_loader.decodeTarget(meta);
-        try platform.validateTarget(target);
-        const import_bytes = bytes[25 + m + p + mt .. 25 + m + p + mt + im];
+        if (18 + m + p + im != bytes.len) return error.BadPackageSize;
+        const import_bytes = bytes[18 + m + p ..];
         const imports = try link_loader.decodeImports(import_bytes);
-        try self.loadModuleBytesInPlace(bytes[25 .. 25 + m]);
-        try self.loadPlans(bytes[25 + m .. 25 + m + p]);
+        try self.loadModuleBytesInPlace(bytes[18 .. 18 + m]);
+        try self.loadPlans(bytes[18 + m .. 18 + m + p]);
         try self.validateImports(&imports);
-        self.target = target;
         self.imports = imports;
     }
 
@@ -840,7 +813,6 @@ pub const VM = struct {
         self.func_count = scratch.func_count;
         self.plan_store = scratch.plan_store;
         scratch.plan_store = null;
-        self.target = scratch.target;
         self.imports = scratch.imports;
         // Explicit `--lib` handles outlive a package swap; per-plan provider
         // handles and resolved native targets do not, because they are keyed by
@@ -882,7 +854,7 @@ pub const VM = struct {
 
     /// Lazily load the platform's default C/CRT libraries once per VM. These
     /// are the last search tier after the process namespace and `--lib`
-    /// handles: they keep v1 packages, `--no-auto-link` packages and symbols
+    /// handles: they keep `--no-auto-link` packages and symbols
     /// missing from the build-time indexes working.
     fn defaultHandles(self: *VM) []?*anyopaque {
         if (!self.default_loaded) {
@@ -2885,7 +2857,6 @@ pub fn errorCode(err: anyerror) c_int {
         error.BadPackage,
         error.BadPackageMagic,
         error.BadPackageVersion,
-        error.BadPackageHeader,
         error.BadPackageSize,
         error.BadMagic,
         error.BadVersion,
@@ -2902,15 +2873,7 @@ pub fn errorCode(err: anyerror) c_int {
         error.TooManyImports,
         error.TooManyProviders,
         => CI_E_BAD_PACKAGE,
-        error.BadTargetMagic,
-        error.BadTargetVersion,
-        error.BadTargetHeader,
-        error.TargetMismatch,
-        error.UnsupportedFeature,
-        error.RuntimeTooOld,
-        error.UnsupportedOs,
-        error.UnsupportedLibc,
-        => CI_E_TARGET,
+        error.UnsupportedLibc => CI_E_TARGET,
         error.NoPlans,
         error.BadAbi,
         error.BadPlan,

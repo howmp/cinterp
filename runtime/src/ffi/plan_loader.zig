@@ -138,7 +138,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
     const magic = try r.take(4);
     if (!std.mem.eql(u8, magic, "CIPL")) return error.BadMagic;
     const version = try r.readU8();
-    if (version != 2 and version != 3) return error.BadVersion;
+    if (version != 3) return error.BadVersion;
     const abi_id = try r.readU8();
     if (abi_id < 1 or abi_id > 4) return error.BadAbi;
     const count = try r.readU16();
@@ -168,7 +168,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
         const stack_size = try r.readU16();
         const sret = try r.readU8();
         const sse_count = try r.readU8();
-        const conv: u8 = if (version >= 3) try r.readU8() else 0;
+        const conv = try r.readU8();
         const ret_size = try r.readU16();
 
         const ac: usize = args_count;

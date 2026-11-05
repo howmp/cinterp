@@ -286,48 +286,31 @@ echo "OK unknown symbol"
 "$RUNTIME" --version 2>&1 | grep -Fq "cinterp-run $VERSION"
 echo "OK version"
 
-echo "== CIB v2 target/import metadata"
+echo "== CIB import metadata"
 compile examples/ffi/ffi_printf.c -o "$OUT/ffi_printf.cib" --dump-imports >"$OUT/imports.txt"
-grep -Fq "target=x86_64-linux" "$OUT/imports.txt"
 # Linux providers come from the build-time glibc abilists index
 # (compiler/src/libc_defs.zig), so printf must resolve to libc.so.6.
 grep -Fq "import[plan 0] printf: libc.so.6:printf" "$OUT/imports.txt"
-"$RUNTIME" --dump-target --dump-imports --load-only "$OUT/ffi_printf.cib" >"$OUT/imports-runtime.txt" 2>&1
-grep -Fq "target: x86_64-pc-linux-gnu" "$OUT/imports-runtime.txt"
+"$RUNTIME" --dump-imports --load-only "$OUT/ffi_printf.cib" >"$OUT/imports-runtime.txt" 2>&1
 grep -Fq "printf: libc.so.6:printf" "$OUT/imports-runtime.txt"
-echo "OK CIPM/CIPI metadata"
+echo "OK CIPI metadata"
 
 # Windows API providers come from the build-time MinGW .def index
 # (compiler/src/win_defs.zig). Compile-only: no Wine needed here, the
 # actual Win64/Win32 execution lives in `make test-winapi`.
 echo "== Windows API import metadata (MinGW defs)"
 compile examples/windows/winapi.c --target x86_64-windows -o "$OUT/winapi64-meta.cib" --dump-imports >"$OUT/winapi64.txt"
-grep -Fq "target=x86_64-windows" "$OUT/winapi64.txt"
 grep -Fq "import[plan 0] GetTickCount64: kernel32.dll:GetTickCount64" "$OUT/winapi64.txt"
 grep -Fq "import[plan 1] GetSystemMetrics: user32.dll:GetSystemMetrics" "$OUT/winapi64.txt"
 grep -Fq "import[plan 2] GetModuleHandleA: kernel32.dll:GetModuleHandleA" "$OUT/winapi64.txt"
 grep -Fq "import[plan 3] wsprintfA: user32.dll:wsprintfA" "$OUT/winapi64.txt"
 compile examples/windows/winapi.c --target i686-windows -o "$OUT/winapi32-meta.cib" --dump-imports >"$OUT/winapi32.txt"
-grep -Fq "target=i686-windows" "$OUT/winapi32.txt"
 # Win32 stdcall decoration stays in the plan name while the provider symbol is
 # the undecorated export.
 grep -Fq '\01_GetTickCount64@0: kernel32.dll:GetTickCount64' "$OUT/winapi32.txt"
 grep -Fq '\01_GetSystemMetrics@4: user32.dll:GetSystemMetrics' "$OUT/winapi32.txt"
 grep -Fq 'wsprintfA: user32.dll:wsprintfA' "$OUT/winapi32.txt"
 echo "OK Windows API import metadata"
-
-compile examples/basics/hello.c --target x86_64-windows -o "$OUT/hello-win.cib" >/dev/null
-if "$RUNTIME" "$OUT/hello-win.cib" >"$OUT/target-mismatch.txt" 2>&1; then
-    echo "FAIL target mismatch was accepted" >&2
-    exit 1
-fi
-grep -Fq "error -5" "$OUT/target-mismatch.txt"
-echo "OK target mismatch rejected"
-
-compile examples/basics/hello.c --cib-version 1 -o "$OUT/hello-v1.cib" >/dev/null
-v1_out="$("$RUNTIME" "$OUT/hello-v1.cib" 2>&1)"
-printf '%s\n' "$v1_out" | grep -Fq "result: 42"
-echo "OK legacy CIPKG v1"
 
 compile examples/ffi/ffi_printf.c --no-auto-link -o "$OUT/ffi_printf-nolink.cib" --dump-imports >"$OUT/nolink.txt"
 if grep -Fq "import[plan 0]" "$OUT/nolink.txt"; then
@@ -476,7 +459,7 @@ echo "OK --load-only"
 dump_out="$("$RUNTIME" --run-all --dump-target --dump-imports --load-only \
     "$OUT/hello.cib" "$OUT/ffi_printf.cib" 2>&1)"
 printf '%s\n' "$dump_out" | grep -Fq "package: $OUT/ffi_printf.cib"
-printf '%s\n' "$dump_out" | grep -Fq "target: x86_64-pc-linux-gnu"
+printf '%s\n' "$dump_out" | grep -Fq "target: unchecked (host)"
 printf '%s\n' "$dump_out" | grep -Fq "printf: libc.so.6:printf"
 echo "OK --run-all dumps"
 

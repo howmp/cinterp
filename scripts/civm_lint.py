@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Structural validator for cinterp .cib packages.
 
-Checks CIPKG/CIVM/CIPL/CIPM/CIPI lengths and indices, then optionally asks the
-runtime loader to accept packages whose target matches the host.
+Checks CIPKG/CIVM/CIPL/CIPI lengths and indices, then optionally asks the
+runtime loader to accept packages with imports.
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def parse_cipl(plans: bytes) -> tuple[int, int]:
     if len(plans) < 10 or plans[:4] != b"CIPL":
         raise Bad("CIPL magic/header")
     version = plans[4]
-    if version not in (2, 3):
+    if version != 3:
         raise Bad(f"unsupported CIPL version {version}")
     abi = plans[5]
     if abi not in (1, 2, 3, 4):
@@ -98,10 +98,9 @@ def parse_cipl(plans: bytes) -> tuple[int, int]:
         ret_count = u16(plans, p + 2)
         stack_size = u16(plans, p + 4)
         p += 8
-        if version == 3:
-            if p >= len(plans):
-                raise Bad(f"plan {pi} conv truncated")
-            p += 1
+        if p >= len(plans):
+            raise Bad(f"plan {pi} conv truncated")
+        p += 1
         if p + 2 > len(plans):
             raise Bad(f"plan {pi} ret_size truncated")
         p += 2
@@ -130,61 +129,31 @@ def lint(path: Path, load: bool = True) -> list[str]:
     findings: list[str] = []
     try:
         data = path.read_bytes()
-        if len(data) < 25 or data[:5] != b"CIPKG":
+        if len(data) < 18 or data[:5] != b"CIPKG":
             raise Bad("CIPKG magic/header")
-        version = data[5]
-        if version not in (1, 2):
-            raise Bad(f"unsupported CIPKG version {version}")
-        if version == 1:
-            mlen = u32(data, 7)
-            plen = u32(data, 11)
-            if 15 + mlen + plen != len(data):
-                raise Bad("v1 section lengths do not match file size")
-            module = data[15 : 15 + mlen]
-            plans = data[15 + mlen :]
-            meta = b""
-            imports = b""
-        else:
-            if data[6] & 1 == 0:
-                raise Bad("v2 package missing CIPM flag")
-            if u16(data, 7) != 25:
-                raise Bad("v2 header_size != 25")
-            mlen = u32(data, 9)
-            plen = u32(data, 13)
-            metalen = u32(data, 17)
-            ilen = u32(data, 21)
-            if 25 + mlen + plen + metalen + ilen != len(data):
-                raise Bad("v2 section lengths do not match file size")
-            p = 25
-            module = data[p : p + mlen]
-            p += mlen
-            plans = data[p : p + plen]
-            p += plen
-            meta = data[p : p + metalen]
-            p += metalen
-            imports = data[p:]
+        if data[5] != 3:
+            raise Bad(f"unsupported CIPKG version {data[5]}")
+        mlen = u32(data, 6)
+        plen = u32(data, 10)
+        ilen = u32(data, 14)
+        if 18 + mlen + plen + ilen != len(data):
+            raise Bad("v3 section lengths do not match file size")
+        module = data[18 : 18 + mlen]
+        plans = data[18 + mlen : 18 + mlen + plen]
+        imports = data[18 + mlen + plen :]
         parse_civm(module)
-        abi, _ = parse_cipl(plans)
-        if version == 2:
-            if len(meta) < 29 or meta[:4] != b"CIPM":
-                raise Bad("CIPM magic/header")
-            if meta[5:7] != struct.pack("<H", 29):
-                raise Bad("CIPM header_size != 29")
-            if meta[9] != abi:
-                raise Bad(f"CIPM abi {meta[9]} != CIPL abi {abi}")
-            if imports and (len(imports) < 10 or imports[:4] != b"CIPI"):
-                raise Bad("CIPI magic/header")
-        if load and RUNTIME.exists() and meta:
-            host_ok = meta[7] == 1 and meta[8] == 1 and meta[9] == 1  # x86_64 linux sysv
-            if host_ok:
-                r = subprocess.run(
-                    [str(RUNTIME), "--load-only", str(path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                if r.returncode != 0:
-                    raise Bad("runtime load-only: " + (r.stderr.strip() or r.stdout.strip()))
+        _, _ = parse_cipl(plans)
+        if imports and (len(imports) < 10 or imports[:4] != b"CIPI"):
+            raise Bad("CIPI magic/header")
+        if load and RUNTIME.exists() and imports:
+            r = subprocess.run(
+                [str(RUNTIME), "--load-only", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if r.returncode != 0:
+                raise Bad("runtime load-only: " + (r.stderr.strip() or r.stdout.strip()))
     except Bad as e:
         findings.append(f"{path}: {e}")
     except Exception as e:  # malformed files must not crash the linter

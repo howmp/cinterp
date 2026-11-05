@@ -59,6 +59,9 @@ pub const Table = struct {
 
     pub fn serialize(self: *const Table, allocator: Allocator) ![]u8 {
         if (self.entries.items.len > MAX_IMPORTS) return error.TooManyImports;
+        // An empty CIPI section is valid and costs no bytes; the runtime's
+        // decodeImports already treats a zero-length section as empty.
+        if (self.entries.items.len == 0) return allocator.alloc(u8, 0);
         var out = std.ArrayList(u8).init(allocator);
         errdefer out.deinit();
         try out.appendSlice("CIPI");
@@ -102,15 +105,12 @@ fn writeU16(out: *std.ArrayList(u8), value: u16) !void {
     try out.appendSlice(&buf);
 }
 
-test "empty table serializes a CIPI header" {
+test "empty table serializes no CIPI bytes" {
     var table = Table.init(std.testing.allocator);
     defer table.deinit();
     const bytes = try table.serialize(std.testing.allocator);
     defer std.testing.allocator.free(bytes);
-    try std.testing.expectEqualSlices(u8, "CIPI", bytes[0..4]);
-    try std.testing.expectEqual(@as(u8, 1), bytes[4]);
-    try std.testing.expectEqual(@as(u16, 0), std.mem.readInt(u16, bytes[6..8], .little));
-    try std.testing.expectEqual(@as(usize, 10), bytes.len);
+    try std.testing.expectEqual(@as(usize, 0), bytes.len);
 }
 
 test "entry serialization preserves providers and flags" {

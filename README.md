@@ -9,7 +9,7 @@
 - **编译器**：Zig + `zig cc`，支持 C17 常用子集、结构体 FFI、varargs 和 callback。
 - **运行时**：Zig 0.13，栈式 VM + 线性内存；提供 `cinterp-run` 和 C 嵌入库。
 - **目标平台**：Linux x86-64、Linux AArch64、Windows x86-64、Windows x86。
-- **包格式**：`CIPKG` v2，包含字节码、FFI 计划、目标元数据和符号链接元数据。
+- **包格式**：`CIPKG` v3（trusted），只包含字节码、FFI 计划和链接元数据。
 
 ## 2. 特性
 
@@ -18,11 +18,11 @@
 2. **支持 FFI 和 callback**：编译期生成调用计划，支持结构体、varargs，以及
    cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback。
 3. **运行时紧凑，约 100 KiB**（ReleaseSmall）：
-   1. Linux x86-64（native）：106,832 B ≈ 104 KiB
-   2. Linux x86-64（static SysV）：94,416 B ≈ 92 KiB
-   3. Windows x86-64：83,968 B ≈ 82 KiB
-   4. Windows x86：90,112 B ≈ 88 KiB
-   5. Linux AArch64：106,448 B ≈ 104 KiB
+   1. Linux x86-64（native）：104,096 B ≈ 102 KiB
+   2. Linux x86-64（static SysV）：93,152 B ≈ 91 KiB
+   3. Windows x86-64：81,408 B ≈ 80 KiB
+   4. Windows x86：87,552 B ≈ 86 KiB
+   5. Linux AArch64：103,552 B ≈ 101 KiB
 
 4. **可用于替代 BOF 场景**：直接编译普通 C 源文件（包括直接 `#include <windows.h>`），
    不再需要手动声明 WinAPI 函数原型。参见 [`examples/bof`](examples/bof/) 和
@@ -36,7 +36,7 @@ C 源码
        → zig cc -S -emit-llvm -O0
        → typed LLVM IR parser / AST / 子集校验
        → CIVM 字节码 + CIPL FFI 调用计划
-       → CIPKG v2（CIVM + CIPL + CIPM + CIPI）
+       → CIPKG v3（CIVM + CIPL + CIPI）
 
 CIPKG
   → cinterp-run / libcinterp（运行时）

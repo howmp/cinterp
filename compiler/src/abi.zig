@@ -4,7 +4,7 @@
 //! builds every call plan through `buildPlanForAbi`, so the `Loc` kinds, plan
 //! ordering and every size/offset in a CIPL record come from one place. The
 //! types here are also the compiler's serialization contract: `main.zig` writes
-//! `CompileResult` into CIVM/CIPL/CIPM/CIPI.
+//! `CompileResult` into CIVM/CIPL/CIPI.
 //!
 //! Plan construction is a pure function of the ABI id, the rendered parameter
 //! and return type spellings, `sret`/byval placement and the pointer width.

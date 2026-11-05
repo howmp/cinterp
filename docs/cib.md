@@ -1,15 +1,14 @@
 # `.cib` 文件结构
 
-`.cib` 是 `cinterp compile` 生成的**发布包**。当前外层格式为 `CIPKG` v2，内部由四个 section 组成：
+`.cib` 是 `cinterp compile` 生成的**发布包**。当前默认外层格式为 `CIPKG` v3（trusted），内部由三个 section 组成：
 
 1. `CIVM`：字节码模块（函数表 + 每个函数的 code）；
 2. `CIPL`：FFI/callback 计划表（每个外部符号的参数/返回位置）；
-3. `CIPM`：目标声明（架构、OS、ABI、指针宽度、端序、特性、链接数据库版本）；
-4. `CIPI`：外部符号链接表（plan → provider 库/符号/别名/架构/最低 OS）。
+3. `CIPI`：外部符号链接表（plan → provider 库/符号/别名/架构/最低 OS）。
 
-运行时按“包 → 目标校验 → 模块 → 计划 → import 校验 → 固定汇编引擎”的顺序工作。`CIPKG` v1（无 CIPM/CIPI）仍然可读。本文描述的是**当前实现**的二进制格式；代码是最终事实来源：
+v3 不写目标声明，也不执行目标校验：包必须由与编译目标匹配的运行时加载。本文描述的是**当前实现**的唯一二进制格式；代码是最终事实来源：
 
-- `compiler/src/main.zig`：`CIPKG`、CIPM、CIPI 写入
+- `compiler/src/main.zig`：`CIPKG`、CIPI 写入
 - `compiler/src/lower_ast.zig`：CIVM、opcode、globals 初始化
 - `compiler/src/abi.zig`：CIPL、`Loc`/`ArgPlan`/`CallPlan`
 - `compiler/src/imports.zig`：CIPI 结构与序列化
@@ -20,7 +19,7 @@
 - `compiler/tools/gen_link_index.zig`：构建期索引生成器
 - `runtime/src/vm.zig`：CIVM 解析、opcode 执行、C ABI、provider 解析
 - `runtime/src/ffi/plan_loader.zig`：CIPL 解析
-- `runtime/src/ffi/link_loader.zig`：CIPM/CIPI 解析
+- `runtime/src/ffi/link_loader.zig`：CIPI 解析
 - `runtime/src/ffi/platform.zig`：ABI/frame/marshal 选择与目标校验
 
 ## 1. 通用约定
@@ -28,83 +27,29 @@
 - 所有多字节整数/浮点位模式均为**小端**。
 - 没有对齐 padding、checksum、签名或压缩。
 - `CIVM` 是虚拟机字节码，不是宿主 CPU 机器码；`CIPKG`/CIPL 的 ABI id 指示计划对应的宿主 ABI。
-- v2 包的 CIPM 目标必须与运行时一致；否则在解析模块/计划前返回 `TargetMismatch`。计划表与运行时 ABI 仍必须一致（`BadAbi`）。
+- 包不携带目标声明，运行时不做目标校验；计划表与运行时 ABI 的 `abi_id` 仍必须一致（`BadAbi`）。
 - CIPI 的 plan 索引必须指向本包 CIPL 中的外部计划；运行时加载时校验。
 - 所有二进制长度按实际字节数写入，读取器会拒绝截断、尾随字节和越界计数。
 
 ## 2. CIPKG 外层
 
-### 2.1 v2（当前）
+### 2.1 v3 trusted（默认）
 
 ```
 offset  size  field
 0       5     magic = "CIPKG"
-5       1     version = 2
-6       1     flags            # bit0=has_target, bit1=has_imports
-7       2     header_size = 25 # u16 LE
-9       4     module_len (u32 LE)
-13      4     plan_len   (u32 LE)
-17      4     meta_len   (u32 LE)
-21      4     import_len (u32 LE)
-25      module_len       CIVM module bytes
+5       1     version = 3
+6       4     module_len (u32 LE)
+10      4     plan_len   (u32 LE)
+14      4     import_len (u32 LE)
+18      module_len       CIVM module bytes
 ...     plan_len         CIPL plan table bytes
-...     meta_len         CIPM target section
 ...     import_len       CIPI import section
 ```
 
-约束：
+v3 没有 flags/header_size 和 diagnostics。`18 + module_len + plan_len + import_len` 必须等于文件长度；运行时仍解析 CIVM/CIPL/CIPI，但不做目标声明校验。CIPKG v3 的 `CIPL` 仍携带 ABI id，运行时用它防止明显的 ABI 混用。
 
-- `header_size` 当前必须为 25；section 顺序固定。
-- `25 + module_len + plan_len + meta_len + import_len` 必须精确等于文件长度；不允许 padding。
-- `meta_len` 必须**精确等于**紧随其后的 CIPM section 长度（29 字节头 + `triple`/`link_db`/`producer` 三个字符串），既不允许多余字节也不允许截断：`decodeTarget` 解析完 CIPM 后要求读取位置等于 `meta_len`，否则返回 `TrailingBytes`；不足则返回 `Truncated`。
-- `import_len` 可以为 0；编译器在无外部符号时写 10 字节空 CIPI 头，不是省略。
-- 运行时模块上限 `MAX_MODULE = 2097152` 字节；CLI 读取包文件上限 16 MiB。
-- v2 在加载模块前执行目标校验；CIPI 在计划加载后校验 plan 索引。
-
-### 2.2 v1（兼容）
-
-```
-offset  size  field
-0       5     magic = "CIPKG"
-5       1     version = 1
-6       1     reserved = 0
-7       4     module_len (u32 LE)
-11      4     plan_len   (u32 LE)
-15      module_len  CIVM module bytes
-15+module_len plan_len  CIPL plan table bytes
-```
-
-v1 没有 CIPM/CIPI；运行时根据 CIPL 的 `abi_id` 做旧式校验，并保留旧的全局符号搜索/`--lib` 行为。旧包不触发自动 provider 链接。
-
-### 2.3 CIPM：目标声明（v1）
-
-```
-offset size field
-0      4    magic = "CIPM"
-4      1    version = 1
-5      2    header_size = 29 (u16 LE)
-7      1    arch           # 1=x86_64, 2=x86, 3=aarch64
-8      1    os             # 1=linux, 2=windows
-9      1    abi            # 1=sysv, 2=win64, 3=win32, 4=aapcs64
-10     1    ptr_bits       # 32/64
-11     1    endian         # 1=little
-12     1    flags
-13     8    features (u64 LE)
-21     2    min_runtime (u16)
-23     2    triple_len
-25     2    link_db_len
-27     2    producer_len
-29     triple_len       canonical target triple（UTF-8）
-...    link_db_len      "glibc-abilists@<zig version>" / "mingw-defs@<zig version>"
-...    producer_len     "cinterp 0.1.0"
-```
-
-- `features` 位：bit0=f80、bit1=f128、bit2=callback、bit3=varargs、bit4=auto-link、bit5=stdcall。运行时按位检查：包声明了运行时/当前架构不支持的位时返回 `UnsupportedFeature`。
-- `min_runtime` 高于运行时版本时返回 `RuntimeTooOld`。
-- `triple` 用于诊断；快速校验使用 arch/os/abi/ptr_bits/endian。三个字符串的运行时上限分别为 `triple` 96B、`link_db` 128B、`producer` 64B，超限返回 `NameTooLong`（编译器在写入前做同样的检查）。
-- `link_db` 记录生成 CIPI 时使用的构建期索引来源：Linux 为 `glibc-abilists@<zig version>`，Windows 为 `mingw-defs@<zig version>`；没有 import 时可以为空。
-
-### 2.4 CIPI：外部符号链接表（v1）
+### 2.2 CIPI：外部符号链接表（v1）
 
 ```
 offset size field
@@ -148,7 +93,7 @@ provider[]:
 - `arch_mask` 与 `min_os` 在加载时校验；不匹配返回 `ImportArchMismatch` / `ImportUnavailable`。
 - `kind=data` 已支持 `stdout`/`errno` 类 external data：编译器为未知外部全局生成 data entry，运行时按 provider/`--lib` 解析地址；`ordinal` 解析在 Windows 已支持。
 
-### 2.5 运行时符号解析顺序
+### 2.3 运行时符号解析顺序
 
 对有 CIPI entry 的函数计划：
 
@@ -161,7 +106,7 @@ provider[]:
 
 没有 CIPI entry 的计划（旧 v1 包或未收录的自定义符号）仍走旧搜索路径。
 
-### 2.6 外部符号索引（构建期生成）
+### 2.4 外部符号索引（构建期生成）
 
 编译器按 target 自动生成 CIPI，只写实际使用的外部符号。符号 → provider 的映射不再来自签入的数据库，而是在构建期由 `compiler/tools/gen_link_index.zig` 从已安装的 Zig 工具链生成，并以二进制表内嵌进 `cinterp-cc`：
 
@@ -396,7 +341,7 @@ offset size field
 `version` 兼容：
 
 - v2：每计划没有 `conv` 字节；
-- v3：每计划包含 `conv` 字节；当前编译器写 v3，loader 同时接受 v2/v3。
+- 每计划包含 `conv` 字节；当前编译器写 v3，loader 只接受 v3。
 
 ### 5.2 计划记录（重复 `plan_count` 次）
 
@@ -482,19 +427,16 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 
 ## 6. 完整示例：`hello.cib`
 
-运行 `./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib --no-auto-link` 后（CIPKG v2，`VERSION=0.1.0`）。下面是一次实际构建的 `xxd -g1` 完整注解；不同编译器版本可能改变寄存器/指令选择，但字段布局不变。该包共 189B：module 83B、plan 10B、meta 61B、import 10B，CIVM `code_len` 为 60B：
+运行 `./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib` 后（CIPKG v3），下面是一次实际构建的 `xxd -g1` 注解；不同编译器版本可能改变寄存器/指令选择，但字段布局不变。该包共 111B：module 83B、plans 10B、imports 0B，CIVM `code_len` 为 60B：
 
 ```
 43 49 50 4b 47        CIPKG
-02                    version 2
-03                    flags = has_target | has_imports
-19 00                 header_size = 25
+03                    version 3
 53 00 00 00           module_len = 83
 0a 00 00 00           plan_len = 10
-3d 00 00 00           meta_len = 61
-0a 00 00 00           import_len = 10
+00 00 00 00           import_len = 0
 
-43 49 56 4d           CIVM 模块（内容与 v1 相同）
+43 49 56 4d           CIVM
 01                    version 1
 01                    arch 1
 01 00                 func_count = 1
@@ -522,41 +464,15 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 01                    abi_id 1 (SysV)
 00 00                 plan_count = 0
 00 00                 reserved
-
-43 49 50 4d           CIPM
-01                    version 1
-1d 00                 header_size = 29
-01                    arch = x86_64
-01                    os = linux
-01                    abi = sysv
-40                    ptr_bits = 64
-01                    endian = little
-00                    flags
-3d 00 00 00 00 00 00 00  features = f80|callback|varargs|auto-link|stdcall (0x3d)
-01 00                 min_runtime = 1
-13 00                 triple_len = 19
-00 00                 link_db_len = 0
-0d 00                 producer_len = 13
-"x86_64-pc-linux-gnu"
-"cinterp 0.1.0"
-
-43 49 50 49           CIPI
-01                    version 1
-00                    flags
-00 00                 entry_count = 0
-00 00                 reserved
 ```
 
-该包没有外部调用，所以 CIPI 只有 10 字节头。带自动链接的包会在 CIPI 中追加 provider 记录；可用 `--dump-imports` 查看，例如：
+该包没有外部调用，所以没有 CIPI section（`import_len=0`）。带自动链接的包会在 CIPI 中追加 provider 记录；可用 `--dump-imports` 查看，例如：
 
 ```
 >>> cinterp-run --dump-target --dump-imports --load-only build/ffi_printf.cib
-target: x86_64-pc-linux-gnu arch=1 os=1 abi=1 ptr=64 endian=1 features=0x3d link_db=glibc-abilists@0.13.0
-import[plan 65535] printf: libc.so.6:printf libm.so.6:printf
+target: unchecked (host)
 import[plan 0] printf: libc.so.6:printf
 ```
-
-（`link_db` 里的 `0.13.0` 是生成索引时使用的 Zig 版本；Windows 包显示 `mingw-defs@0.13.0`。）
 
 ## 7. 检查与验证
 
@@ -567,14 +483,14 @@ xxd -g1 build/hello.cib
 # 查看编译器生成函数/计划/import 摘要
 ./build/cinterp-cc compile examples/ffi/ffi_printf.c -o build/printf.cib --dump --dump-imports
 
-# 只加载/校验，不执行；同时查看目标/import 元数据
+# 只加载/校验，不执行；查看 import 元数据
 ./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib
 
 # 指定入口
 ./runtime/zig-out/bin/cinterp-run build/hello.cib main
 ```
 
-运行时失败始终返回稳定的 `CI_E_*` 类别；Debug 构建把具体错误名（`BadPackage`、`BadPackageMagic`、`BadTargetMagic`、`TargetMismatch`、`BadAbi`、`BadPlan` 等）写入 `ci_vm_last_error`/`ci_process_last_error` 并输出，Release 构建返回空字符串，只保留状态码。CLI 在 Release 下输出 `load failed: error <code>` / `run failed: error <code>`。
+运行时失败始终返回稳定的 `CI_E_*` 类别；Debug 构建把具体错误名（`BadPackage`、`BadPackageMagic`、`BadAbi`、`BadPlan` 等）写入 `ci_vm_last_error`/`ci_process_last_error` 并输出，Release 构建返回空字符串，只保留状态码。CLI 在 Release 下输出 `load failed: error <code>` / `run failed: error <code>`。
 
 ### 7.1 C ABI 错误码
 
@@ -585,8 +501,8 @@ xxd -g1 build/hello.cib
 | -1 | `CI_ERROR` | `errorCode` 的兜底分支：未归类的错误，正常路径不应出现 |
 | -2 | `CI_E_INVALID_ARGUMENT` | `InvalidArgument`、`TooManyArgs` |
 | -3 | `CI_E_OUT_OF_MEMORY` | `OutOfMemory` |
-| -4 | `CI_E_BAD_PACKAGE` | `BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageHeader`、`BadPackageSize`、`BadMagic`、`BadVersion`、`BadArch`、`BadModule`、`BadLocals`、`TooManyFunctions`、`NameTooLong`、`ModuleTooLarge`、`Truncated`、`TrailingBytes`、`BadImportMagic`、`BadImportVersion`、`TooManyImports`、`TooManyProviders` |
-| -5 | `CI_E_TARGET` | `BadTargetMagic`、`BadTargetVersion`、`BadTargetHeader`、`TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`UnsupportedOs`（非 Linux/Windows 运行时）、`UnsupportedLibc`（musl 运行时） |
+| -4 | `CI_E_BAD_PACKAGE` | `BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageSize`、`BadMagic`、`BadVersion`、`BadArch`、`BadModule`、`BadLocals`、`TooManyFunctions`、`NameTooLong`、`ModuleTooLarge`、`Truncated`、`TrailingBytes`、`BadImportMagic`、`BadImportVersion`、`TooManyImports`、`TooManyProviders` |
+| -5 | `CI_E_TARGET` | `UnsupportedLibc`（musl 运行时） |
 | -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`TooManyPlans`、`TooManyLocs`、`BadLocKind` |
 | -7 | `CI_E_LINK` | `SymbolNotFound`、`LibraryNotFound`、`SymbolTooLong`、`PathTooLong`、`TooManyLibraries`、`TooManyNativeTargets` |
 | -8 | `CI_E_ENTRY` | `EntryNotFound` |
@@ -599,12 +515,12 @@ xxd -g1 build/hello.cib
 
 ## 8. 限制与兼容性
 
-- `CIVM` 当前 v1；`CIPKG` 当前 v2（接受 v1）；`CIPL` 当前 v3（接受 v2）；`CIPM`/`CIPI` 当前 v1。
+- `CIVM` 当前 v1；`CIPKG` 当前 v3；`CIPL` 当前 v3；`CIPI` 当前 v1。
 - `CIVM` 函数数上限 512、函数名有效上限 128、模块上限 2097152 字节；槽栈默认/上限 8192（`ci_vm_config.stack_size` 只能下调，`0` 表示默认 8192）、帧 512、线性内存默认 1 MiB（`memory_size=0`；上限 16 MiB，32 字节对齐）。
 - 每个进程最多 64 个 VM（`MAX_PROCESS_VMS`）；第 65 个 `ci_process_load_package` 返回 `ProcessFull`（`CI_E_RESOURCE`）。每个 VM 默认约 2 MiB（VM 记录 + 8192 槽值栈 + 1 MiB 线性内存）。
 - callback trampoline 是进程级固定的 256 个静态槽（不生成可执行内存）：自动 `OP_CREATE_CALLBACK` 槽在 VM 生命周期内保留、跨重复运行复用，VM 销毁/计划重载后退休；显式 `OP_CALLBACK_ACQUIRE` 槽在 `OP_CALLBACK_RELEASE` 后回到可复用集合，未释放的显式槽在 VM 销毁/重载时退休。释放后的旧指针不得再次调用。
 - `CIPL` 计划上限 1024、每计划参数 64、每计划返回 loc 8、每参数 loc 8、名称有效上限 128；FFI arg/stack/ret 缓冲区各 4096 字节（`stack_size` 也受 4096 限制）。
-- CIPM 目标必须匹配运行时；v1 包没有目标 triple，只能依赖 CIPL ABI 和调用方正确选择运行时。macOS/未知 OS 与 musl 运行时在 load 阶段显式返回 `UnsupportedOs`/`UnsupportedLibc`，不会回退到 Linux glibc。
+- 包不携带目标声明；运行时只根据 CIPL ABI id 和当前平台选择引擎，调用方必须保证包与运行时目标匹配。musl 运行时在 load 阶段显式返回 `UnsupportedLibc`，不会回退到 Linux glibc。
 - CIPI 上限 512 entry、每 entry 8 provider、名称/符号 64 字节、版本 32 字节；自动 provider 只允许库名，不允许 CIB 携带任意路径。
 - `CIVM` 函数名、CIPL 计划名、CIPI 名称都按字节计数，不是 Unicode 字符数；超限在解析阶段返回 `NameTooLong`。
 - 不包含校验和/签名；不可信 `.cib` 应在 OS 沙箱中运行。运行时不提供进程内沙箱或 Safe 模式。
