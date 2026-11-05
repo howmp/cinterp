@@ -468,7 +468,17 @@ xxd -g1 build/hello.cib
 
 # 指定入口
 ./runtime/zig-out/bin/cinterp-run build/hello.cib main
+
+# 解析 CIB：头信息 + CIVM 反汇编
+./scripts/cib_dump.py build/hello.cib
+
+# 只打印头信息 / 只反汇编
+./scripts/cib_dump.py --headers build/ffi_callback.cib
+./scripts/cib_dump.py --asm build/ffi_callback.cib
 ```
+
+`cib_dump.py` 支持 CIPKG v3、CIVM、紧凑 CIPL 和 CIPI；会打印 section
+偏移/长度、函数与计划表、import provider，以及每个函数的 opcode 反汇编。
 
 运行时失败始终返回稳定的 `CI_E_*` 类别；Debug 构建把具体错误名（`BadPackage`、`BadPackageMagic`、`BadAbi`、`BadPlan` 等）写入 `ci_vm_last_error`/`ci_process_last_error` 并输出，Release 构建返回空字符串，只保留状态码。CLI 在 Release 下输出 `load failed: error <code>` / `run failed: error <code>`。
 

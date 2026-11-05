@@ -155,5 +155,6 @@ C 嵌入 API、错误码和链接方式见 [`docs/embedding.md`](docs/embedding.
 - [`docs/ir-subset.md`](docs/ir-subset.md) — 支持的 LLVM IR 子集
 - [`docs/zig-frontend.md`](docs/zig-frontend.md) — `zig cc` 前端和编译器 CLI 契约
 - [`docs/ir-parser-differences.md`](docs/ir-parser-differences.md) — IR 前端回归和历史差异
+- [`scripts/cib_dump.py`](scripts/cib_dump.py) — CIB 头信息与 CIVM 反汇编工具
 - [`examples/README.md`](examples/README.md) — 分类示例索引
 - [`tests/manifests/README.md`](tests/manifests/README.md) — 测试套件 manifest 和跳过策略
