@@ -32,7 +32,7 @@ libffi，没有 JIT，也没有可执行内存。本 tarball 是 **@TARGET@** �
 编译并运行随附的示例：
 
 ```sh
-./bin/cinterp compile examples/hello.c -o hello.cib
+./bin/cinterp compile examples/basics/hello.c -o hello.cib
 ./@RUNNER@ hello.cib
 # result: 42
 ```
@@ -46,7 +46,7 @@ ABI：`x86_64-linux`（本 tarball）、`x86_64-windows`、`i686-windows` 或
 `cinterp-cc` 会在每次编译时把内置的 `cinterp_callbacks.h` 写入临时目录并通过
 `zig cc -include` 强制包含。CIB 源码因此可以直接写 `ci_callback_acquire`/
 `ci_callback_release`，不需要 `#include` 或额外 include path；参见
-`examples/ffi_callback_scope.c`。
+`examples/ffi/ffi_callback_scope.c`。
 <!-- /compiler-only -->
 
 <!-- runtime-only -->

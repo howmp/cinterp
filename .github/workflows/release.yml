@@ -99,13 +99,13 @@ jobs:
           PY
 
           # Compiler + runner + --lib smoke through the extracted tarball.
-          "$D/bin/cinterp" compile "$D/examples/hello.c" -o "$WORK/hello.cib"
+          "$D/bin/cinterp" compile "$D/examples/basics/hello.c" -o "$WORK/hello.cib"
           "$D/cinterp-run" "$WORK/hello.cib" 2>&1 | grep -q 'result: 42'
           "$D/cinterp-run" --dump-target --load-only "$WORK/hello.cib" 2>&1 \
             | grep -q 'target:'
-          cc -shared -fPIC -O0 "$D/examples/ffi_structs_helper.c" \
+          cc -shared -fPIC -O0 "$D/examples/ffi/ffi_structs_helper.c" \
             -o "$WORK/libstruct_helpers.so"
-          "$D/bin/cinterp" compile "$D/examples/ffi_structs.c" \
+          "$D/bin/cinterp" compile "$D/examples/ffi/ffi_structs.c" \
             -o "$WORK/ffi_structs.cib"
           "$D/cinterp-run" --lib "$WORK/libstruct_helpers.so" "$WORK/ffi_structs.cib" \
             2>&1 | grep -q 'result: 28'

@@ -14,6 +14,17 @@ compile() {
     "$COMPILER" compile "$@"
 }
 
+example() {
+    case "$1" in
+        hello|arrays|structs|math|float_math|bitfields|longdouble|packed|packed_helper|ptrstruct)
+            echo "examples/basics/$1.c" ;;
+        ffi_*) echo "examples/ffi/$1.c" ;;
+        ifconfig|ps|netstat|route) echo "examples/linux/$1.c" ;;
+        winapi) echo "examples/windows/$1.c" ;;
+        *) echo "examples/$1.c" ;;
+    esac
+}
+
 echo "== runtime unit tests"
 (cd runtime && zig build test --summary all)
 
@@ -27,7 +38,7 @@ run_case() {
     local name="$1"
     local expected="$2"
     local cib="$OUT/$name.cib"
-    compile "examples/$name.c" -o "$cib" >/dev/null
+    compile "$(example "$name")" -o "$cib" >/dev/null
     local out
     out="$("$RUNTIME" "$cib" 2>&1)"
     if ! printf '%s\n' "$out" | grep -Fq "result: $expected"; then
@@ -47,28 +58,28 @@ run_case ffi_printf_longdouble 42
 run_case longdouble 8
 
 echo "== Linux command examples"
-compile examples/ifconfig.c -o "$OUT/ifconfig.cib" >/dev/null
+compile examples/linux/ifconfig.c -o "$OUT/ifconfig.cib" >/dev/null
 ifconfig_out="$("$RUNTIME" "$OUT/ifconfig.cib" 2>&1)"
 printf '%s\n' "$ifconfig_out" | grep -Fq "result: 42"
 printf '%s\n' "$ifconfig_out" | grep -Fq "interfaces:"
 printf '%s\n' "$ifconfig_out" | grep -Fq "lo:"
 echo "OK ifconfig"
 
-compile examples/ps.c -o "$OUT/ps.cib" >/dev/null
+compile examples/linux/ps.c -o "$OUT/ps.cib" >/dev/null
 ps_out="$("$RUNTIME" "$OUT/ps.cib" 2>&1)"
 printf '%s\n' "$ps_out" | grep -Fq "result: 42"
 printf '%s\n' "$ps_out" | grep -Fq "PID"
 printf '%s\n' "$ps_out" | grep -Fq "processes:"
 echo "OK ps"
 
-compile examples/netstat.c -o "$OUT/netstat.cib" >/dev/null
+compile examples/linux/netstat.c -o "$OUT/netstat.cib" >/dev/null
 netstat_out="$("$RUNTIME" "$OUT/netstat.cib" 2>&1)"
 printf '%s\n' "$netstat_out" | grep -Fq "result: 42"
 printf '%s\n' "$netstat_out" | grep -Fq "Active tcp connections"
 printf '%s\n' "$netstat_out" | grep -Fq "Proto"
 echo "OK netstat"
 
-compile examples/route.c -o "$OUT/route.cib" >/dev/null
+compile examples/linux/route.c -o "$OUT/route.cib" >/dev/null
 route_out="$("$RUNTIME" "$OUT/route.cib" 2>&1)"
 printf '%s\n' "$route_out" | grep -Fq "result: 42"
 printf '%s\n' "$route_out" | grep -Fq "IPv4 routes"
@@ -76,109 +87,109 @@ printf '%s\n' "$route_out" | grep -Fq "Destination"
 echo "OK route"
 
 echo "== bitfields"
-compile examples/bitfields.c -o "$OUT/bitfields.cib" >/dev/null
+compile examples/basics/bitfields.c -o "$OUT/bitfields.cib" >/dev/null
 bits_out="$("$RUNTIME" "$OUT/bitfields.cib" 2>&1)"
 printf '%s\n' "$bits_out" | grep -Fq "result: 12"
 echo "OK bitfields -> 12"
 
 echo "== native calls"
-compile examples/ffi_puts.c -o "$OUT/ffi_puts.cib" >/dev/null
+compile examples/ffi/ffi_puts.c -o "$OUT/ffi_puts.cib" >/dev/null
 puts_out="$("$RUNTIME" "$OUT/ffi_puts.cib" 2>&1)"
 printf '%s\n' "$puts_out" | grep -Fq "hello from cinterp"
 printf '%s\n' "$puts_out" | grep -Fq "result: 0"
 echo "OK ffi_puts"
 
-compile examples/ffi_printf.c -o "$OUT/ffi_printf.cib" >/dev/null
+compile examples/ffi/ffi_printf.c -o "$OUT/ffi_printf.cib" >/dev/null
 printf_out="$("$RUNTIME" "$OUT/ffi_printf.cib" 2>&1)"
 printf '%s\n' "$printf_out" | grep -Fq "7 2.5"
 printf '%s\n' "$printf_out" | grep -Fq "result: 0"
 echo "OK ffi_printf"
 
 echo "== struct FFI (byval + sret)"
-cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o "$OUT/libstruct_helpers.so"
-compile examples/ffi_structs.c -o "$OUT/ffi_structs.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_structs_helper.c -o "$OUT/libstruct_helpers.so"
+compile examples/ffi/ffi_structs.c -o "$OUT/ffi_structs.cib" >/dev/null
 struct_out="$("$RUNTIME" --lib "$OUT/libstruct_helpers.so" "$OUT/ffi_structs.cib" 2>&1)"
 printf '%s\n' "$struct_out" | grep -Fq "result: 28"
 echo "OK ffi_structs -> 28"
 
 echo "== register-class struct FFI (S8 + D16)"
-cc -shared -fPIC -O0 examples/ffi_regstruct_helper.c -o "$OUT/libregstruct_helpers.so"
-compile examples/ffi_regstruct.c -o "$OUT/ffi_regstruct.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_regstruct_helper.c -o "$OUT/libregstruct_helpers.so"
+compile examples/ffi/ffi_regstruct.c -o "$OUT/ffi_regstruct.cib" >/dev/null
 reg_out="$("$RUNTIME" --lib "$OUT/libregstruct_helpers.so" "$OUT/ffi_regstruct.cib" 2>&1)"
 printf '%s\n' "$reg_out" | grep -Fq "result: 102"
 echo "OK ffi_regstruct -> 102"
-compile examples/ffi_regstruct_live.c -o "$OUT/ffi_regstruct_live.cib" >/dev/null
+compile examples/ffi/ffi_regstruct_live.c -o "$OUT/ffi_regstruct_live.cib" >/dev/null
 reglive_out="$("$RUNTIME" --lib "$OUT/libregstruct_helpers.so" "$OUT/ffi_regstruct_live.cib" 2>&1)"
 printf '%s\n' "$reglive_out" | grep -Fq "result: 10"
 echo "OK ffi_regstruct_live -> 10"
 
 echo "== mixed-class aggregate FFI (i64 + double)"
-cc -shared -fPIC -O0 examples/ffi_mixedstruct_helper.c -o "$OUT/libmixedstruct_helpers.so"
-compile examples/ffi_mixedstruct.c -o "$OUT/ffi_mixedstruct.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_mixedstruct_helper.c -o "$OUT/libmixedstruct_helpers.so"
+compile examples/ffi/ffi_mixedstruct.c -o "$OUT/ffi_mixedstruct.cib" >/dev/null
 mixed_out="$("$RUNTIME" --lib "$OUT/libmixedstruct_helpers.so" "$OUT/ffi_mixedstruct.cib" 2>&1)"
 printf '%s\n' "$mixed_out" | grep -Fq "result: 11"
 echo "OK ffi_mixedstruct -> 11"
 
 echo "== double arithmetic"
-compile examples/math.c -o "$OUT/math.cib" >/dev/null
+compile examples/basics/math.c -o "$OUT/math.cib" >/dev/null
 math_out="$("$RUNTIME" "$OUT/math.cib" 2>&1)"
 printf '%s\n' "$math_out" | grep -Fq "result: 8"
 echo "OK math -> 8"
 
 echo "== float32 arithmetic"
-compile examples/float_math.c -o "$OUT/float_math.cib" >/dev/null
+compile examples/basics/float_math.c -o "$OUT/float_math.cib" >/dev/null
 float_out="$("$RUNTIME" "$OUT/float_math.cib" 2>&1)"
 printf '%s\n' "$float_out" | grep -Fq "result: 8"
 echo "OK float_math -> 8"
 
 echo "== float32 FFI"
-cc -shared -fPIC -O0 examples/ffi_float_helper.c -o "$OUT/libfloat_helpers.so"
-compile examples/ffi_float.c -o "$OUT/ffi_float.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_float_helper.c -o "$OUT/libfloat_helpers.so"
+compile examples/ffi/ffi_float.c -o "$OUT/ffi_float.cib" >/dev/null
 ffloat_out="$("$RUNTIME" --lib "$OUT/libfloat_helpers.so" "$OUT/ffi_float.cib" 2>&1)"
 printf '%s\n' "$ffloat_out" | grep -Fq "result: 5"
 echo "OK ffi_float -> 5"
 
 echo "== ABI edges / HFA / packed"
-cc -shared -fPIC -O0 examples/ffi_edges_helper.c -o "$OUT/libffi_edges_helper.so"
-compile examples/ffi_edges.c -o "$OUT/ffi_edges.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_edges_helper.c -o "$OUT/libffi_edges_helper.so"
+compile examples/ffi/ffi_edges.c -o "$OUT/ffi_edges.cib" >/dev/null
 edge_out="$("$RUNTIME" --lib "$OUT/libffi_edges_helper.so" "$OUT/ffi_edges.cib" 2>&1)"
 printf '%s\n' "$edge_out" | grep -Fq "result: 55"
 echo "OK ffi_edges -> 55"
-cc -shared -fPIC -O0 examples/ffi_hfa_helper.c -o "$OUT/libffi_hfa_helper.so"
-compile examples/ffi_hfa.c -o "$OUT/ffi_hfa.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_hfa_helper.c -o "$OUT/libffi_hfa_helper.so"
+compile examples/ffi/ffi_hfa.c -o "$OUT/ffi_hfa.cib" >/dev/null
 hfa_out="$("$RUNTIME" --lib "$OUT/libffi_hfa_helper.so" "$OUT/ffi_hfa.cib" 2>&1)"
 printf '%s\n' "$hfa_out" | grep -Fq "result: 120"
 echo "OK ffi_hfa -> 120"
-cc -shared -fPIC -O0 examples/ffi_hfa_stack_helper.c -o "$OUT/libffi_hfa_stack_helper.so"
-compile examples/ffi_hfa_stack.c -o "$OUT/ffi_hfa_stack.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_hfa_stack_helper.c -o "$OUT/libffi_hfa_stack_helper.so"
+compile examples/ffi/ffi_hfa_stack.c -o "$OUT/ffi_hfa_stack.cib" >/dev/null
 hfas_out="$("$RUNTIME" --lib "$OUT/libffi_hfa_stack_helper.so" "$OUT/ffi_hfa_stack.cib" 2>&1)"
 printf '%s\n' "$hfas_out" | grep -Fq "result: 45"
 echo "OK ffi_hfa_stack -> 45"
-cc -shared -fPIC -O0 examples/packed_helper.c -o "$OUT/libpacked_helper.so"
-compile examples/packed.c -o "$OUT/packed.cib" >/dev/null
+cc -shared -fPIC -O0 examples/basics/packed_helper.c -o "$OUT/libpacked_helper.so"
+compile examples/basics/packed.c -o "$OUT/packed.cib" >/dev/null
 packed_out="$("$RUNTIME" --lib "$OUT/libpacked_helper.so" "$OUT/packed.cib" 2>&1)"
 printf '%s\n' "$packed_out" | grep -Fq "result: 7"
 echo "OK packed -> 7"
 
 echo "== long double FFI"
-cc -shared -fPIC -O0 examples/ffi_longdouble_helper.c -o "$OUT/libffi_longdouble_helper.so"
-compile examples/ffi_longdouble.c -o "$OUT/ffi_longdouble.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_longdouble_helper.c -o "$OUT/libffi_longdouble_helper.so"
+compile examples/ffi/ffi_longdouble.c -o "$OUT/ffi_longdouble.cib" >/dev/null
 ld_out="$("$RUNTIME" --lib "$OUT/libffi_longdouble_helper.so" "$OUT/ffi_longdouble.cib" 2>&1)"
 printf '%s\n' "$ld_out" | grep -Fq "result: 60"
 echo "OK ffi_longdouble -> 60"
-compile examples/ffi_longdouble_live.c -o "$OUT/ffi_longdouble_live.cib" >/dev/null
+compile examples/ffi/ffi_longdouble_live.c -o "$OUT/ffi_longdouble_live.cib" >/dev/null
 ldlive_out="$("$RUNTIME" --lib "$OUT/libffi_longdouble_helper.so" "$OUT/ffi_longdouble_live.cib" 2>&1)"
 printf '%s\n' "$ldlive_out" | grep -Fq "result: 15"
 echo "OK ffi_longdouble_live -> 15"
 
 echo "== callback (qsort)"
-compile examples/ffi_qsort.c -o "$OUT/ffi_qsort.cib" >/dev/null
+compile examples/ffi/ffi_qsort.c -o "$OUT/ffi_qsort.cib" >/dev/null
 qsort_out="$("$RUNTIME" "$OUT/ffi_qsort.cib" 2>&1)"
 printf '%s\n' "$qsort_out" | grep -Fq "result: 1"
 echo "OK ffi_qsort -> 1"
 
 echo "== explicit callback acquire/release"
-compile examples/ffi_callback_scope.c -o "$OUT/ffi_callback_scope.cib" >/dev/null
+compile examples/ffi/ffi_callback_scope.c -o "$OUT/ffi_callback_scope.cib" >/dev/null
 cbscope_out="$("$RUNTIME" "$OUT/ffi_callback_scope.cib" 2>&1)"
 printf '%s\n' "$cbscope_out" | grep -Fq "result: 1"
 echo "OK ffi_callback_scope -> 1"
@@ -201,32 +212,32 @@ fi
 echo "OK ffi_qsort --repeat 300 -> 300 x 1"
 
 echo "== callback (stack args + structs)"
-cc -shared -fPIC -O0 examples/ffi_callback_helper.c -o "$OUT/libffi_callback_helper.so"
-compile examples/ffi_callback.c -o "$OUT/ffi_callback.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_callback_helper.c -o "$OUT/libffi_callback_helper.so"
+compile examples/ffi/ffi_callback.c -o "$OUT/ffi_callback.cib" >/dev/null
 cb_out="$("$RUNTIME" --lib "$OUT/libffi_callback_helper.so" "$OUT/ffi_callback.cib" 2>&1)"
 printf '%s\n' "$cb_out" | grep -Fq "result: 256"
 echo "OK ffi_callback -> 256"
-cc -shared -fPIC -O0 examples/ffi_callback_big_helper.c -o "$OUT/libffi_callback_big_helper.so"
-compile examples/ffi_callback_big.c -o "$OUT/ffi_callback_big.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_callback_big_helper.c -o "$OUT/libffi_callback_big_helper.so"
+compile examples/ffi/ffi_callback_big.c -o "$OUT/ffi_callback_big.cib" >/dev/null
 bigcb_out="$("$RUNTIME" --lib "$OUT/libffi_callback_big_helper.so" "$OUT/ffi_callback_big.cib" 2>&1)"
 printf '%s\n' "$bigcb_out" | grep -Fq "result: 246"
 echo "OK ffi_callback_big -> 246"
 
 echo "== callback HFA + long double"
-cc -shared -fPIC -O0 examples/ffi_callback_hfa_helper.c -o "$OUT/libffi_callback_hfa_helper.so"
-compile examples/ffi_callback_hfa.c -o "$OUT/ffi_callback_hfa.cib" >/dev/null
+cc -shared -fPIC -O0 examples/ffi/ffi_callback_hfa_helper.c -o "$OUT/libffi_callback_hfa_helper.so"
+compile examples/ffi/ffi_callback_hfa.c -o "$OUT/ffi_callback_hfa.cib" >/dev/null
 hfacb_out="$("$RUNTIME" --lib "$OUT/libffi_callback_hfa_helper.so" "$OUT/ffi_callback_hfa.cib" 2>&1)"
 printf '%s\n' "$hfacb_out" | grep -Fq "result: 247"
 echo "OK ffi_callback_hfa -> 247"
 
 echo "== ordinary signal callback"
-compile examples/ffi_signal.c -o "$OUT/ffi_signal.cib" >/dev/null
+compile examples/ffi/ffi_signal.c -o "$OUT/ffi_signal.cib" >/dev/null
 signal_out="$("$RUNTIME" "$OUT/ffi_signal.cib" 2>&1)"
 printf '%s\n' "$signal_out" | grep -Fq "result: 42"
 echo "OK ffi_signal -> 42"
 
 echo "== ordinary atexit symbol"
-compile examples/ffi_atexit.c -o "$OUT/ffi_atexit.cib" >/dev/null
+compile examples/ffi/ffi_atexit.c -o "$OUT/ffi_atexit.cib" >/dev/null
 atexit_out="$("$RUNTIME" "$OUT/ffi_atexit.cib" 2>&1)"
 printf '%s\n' "$atexit_out" | grep -Fq "result: 42"
 printf '%s\n' "$atexit_out" | grep -Fq "bye"
@@ -271,7 +282,7 @@ echo "OK unknown symbol"
 echo "OK version"
 
 echo "== CIB v2 target/import metadata"
-compile examples/ffi_printf.c -o "$OUT/ffi_printf.cib" --dump-imports >"$OUT/imports.txt"
+compile examples/ffi/ffi_printf.c -o "$OUT/ffi_printf.cib" --dump-imports >"$OUT/imports.txt"
 grep -Fq "target=x86_64-linux" "$OUT/imports.txt"
 # Linux providers come from the build-time glibc abilists index
 # (compiler/src/libc_defs.zig), so printf must resolve to libc.so.6.
@@ -285,13 +296,13 @@ echo "OK CIPM/CIPI metadata"
 # (compiler/src/win_defs.zig). Compile-only: no Wine needed here, the
 # actual Win64/Win32 execution lives in `make test-winapi`.
 echo "== Windows API import metadata (MinGW defs)"
-compile examples/winapi.c --target x86_64-windows -o "$OUT/winapi64-meta.cib" --dump-imports >"$OUT/winapi64.txt"
+compile examples/windows/winapi.c --target x86_64-windows -o "$OUT/winapi64-meta.cib" --dump-imports >"$OUT/winapi64.txt"
 grep -Fq "target=x86_64-windows" "$OUT/winapi64.txt"
 grep -Fq "import[plan 0] GetTickCount64: kernel32.dll:GetTickCount64" "$OUT/winapi64.txt"
 grep -Fq "import[plan 1] GetSystemMetrics: user32.dll:GetSystemMetrics" "$OUT/winapi64.txt"
 grep -Fq "import[plan 2] GetModuleHandleA: kernel32.dll:GetModuleHandleA" "$OUT/winapi64.txt"
 grep -Fq "import[plan 3] wsprintfA: user32.dll:wsprintfA" "$OUT/winapi64.txt"
-compile examples/winapi.c --target i686-windows -o "$OUT/winapi32-meta.cib" --dump-imports >"$OUT/winapi32.txt"
+compile examples/windows/winapi.c --target i686-windows -o "$OUT/winapi32-meta.cib" --dump-imports >"$OUT/winapi32.txt"
 grep -Fq "target=i686-windows" "$OUT/winapi32.txt"
 # Win32 stdcall decoration stays in the plan name while the provider symbol is
 # the undecorated export.
@@ -300,7 +311,7 @@ grep -Fq '\01_GetSystemMetrics@4: user32.dll:GetSystemMetrics' "$OUT/winapi32.tx
 grep -Fq 'wsprintfA: user32.dll:wsprintfA' "$OUT/winapi32.txt"
 echo "OK Windows API import metadata"
 
-compile examples/hello.c --target x86_64-windows -o "$OUT/hello-win.cib" >/dev/null
+compile examples/basics/hello.c --target x86_64-windows -o "$OUT/hello-win.cib" >/dev/null
 if "$RUNTIME" "$OUT/hello-win.cib" >"$OUT/target-mismatch.txt" 2>&1; then
     echo "FAIL target mismatch was accepted" >&2
     exit 1
@@ -308,12 +319,12 @@ fi
 grep -Fq "TargetMismatch" "$OUT/target-mismatch.txt"
 echo "OK target mismatch rejected"
 
-compile examples/hello.c --cib-version 1 -o "$OUT/hello-v1.cib" >/dev/null
+compile examples/basics/hello.c --cib-version 1 -o "$OUT/hello-v1.cib" >/dev/null
 v1_out="$("$RUNTIME" "$OUT/hello-v1.cib" 2>&1)"
 printf '%s\n' "$v1_out" | grep -Fq "result: 42"
 echo "OK legacy CIPKG v1"
 
-compile examples/ffi_printf.c --no-auto-link -o "$OUT/ffi_printf-nolink.cib" --dump-imports >"$OUT/nolink.txt"
+compile examples/ffi/ffi_printf.c --no-auto-link -o "$OUT/ffi_printf-nolink.cib" --dump-imports >"$OUT/nolink.txt"
 if grep -Fq "import[plan 0]" "$OUT/nolink.txt"; then
     echo "FAIL --no-auto-link still emitted a function plan import" >&2
     exit 1

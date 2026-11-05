@@ -304,7 +304,7 @@ int main(void) {
 }
 ```
 
-`examples/ffi_callback_scope.c` 就是不写 `#include` 的完整示例。
+`examples/ffi/ffi_callback_scope.c` 就是不写 `#include` 的完整示例。
 
 ### 6.2 宏与返回值
 
@@ -403,7 +403,7 @@ ci_callback_pool_stats(&total, &live, &free_slots, &retired);
 ./runtime/zig-out/bin/cinterp-run --repeat 300 build/ffi_qsort.cib
 
 # 显式 acquire/release：300 次运行不应耗尽 256 槽
-./build/cinterp-cc compile examples/ffi_callback_scope.c -o build/ffi_callback_scope.cib
+./build/cinterp-cc compile examples/ffi/ffi_callback_scope.c -o build/ffi_callback_scope.cib
 ./runtime/zig-out/bin/cinterp-run --repeat 300 build/ffi_callback_scope.cib
 
 # 多包 + 并行

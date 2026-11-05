@@ -29,40 +29,40 @@ Python 3.10+。
 make compiler runtime
 
 # compile and run a C file
-./build/cinterp-cc compile examples/hello.c -o build/hello.cib
+./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib
 ./runtime/zig-out/bin/cinterp-run build/hello.cib
 # result: 42
 
-./build/cinterp-cc compile examples/ffi_printf.c -o build/printf.cib
+./build/cinterp-cc compile examples/ffi/ffi_printf.c -o build/printf.cib
 ./runtime/zig-out/bin/cinterp-run build/printf.cib
 # 7 2.5
 # result: 0
 
 # Linux command examples
-./build/cinterp-cc compile examples/ifconfig.c -o build/ifconfig.cib
+./build/cinterp-cc compile examples/linux/ifconfig.c -o build/ifconfig.cib
 ./runtime/zig-out/bin/cinterp-run build/ifconfig.cib
-./build/cinterp-cc compile examples/ps.c -o build/ps.cib
+./build/cinterp-cc compile examples/linux/ps.c -o build/ps.cib
 ./runtime/zig-out/bin/cinterp-run build/ps.cib
-./build/cinterp-cc compile examples/netstat.c -o build/netstat.cib
+./build/cinterp-cc compile examples/linux/netstat.c -o build/netstat.cib
 ./runtime/zig-out/bin/cinterp-run build/netstat.cib
-./build/cinterp-cc compile examples/route.c -o build/route.cib
+./build/cinterp-cc compile examples/linux/route.c -o build/route.cib
 ./runtime/zig-out/bin/cinterp-run build/route.cib
 
 # struct byval + sret FFI through a user shared library
-cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so
-./build/cinterp-cc compile examples/ffi_structs.c -o build/ffi_structs.cib
+cc -shared -fPIC -O0 examples/ffi/ffi_structs_helper.c -o build/libstruct_helpers.so
+./build/cinterp-cc compile examples/ffi/ffi_structs.c -o build/ffi_structs.cib
 ./runtime/zig-out/bin/cinterp-run --lib build/libstruct_helpers.so build/ffi_structs.cib
 # result: 28
 
 # repeat runs on one VM; one VM per package with --run-all; --jobs N for parallel workers
 ./runtime/zig-out/bin/cinterp-run --repeat 3 build/hello.cib
-./build/cinterp-cc compile examples/math.c -o build/math.cib
+./build/cinterp-cc compile examples/basics/math.c -o build/math.cib
 ./runtime/zig-out/bin/cinterp-run --run-all build/hello.cib build/math.cib build/printf.cib
 # per-package headers, then result: 42 / 8 / 0
 ./runtime/zig-out/bin/cinterp-run --run-all --repeat 2 --jobs 2 build/hello.cib build/math.cib
 
 # explicit callback lifetime; the header is force-included by cinterp-cc
-./build/cinterp-cc compile examples/ffi_callback_scope.c -o build/ffi_callback_scope.cib
+./build/cinterp-cc compile examples/ffi/ffi_callback_scope.c -o build/ffi_callback_scope.cib
 ./runtime/zig-out/bin/cinterp-run build/ffi_callback_scope.cib
 # result: 1
 
@@ -74,7 +74,7 @@ cc -shared -fPIC -O0 examples/ffi_structs_helper.c -o build/libstruct_helpers.so
 ./runtime/zig-out/bin/cinterp-run --version
 
 # cross-target packages (build the runtime with the matching -Dtarget)
-./build/cinterp-cc compile examples/hello.c \
+./build/cinterp-cc compile examples/basics/hello.c \
   --target x86_64-windows -o build/hello-win64.cib
 cd runtime && zig build -Dtarget=x86_64-windows-gnu && cd ..
 # make cross-test        # Win64/Win32 via Wine + ARM64 (qemu)
@@ -163,7 +163,7 @@ make test-suites            # c-testsuite + TCC + chibicc + libc-test
 make test-suites-full       # adds GCC torture, CompCert, LLVM subsets
 make test-suites-cross      # csuite + upstream smoke on Win64/Win32/ARM64
 make generate-diff          # YARPGen differential smoke
-make test-winapi            # Windows API imports; needs Wine + cross runtimes
+make test-winapi            # Windows examples via <windows.h>; needs Wine + cross runtimes
 ```
 
 测试并发：`test_suites.py` 的 `--jobs` 默认是 CPU 核数，并且所有选中 suite 的
@@ -278,28 +278,28 @@ API 会在运行时而非加载时失败。自定义库仍然使用 `--lib`，�
 - `main(argc, argv, envp)` 配合 `cinterp-run package -- arg...`
 - VM 层面的 `setjmp`/`longjmp`（包括 Windows 的 `_setjmp3`/`__intrinsic_setjmpex`）
 - 外部 MEMORY 结构体按值传递（`byval`）以及通过 `sret` 返回结构体（见
-  `examples/ffi_structs.c` + `--lib`）
+  `examples/ffi/ffi_structs.c` + `--lib`）
 - 寄存器类的小结构体：强制转换的 8 字节（S8）和 16 字节 double-HFA 聚合返回值（D16），
-  包括 `extractvalue` 和 `fptosi`（见 `examples/ffi_regstruct.c`）
+  包括 `extractvalue` 和 `fptosi`（见 `examples/ffi/ffi_regstruct.c`）
 - 回调：作为 C 函数指针传入的 VM 函数会在 SysV x64、Win64、Win32（cdecl/stdcall/fastcall/
   thiscall）和 AArch64 上变成一个静态 trampoline；dispatcher 重新进入 VM 时不展开外层栈帧（见
-  `examples/ffi_qsort.c`、`examples/ffi_callback*.c`、`examples/ffi_callback_stdcall.c`）
+  `examples/ffi/ffi_qsort.c`、`examples/ffi/ffi_callback*.c`、`examples/ffi/ffi_callback_stdcall.c`）
 - 两个 eightbyte 的混合类别寄存器聚合（例如 `{ i64, double }` 在 RAX + XMM0 中返回；见
-  `examples/ffi_mixedstruct.c`）
+  `examples/ffi/ffi_mixedstruct.c`）
 - float32/double 算术：`fadd`/`fsub`/`fmul`/`fdiv`、`fcmp`、`fpext`/`fptrunc`、
-  `sitofp`/`fptosi`（见 `examples/math.c`、`examples/float_math.c`、
-  `examples/ffi_float.c`）
-- 位域：经由 clang 的整数移位/掩码降低（见 `examples/bitfields.c`）
+  `sitofp`/`fptosi`（见 `examples/basics/math.c`、`examples/basics/float_math.c`、
+  `examples/ffi/ffi_float.c`）
+- 位域：经由 clang 的整数移位/掩码降低（见 `examples/basics/bitfields.c`）
 - 内部精确的 `long double`：x86 目标上为 x86 `f80`，AArch64 上为 IEEE `f128`；
-  算术/比较/转换以及 FFI/varargs 路径（`examples/longdouble.c`、
-  `examples/ffi_longdouble.c`）。Windows CRT 的 `%Lf` 行为与原生 MinGW 运行时一致；
-  `examples/ffi_printf_longdouble.c` 只锁定这一 smoke 行为，不提供精确格式化 shim。
+  算术/比较/转换以及 FFI/varargs 路径（`examples/basics/longdouble.c`、
+  `examples/ffi/ffi_longdouble.c`）。Windows CRT 的 `%Lf` 行为与原生 MinGW 运行时一致；
+  `examples/ffi/ffi_printf_longdouble.c` 只锁定这一 smoke 行为，不提供精确格式化 shim。
 - 内部函数指针、间接调用、`phi`、VLA、packed 结构体、全局指针/函数指针重定位、
-  HFA 3/4 和栈上 HFA（`examples/ffi_hfa.c`、`examples/ffi_hfa_stack.c`）
+  HFA 3/4 和栈上 HFA（`examples/ffi/ffi_hfa.c`、`examples/ffi/ffi_hfa_stack.c`）
 - Win32 `__fastcall`/`__thiscall` 原生/间接调用（fastcall ECX/EDX + 栈；thiscall
-  ECX + 栈，见 `examples/ffi_fastcall.c`、`examples/ffi_thiscall.c`）以及
-  Win32 cdecl/stdcall/fastcall/thiscall 回调（见 `examples/ffi_callback_fastcall.c`、
-  `examples/ffi_callback_thiscall.c`）
+  ECX + 栈，见 `examples/ffi/ffi_fastcall.c`、`examples/ffi/ffi_thiscall.c`）以及
+  Win32 cdecl/stdcall/fastcall/thiscall 回调（见 `examples/ffi/ffi_callback_fastcall.c`、
+  `examples/ffi/ffi_callback_thiscall.c`）
 
 明确不在当前 C/ABI 子集内的：向量类型、`_Complex` 和复杂/空结构体聚合的全局初始化器、
 Win64 的 `__vectorcall`/COM、SysV
@@ -448,14 +448,11 @@ runtime/               Zig VM/runtime (shipped)
   src/ffi/asm/         SysV, Win64, Win32, AArch64 engines and trampolines
   include/cinterp.h    public C ABI header
   tests/               C API smoke/argv/fuzz hosts
-examples/              hello, arrays, structs, puts/printf/snprintf, malloc/free,
-                       MEMORY/register/mixed/HFA struct FFI, qsort/callback,
-                       fastcall/stdcall, math, float32 FFI, bitfields, long double,
-                       Linux ifconfig/ps/netstat/route command examples
+examples/              categorized examples: basics/, ffi/, linux/, windows/,
+                       bof/; Windows examples include <windows.h> directly
 scripts/               Python test/fuzz/benchmark/release harnesses
 packaging/             pkg-config, CMake, Rust binding, release README template
 tests/                 local csuite, manifests and generator known failures
-spike/                 validated ABI/VM/callback feasibility spikes (gitignored)
 ```
 
 ## 文档

@@ -127,7 +127,7 @@ lowering 会拒绝少数已被接受的形式（`frem`、`asm` 调用）。确�
   约定。Windows API 名称（包括诸如 `\01_GetTickCount64@0` 这样的 Win32
   stdcall 修饰名）会解析到 `kernel32.dll`/`user32.dll`/`api-ms-win-*`，并优先
   选择具体 DLL 而不是 API set。`make test-winapi` 会为 Win64/Win32 编译
-  `examples/winapi.c` 并在 Wine 下运行它；当没有任何目标能够实际执行时，它以
+  `examples/windows/*.c` 并在 Wine 下运行它们；当没有任何目标能够实际执行时，它以
   非零码退出（本地只想空跑时可用 `python3 scripts/test_winapi.py --allow-skip`）。
 - Linux（`compiler/src/libc_defs.zig`）：`<zig lib>/libc/glibc/abilists`，
   限定为 `x86_64-linux-gnu` 和 `aarch64-linux-gnu`，从中得到作为导出方的
@@ -144,16 +144,16 @@ lowering 会拒绝少数已被接受的形式（`frem`、`asm` 调用）。确�
 ```bash
 make compiler                                     # builds compiler/zig-out/bin/cinterp-cc
                                                   # and copies it to build/cinterp-cc
-./build/cinterp-cc compile examples/hello.c -o build/hello.cib
+./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib
 ./runtime/zig-out/bin/cinterp-run build/hello.cib
 ```
 
 交叉目标请使用 `--target`：
 
 ```bash
-./build/cinterp-cc compile --target aarch64-linux examples/hello.c -o build/hello-arm64.cib
-./build/cinterp-cc compile --target x86_64-windows examples/hello.c -o build/hello-win64.cib
-./build/cinterp-cc compile --target i686-windows examples/hello.c -o build/hello-win32.cib
+./build/cinterp-cc compile --target aarch64-linux examples/basics/hello.c -o build/hello-arm64.cib
+./build/cinterp-cc compile --target x86_64-windows examples/basics/hello.c -o build/hello-win64.cib
+./build/cinterp-cc compile --target i686-windows examples/basics/hello.c -o build/hello-win32.cib
 ```
 
 ## 测试

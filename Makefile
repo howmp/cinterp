@@ -37,9 +37,9 @@ integration:
 	./scripts/test.sh
 
 lint: compiler runtime
-	build/cinterp-cc compile examples/hello.c -o build/lint-hello.cib
-	build/cinterp-cc compile examples/ffi_qsort.c -o build/lint-qsort.cib
-	build/cinterp-cc compile examples/ffi_callback.c -o build/lint-callback.cib
+	build/cinterp-cc compile examples/basics/hello.c -o build/lint-hello.cib
+	build/cinterp-cc compile examples/ffi/ffi_qsort.c -o build/lint-qsort.cib
+	build/cinterp-cc compile examples/ffi/ffi_callback.c -o build/lint-callback.cib
 	python3 scripts/civm_lint.py build/lint-hello.cib build/lint-qsort.cib build/lint-callback.cib
 
 # Needs Wine and the cross-built runtimes in build/cross (see cross-test).
@@ -54,9 +54,9 @@ test: compiler
 size: runtime compiler
 	mkdir -p build
 	@printf 'runtime ReleaseSmall: '; du -h runtime/zig-out/bin/cinterp-run | cut -f1
-	@build/cinterp-cc compile examples/hello.c -o build/hello.cib >/dev/null
+	@build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib >/dev/null
 	@printf 'hello.cib: '; wc -c < build/hello.cib
-	@build/cinterp-cc compile examples/ffi_qsort.c -o build/ffi_qsort.cib >/dev/null
+	@build/cinterp-cc compile examples/ffi/ffi_qsort.c -o build/ffi_qsort.cib >/dev/null
 	@printf 'ffi_qsort.cib: '; wc -c < build/ffi_qsort.cib
 	@test "$$(stat -c%s runtime/zig-out/bin/cinterp-run)" -lt $(SIZE_BUDGET)
 	@test "$$(stat -c%s build/ffi_qsort.cib)" -lt 4096

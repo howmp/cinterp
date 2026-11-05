@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run examples/winapi.c through cinterp-cc under Wine.
+"""Run the Windows examples through cinterp-cc under Wine.
 
 ``make test-winapi`` needs the cross-built runtimes in ``build/cross`` and a
 working Wine installation. When neither is available the run is a no-op; that
@@ -22,6 +22,12 @@ RUNTIME = {
     "x86_64-windows": (ROOT / "build/cross/cinterp-run64.exe", ROOT / "build/wine64"),
     "i686-windows": (ROOT / "build/cross/cinterp-run32.exe", ROOT / "build/wine32"),
 }
+CASES = (
+    ("winapi.c", 7),
+    ("system_info.c", 7),
+    ("process_info.c", 7),
+    ("file_io.c", 7),
+)
 
 
 def run(cmd: list[str], env: dict | None = None, timeout: int = 30):
@@ -72,19 +78,25 @@ def main() -> int:
         if shutil.which(wine_bin) is None:
             continue
         env = dict(os.environ, WINEPREFIX=str(prefix), WINEDEBUG="-all")
-        cib = Path(f"/tmp/winapi-{target}.cib")
-        comp = run([str(compiler), "compile", "--target", target, "examples/winapi.c", "-o", str(cib)])
-        if comp.returncode != 0:
-            print(f"FAIL {target}: compile: {comp.stderr.strip().splitlines()[-1:]}")
-            failed += 1
-            continue
-        result = run([WINE, str(runner), str(cib)], env)
-        ran += 1
-        if result.returncode != 0 or "result: 7" not in (result.stdout + result.stderr):
-            print(f"FAIL {target}: rc={result.returncode} out={(result.stdout + result.stderr).strip()[-160:]}")
-            failed += 1
-        else:
-            print(f"OK {target}: result: 7")
+        for filename, expected in CASES:
+            stem = Path(filename).stem
+            source = f"examples/windows/{filename}"
+            cib = Path(f"/tmp/cinterp-winapi-{stem}-{target}.cib")
+            comp = run([str(compiler), "compile", "--target", target, source, "-o", str(cib)])
+            if comp.returncode != 0:
+                print(f"FAIL {target}/{filename}: compile: {comp.stderr.strip().splitlines()[-1:]}")
+                failed += 1
+                continue
+            result = run([WINE, str(runner), str(cib)], env)
+            ran += 1
+            if result.returncode != 0 or f"result: {expected}" not in (result.stdout + result.stderr):
+                print(
+                    f"FAIL {target}/{filename}: rc={result.returncode} "
+                    f"out={(result.stdout + result.stderr).strip()[-160:]}"
+                )
+                failed += 1
+            else:
+                print(f"OK {target}/{filename}: result: {expected}")
 
     if failed:
         print(f"winapi: {failed} failure(s)", file=sys.stderr)
@@ -105,7 +117,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    print(f"winapi: {ran} target(s) verified under Wine")
+    print(f"winapi: {ran} example run(s) verified under Wine")
     return 0
 
 

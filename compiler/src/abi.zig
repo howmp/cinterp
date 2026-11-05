@@ -900,7 +900,7 @@ test "Win64 register slots follow the argument position, not the class" {
     try std.testing.expectEqual(@as(u16, 0), plan.stack_size);
 
     // Past slot 3 every argument goes to the stack in order, whether it is an
-    // integer or a float (`c_mix10` from examples/ffi_edges.c).
+    // integer or a float (`c_mix10` from examples/ffi/ffi_edges.c).
     const mix10 = [_][]const u8{ "i64", "double", "i64", "double", "i64", "double", "i64", "double", "i64", "double" };
     const wide = try buildPlanForAbi(allocator, 2, "c_mix10", "i64", &mix10, false, null, 0, &.{}, 8);
     try std.testing.expectEqual(@as(usize, 10), wide.args.len);
@@ -1158,7 +1158,7 @@ test "AAPCS64 HFA stack overflow passes whole arguments on the stack" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // `double c_hfa9(D4 x9)` (examples/ffi_hfa_stack.c): the first two D4s
+    // `double c_hfa9(D4 x9)` (examples/ffi/ffi_hfa_stack.c): the first two D4s
     // fill v0-v7, the remaining seven are passed wholly on the stack at
     // 0, 32, ..., 224.
     const nine = [_][]const u8{"[4 x double]"} ** 9;

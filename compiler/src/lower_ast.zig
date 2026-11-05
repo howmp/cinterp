@@ -2462,7 +2462,7 @@ const fixture_hello = @embedFile("testdata/lower_ast/hello.ll");
 const fixture_structs = @embedFile("testdata/lower_ast/structs.ll");
 const fixture_ffi_qsort = @embedFile("testdata/lower_ast/ffi_qsort.ll");
 const fixture_ffi_callback = @embedFile("testdata/lower_ast/ffi_callback.ll");
-/// Clang 18 IR for `examples/ffi_callback_scope.c` (compiled with the exact
+/// Clang 18 IR for `examples/ffi/ffi_callback_scope.c` (compiled with the exact
 /// `cinterp-cc` flags plus the forced-include callback header): the explicit
 /// `ci_callback_acquire`/`ci_callback_release` macros lower to
 /// `OP_CALLBACK_ACQUIRE`/`OP_CALLBACK_RELEASE` and one `callback:cmp` plan.

@@ -74,9 +74,20 @@ win_runner() {
     esac
 }
 
+example() {
+    case "$1" in
+        hello|arrays|structs|math|float_math|bitfields|longdouble|packed|packed_helper|ptrstruct)
+            echo "examples/basics/$1.c" ;;
+        ffi_*) echo "examples/ffi/$1.c" ;;
+        ifconfig|ps|netstat|route) echo "examples/linux/$1.c" ;;
+        winapi) echo "examples/windows/$1.c" ;;
+        *) echo "examples/$1.c" ;;
+    esac
+}
+
 compile() {
     local target="$1" name="$2"
-    "$CINTERP_CC" compile "examples/$name.c" --target "$target" -o "$OUT/$name-$target.cib" >/dev/null
+    "$CINTERP_CC" compile "$(example "$name")" --target "$target" -o "$OUT/$name-$target.cib" >/dev/null
 }
 
 compile_source() {
@@ -88,7 +99,7 @@ compile_source() {
 # convention, so assert the plan dump instead of only checking the result.
 assert_conv() {
     local name="$1" symbol="$2" want="$3" out line
-    if ! out="$("$CINTERP_CC" compile "examples/$name.c" --target i686-windows \
+    if ! out="$("$CINTERP_CC" compile "$(example "$name")" --target i686-windows \
         -o "$OUT/$name-dump.cib" --dump 2>&1)"; then
         echo "FAIL $name: compile --dump failed" >&2
         printf '%s\n' "$out" >&2
@@ -174,7 +185,7 @@ if want win64; then
     compile_source x86_64-windows tests/csuite/external_data.c external_data
     for h in "${HELPERS[@]}"; do
         zig cc -target x86_64-windows-gnu -shared -O0 -Wl,--export-all-symbols \
-            -o "$OUT/lib${h}64.dll" "examples/$h.c"
+            -o "$OUT/lib${h}64.dll" "$(example "$h")"
     done
     win_run cinterp-run64.exe hello-x86_64-windows.cib "" 42
     win_run cinterp-run64.exe arrays-x86_64-windows.cib "" 10
@@ -212,12 +223,12 @@ if want win32; then
     compile_source i686-windows tests/csuite/external_data.c external_data
     for h in "${HELPERS[@]}"; do
         zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
-            -o "$OUT/lib${h}32.dll" "examples/$h.c"
+            -o "$OUT/lib${h}32.dll" "$(example "$h")"
     done
-    "$CINTERP_CC" compile examples/ffi_stdcall.c --target i686-windows -o "$OUT/ffi_stdcall-i686-windows.cib" >/dev/null
-    zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_stdcall_helper32.dll" examples/ffi_stdcall_helper.c
-    zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_fastcall_helper32.dll" examples/ffi_fastcall_helper.c
-    "$CINTERP_CC" compile examples/ffi_fastcall.c --target i686-windows -o "$OUT/ffi_fastcall-i686-windows.cib" >/dev/null
+    "$CINTERP_CC" compile examples/ffi/ffi_stdcall.c --target i686-windows -o "$OUT/ffi_stdcall-i686-windows.cib" >/dev/null
+    zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_stdcall_helper32.dll" examples/ffi/ffi_stdcall_helper.c
+    zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols -o "$OUT/libffi_fastcall_helper32.dll" examples/ffi/ffi_fastcall_helper.c
+    "$CINTERP_CC" compile examples/ffi/ffi_fastcall.c --target i686-windows -o "$OUT/ffi_fastcall-i686-windows.cib" >/dev/null
     # Plan conv must be 1/2/3 for the Win32 stdcall/fastcall/thiscall plans.
     assert_conv ffi_stdcall c_std_add3 1
     assert_conv ffi_fastcall fast_add 2
@@ -225,36 +236,36 @@ if want win32; then
     assert_conv ffi_callback_fastcall 'callback:' 2
     assert_conv ffi_callback_thiscall 'callback:' 3
     # __stdcall callback (workstream E). The helper calls an int(__stdcall *)(int,int).
-    for required in examples/ffi_callback_stdcall.c examples/ffi_callback_stdcall_helper.c; do
+    for required in examples/ffi/ffi_callback_stdcall.c examples/ffi/ffi_callback_stdcall_helper.c; do
         if [ ! -f "$required" ]; then
             echo "FAIL Win32: missing $required; the stdcall callback case cannot be verified" >&2
             exit 1
         fi
     done
-    "$CINTERP_CC" compile examples/ffi_callback_stdcall.c --target i686-windows \
+    "$CINTERP_CC" compile examples/ffi/ffi_callback_stdcall.c --target i686-windows \
         -o "$OUT/ffi_callback_stdcall-i686-windows.cib" >/dev/null
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
-        -o "$OUT/libffi_callback_stdcall_helper32.dll" examples/ffi_callback_stdcall_helper.c
+        -o "$OUT/libffi_callback_stdcall_helper32.dll" examples/ffi/ffi_callback_stdcall_helper.c
     # __fastcall callback: first two int args arrive in ECX/EDX.
-    for required in examples/ffi_callback_fastcall.c examples/ffi_callback_fastcall_helper.c; do
+    for required in examples/ffi/ffi_callback_fastcall.c examples/ffi/ffi_callback_fastcall_helper.c; do
         if [ ! -f "$required" ]; then
             echo "FAIL Win32: missing $required; the fastcall callback case cannot be verified" >&2
             exit 1
         fi
     done
-    "$CINTERP_CC" compile examples/ffi_callback_fastcall.c --target i686-windows \
+    "$CINTERP_CC" compile examples/ffi/ffi_callback_fastcall.c --target i686-windows \
         -o "$OUT/ffi_callback_fastcall-i686-windows.cib" >/dev/null
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
-        -o "$OUT/libffi_callback_fastcall_helper32.dll" examples/ffi_callback_fastcall_helper.c
+        -o "$OUT/libffi_callback_fastcall_helper32.dll" examples/ffi/ffi_callback_fastcall_helper.c
     # __thiscall native call and callback: first arg in ECX, rest callee-popped stack.
-    "$CINTERP_CC" compile examples/ffi_thiscall.c --target i686-windows \
+    "$CINTERP_CC" compile examples/ffi/ffi_thiscall.c --target i686-windows \
         -o "$OUT/ffi_thiscall-i686-windows.cib" >/dev/null
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
-        -o "$OUT/libffi_thiscall_helper32.dll" examples/ffi_thiscall_helper.c
-    "$CINTERP_CC" compile examples/ffi_callback_thiscall.c --target i686-windows \
+        -o "$OUT/libffi_thiscall_helper32.dll" examples/ffi/ffi_thiscall_helper.c
+    "$CINTERP_CC" compile examples/ffi/ffi_callback_thiscall.c --target i686-windows \
         -o "$OUT/ffi_callback_thiscall-i686-windows.cib" >/dev/null
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
-        -o "$OUT/libffi_callback_thiscall_helper32.dll" examples/ffi_callback_thiscall_helper.c
+        -o "$OUT/libffi_callback_thiscall_helper32.dll" examples/ffi/ffi_callback_thiscall_helper.c
     win_run cinterp-run32.exe hello-i686-windows.cib "" 42
     win_run cinterp-run32.exe arrays-i686-windows.cib "" 10
     win_run cinterp-run32.exe structs-i686-windows.cib "" 34
@@ -294,7 +305,7 @@ if want arm64; then
     cp runtime/zig-out/bin/cinterp-run "$OUT/cinterp-run-arm64"
     for name in "${USUAL[@]}"; do compile aarch64-linux "$name"; done
     for h in "${HELPERS[@]}"; do
-        aarch64-linux-gnu-gcc -shared -fPIC -O0 -o "$OUT/lib${h}-arm64.so" "examples/$h.c"
+        aarch64-linux-gnu-gcc -shared -fPIC -O0 -o "$OUT/lib${h}-arm64.so" "$(example "$h")"
     done
     arm_run() {
         local name="$1" expected="$2" lib="${3:-}" repeat="${4:-1}"

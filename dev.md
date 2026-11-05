@@ -303,7 +303,8 @@ runtime/
   src/ffi/asm/                 # 四个调用引擎 + 四个 callback trampoline
   tests/                       # C API smoke/argv/fuzz host
 
-examples/                      # hello、FFI、HFA、callback、long double、Win32 约定等
+examples/                      # 按类别：basics/、ffi/、linux/、windows/、bof/
+                               # windows 示例直接 include <windows.h>
 docs/                          # 格式、嵌入、多 CIB/线程、兼容性、IR 子集、Zig 前端
 packaging/                     # pkg-config、CMake、Rust binding、release README
 scripts/                       # test/fuzz/differential/release harness
@@ -353,7 +354,7 @@ make check-version        # VERSION 单一来源校验
 - **C/ABI**：`_Complex`、GCC builtins、外部 inline/weak 语义、Win64 `__vectorcall`/COM、SysV `i128`/向量参数、向量类型、内联汇编、`_Atomic`/`_Thread_local` 不支持。
 - **链接**：不支持 CIB-to-CIB 链接、包间导出/依赖；跨包复用需合并源码后重新生成 CIB，或通过 `--lib` 使用普通共享库。
 - **执行模型**：一个 VM 单执行上下文、单 CIB；进程可通过 `ci_process_*` 持有最多 64 个 VM，不同 VM 可并行。无进程内沙箱、无 Safe 模式；不可信输入由宿主隔离。
-- **Windows CRT**：`%Lf` 行为与原生 MinGW 一致，不额外提供格式化 shim；`examples/ffi_printf_longdouble.c` 只锁定 smoke 行为。
+- **Windows CRT**：`%Lf` 行为与原生 MinGW 一致，不额外提供格式化 shim；`examples/ffi/ffi_printf_longdouble.c` 只锁定 smoke 行为。
 - **外部数据符号**：基础 provider（`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*`、Windows `_environ`/`_fmode`/`_tzname` 等）已支持；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 是函数计划。更冷门的数据符号走 provider/fallback。
 
 ## 14. 已知限制与后续方向
@@ -384,7 +385,7 @@ make check-version        # VERSION 单一来源校验
 ### 14.2 已完成项留下的尾巴
 
 - **VM→VM 寄存器聚合返回 ownership**：FFI 宽/多 loc 返回值已改为调用方 VM 临时块，但 VM 内部函数返回的寄存器聚合仍只是指向 callee 线性内存的指针，依赖该区域在下一次分配前未被改写。需要时再单独设计调用点复制或 hidden return pointer 协议。
-- **精确 Windows `%Lf` shim**：本轮 `examples/ffi_printf_longdouble.c` 只锁定当前 MinGW/CRT 的 smoke 行为，没有实现 80-bit `long double` 的精确格式化层。
+- **精确 Windows `%Lf` shim**：本轮 `examples/ffi/ffi_printf_longdouble.c` 只锁定当前 MinGW/CRT 的 smoke 行为，没有实现 80-bit `long double` 的精确格式化层。
 - **更多 external data / 跨 ABI 执行 fuzz**：继续按真实用例扩充 provider；跨 ABI fuzz 目前以 load-only 为主，执行级 fuzz 仍是后续方向。
 
 后续工作仍遵守现有约束：不以放宽运行时上限、修改 expected 或跳过失败用例的方式“修复”。

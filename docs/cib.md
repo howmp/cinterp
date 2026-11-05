@@ -482,7 +482,7 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 
 ## 6. 完整示例：`hello.cib`
 
-运行 `./build/cinterp-cc compile examples/hello.c -o build/hello.cib --no-auto-link` 后（CIPKG v2，`VERSION=0.1.0`）。下面是一次实际构建的 `xxd -g1` 完整注解；不同编译器版本可能改变寄存器/指令选择，但字段布局不变。该包共 189B：module 83B、plan 10B、meta 61B、import 10B，CIVM `code_len` 为 60B：
+运行 `./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib --no-auto-link` 后（CIPKG v2，`VERSION=0.1.0`）。下面是一次实际构建的 `xxd -g1` 完整注解；不同编译器版本可能改变寄存器/指令选择，但字段布局不变。该包共 189B：module 83B、plan 10B、meta 61B、import 10B，CIVM `code_len` 为 60B：
 
 ```
 43 49 50 4b 47        CIPKG
@@ -565,7 +565,7 @@ import[plan 0] printf: libc.so.6:printf
 xxd -g1 build/hello.cib
 
 # 查看编译器生成函数/计划/import 摘要
-./build/cinterp-cc compile examples/ffi_printf.c -o build/printf.cib --dump --dump-imports
+./build/cinterp-cc compile examples/ffi/ffi_printf.c -o build/printf.cib --dump --dump-imports
 
 # 只加载/校验，不执行；同时查看目标/import 元数据
 ./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib
