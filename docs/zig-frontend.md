@@ -3,7 +3,7 @@
 `cinterp-cc` 是唯一的构建期编译器。编译器位于 `compiler/`（不存在
 `compiler-zig/` 目录树），它是一个单独的 Zig 程序：调用 `zig cc` C 前端，
 用带类型的词法分析器/语法分析器/AST 外加一个子集校验器解析得到的 LLVM IR
-文本，并输出 CIVM 字节码、CIPL 计划和 CIPKG v3 trusted 包。
+文本，并输出 CIVM 字节码、CIPL 计划和 CIPKG v4 trusted 包。
 
 IR 前端**只有一个** —— 即 `compiler/src/ir/` 下带类型的 AST：
 

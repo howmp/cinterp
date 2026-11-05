@@ -57,6 +57,10 @@ pub const CompileResult = struct {
     functions: []Function,
     plans: []Plan,
     external_data: [][]const u8,
+    /// Static data image followed by interned scalar constants. It is copied
+    /// into VM linear memory at run start and referenced by ADDR_CONST /
+    /// LOAD_CONST_POOL offsets.
+    const_data: []const u8 = &.{},
 };
 
 fn alignUp(n: u32, a: u32) u32 {

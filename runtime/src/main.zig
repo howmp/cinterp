@@ -20,7 +20,7 @@ const usage =
     \\  --dump-target   print the target of every loaded package
     \\  --dump-imports  print the import plans of every loaded package
     \\  --repeat n      run every package n times (n >= 1) from one VM, fresh image
-    \\  --entry name    entry point for every package and every run (default: main)
+    \\  --entry name    entry alias (only main is supported by CIVM v2)
     \\  --jobs n        run packages on n worker threads (n >= 1, default 1)
     \\  --run-all       every positional before -- is a package (no implicit mode)
     \\  -- arg...       arguments passed to every run; argv[0] stays the package path

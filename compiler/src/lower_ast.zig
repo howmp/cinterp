@@ -44,6 +44,9 @@ pub const GepConstMode = enum {
 
 pub const Options = struct {
     gep_const: GepConstMode = .legacy,
+    /// Preserve historical inline constants/global-install code for lowering
+    /// goldens. Production passes false.
+    legacy_codegen: bool = true,
 };
 
 // --------------------------------------------------------------------- helpers
@@ -736,6 +739,9 @@ const Context = struct {
     abi: u8,
     ptr_size: u32,
     opts: Options,
+    /// Static globals image followed by interned scalar and wide-float constants.
+    const_data: std.ArrayList(u8),
+    const_map: std.AutoHashMap(u128, u32),
 
     fn init(allocator: Allocator, module: *const ast.Module, abi_id: u8, ptr_size: u32, opts: Options) !Context {
         // CIVM holds function indices/plan indices/parameter counts in u16.
@@ -798,6 +804,9 @@ const Context = struct {
         }
         globals.external_names = try external_names.toOwnedSlice();
 
+        var const_data = std.ArrayList(u8).init(allocator);
+        try const_data.appendSlice(globals.data);
+
         return .{
             .allocator = allocator,
             .module = module,
@@ -812,6 +821,8 @@ const Context = struct {
             .abi = abi_id,
             .ptr_size = ptr_size,
             .opts = opts,
+            .const_data = const_data,
+            .const_map = std.AutoHashMap(u128, u32).init(allocator),
         };
     }
 
@@ -848,6 +859,7 @@ pub fn compileWithOptions(allocator: Allocator, module: *const ast.Module, abi_i
         .functions = functions,
         .plans = try ctx.plans.toOwnedSlice(),
         .external_data = ctx.globals.external_names,
+        .const_data = try ctx.const_data.toOwnedSlice(),
     };
 }
 
@@ -928,8 +940,42 @@ const Lowerer = struct {
         try self.func.code.appendSlice(&buf);
     }
     fn emitConst(self: *Lowerer, v: i64) !void {
-        try self.emitU8(op.OP_LOAD_CONST_I64);
-        try self.emitI64(v);
+        if (self.ctx.opts.legacy_codegen) {
+            try self.emitU8(op.OP_LOAD_CONST_I64);
+            try self.emitI64(v);
+            return;
+        }
+        try self.emitConstWidth(@bitCast(v), 8, v < 0);
+    }
+
+    fn emitConstWidth(self: *Lowerer, bits: u64, width: u8, signed: bool) !void {
+        if (width != 1 and width != 2 and width != 4 and width != 8) return error.BadType;
+        const width_code: u2 = switch (width) {
+            1 => 0,
+            2 => 1,
+            4 => 2,
+            8 => 3,
+            else => unreachable,
+        };
+        const key: u128 = @as(u128, bits) |
+            (@as(u128, width) << 64) |
+            (@as(u128, @intFromBool(signed)) << 72);
+        const offset = self.ctx.const_map.get(key) orelse blk: {
+            while (self.ctx.const_data.items.len % width != 0) try self.ctx.const_data.append(0);
+            if (self.ctx.const_data.items.len >= (1 << 28)) return error.ConstPoolTooLarge;
+            const at: u32 = @intCast(self.ctx.const_data.items.len);
+            var bi: u8 = 0;
+            while (bi < width) : (bi += 1) {
+                try self.ctx.const_data.append(@truncate(bits >> @as(u6, @intCast(bi * 8))));
+            }
+            try self.ctx.const_map.put(key, at);
+            break :blk at;
+        };
+        const ref: u32 = offset |
+            (@as(u32, width_code) << 28) |
+            (@as(u32, @intFromBool(signed)) << 30);
+        try self.emitU8(op.OP_LOAD_CONST_POOL);
+        try self.emitU32(ref);
     }
     fn emitLoadSlot(self: *Lowerer, slot: u16) !void {
         try self.emitU8(op.OP_LOAD_LOCAL);
@@ -942,14 +988,34 @@ const Lowerer = struct {
     fn emitF80Const(self: *Lowerer, lit: ast.FloatLiteral) !void {
         var buf = [_]u8{0} ** 10;
         _ = lit.writeLeBytes(&buf);
-        try self.emitU8(op.OP_F80_CONST);
-        try self.func.code.appendSlice(&buf);
+        if (self.ctx.opts.legacy_codegen) {
+            try self.emitU8(op.OP_F80_CONST);
+            try self.func.code.appendSlice(&buf);
+            return;
+        }
+        const offset = try self.internBlob(&buf, 16);
+        try self.emitU8(op.OP_ADDR_CONST);
+        try self.emitU32(offset);
     }
     fn emitF128Const(self: *Lowerer, lit: ast.FloatLiteral) !void {
         var buf = [_]u8{0} ** 16;
         _ = lit.writeLeBytes(&buf);
-        try self.emitU8(op.OP_F128_CONST);
-        try self.func.code.appendSlice(&buf);
+        if (self.ctx.opts.legacy_codegen) {
+            try self.emitU8(op.OP_F128_CONST);
+            try self.func.code.appendSlice(&buf);
+            return;
+        }
+        const offset = try self.internBlob(&buf, 16);
+        try self.emitU8(op.OP_ADDR_CONST);
+        try self.emitU32(offset);
+    }
+
+    fn internBlob(self: *Lowerer, bytes: []const u8, alignment: usize) !u32 {
+        while (self.ctx.const_data.items.len % alignment != 0) try self.ctx.const_data.append(0);
+        if (self.ctx.const_data.items.len > std.math.maxInt(u32)) return error.ConstPoolTooLarge;
+        const at: u32 = @intCast(self.ctx.const_data.items.len);
+        try self.ctx.const_data.appendSlice(bytes);
+        return at;
     }
 
     fn slotFor(self: *Lowerer, name: []const u8) !u16 {
@@ -1037,17 +1103,27 @@ const Lowerer = struct {
                     const d: f64 = @bitCast(@as(u64, @truncate(lit.bits)));
                     const f: f32 = @floatCast(d);
                     const f32_bits: u32 = @bitCast(f);
-                    const wide: u64 = f32_bits;
-                    try self.emitConst(@bitCast(wide));
+                    if (self.ctx.opts.legacy_codegen) {
+                        try self.emitConst(@as(i64, f32_bits));
+                    } else {
+                        try self.emitConstWidth(f32_bits, 4, false);
+                    }
                 } else {
                     const f32_bits: u32 = @truncate(lit.bits);
-                    const wide: u64 = f32_bits;
-                    try self.emitConst(@bitCast(wide));
+                    if (self.ctx.opts.legacy_codegen) {
+                        try self.emitConst(@as(i64, f32_bits));
+                    } else {
+                        try self.emitConstWidth(f32_bits, 4, false);
+                    }
                 }
             },
             .double => {
                 const bits: u64 = @truncate(lit.bits);
-                try self.emitConst(@bitCast(bits));
+                if (self.ctx.opts.legacy_codegen) {
+                    try self.emitConst(@bitCast(bits));
+                } else {
+                    try self.emitConstWidth(bits, 8, false);
+                }
             },
             else => return error.UnsupportedOperand,
         }
@@ -1364,24 +1440,29 @@ const Lowerer = struct {
         self.func.local_count = self.next_slot;
     }
 
-    /// `main` starts by installing the module's static data image.
+    /// `main` applies pointer relocations after the runtime copied the CIPC
+    /// data image into linear memory. The image bytes themselves are no longer
+    /// emitted as instructions.
     fn emitGlobalsInstall(self: *Lowerer) anyerror!void {
-        if (!eql(self.func.name, "main") or self.ctx.globals.data.len == 0) return;
-        const data = self.ctx.globals.data;
-        try self.emitU8(op.OP_SET_MEM_TOP);
-        try self.emitU32(@intCast(data.len));
-        var off: usize = 0;
-        while (off < data.len) : (off += 8) {
-            var chunk: u64 = 0;
-            var i: usize = 0;
-            while (i < 8 and off + i < data.len) : (i += 1) {
-                chunk |= @as(u64, data[off + i]) << @intCast(i * 8);
+        if (!eql(self.func.name, "main")) return;
+        if (self.ctx.opts.legacy_codegen) {
+            const data = self.ctx.globals.data;
+            if (data.len == 0) return;
+            try self.emitU8(op.OP_SET_MEM_TOP);
+            try self.emitU32(@intCast(data.len));
+            var off: usize = 0;
+            while (off < data.len) : (off += 8) {
+                var chunk: u64 = 0;
+                var i: usize = 0;
+                while (i < 8 and off + i < data.len) : (i += 1) {
+                    chunk |= @as(u64, data[off + i]) << @intCast(i * 8);
+                }
+                try self.emitConst(@bitCast(chunk));
+                try self.emitU8(op.OP_ADDR_CONST);
+                try self.emitU32(@intCast(off));
+                try self.emitU8(op.OP_STORE_MEM);
+                try self.emitU8(@intCast(@min(8, data.len - off)));
             }
-            try self.emitConst(@bitCast(chunk));
-            try self.emitU8(op.OP_ADDR_CONST);
-            try self.emitU32(@intCast(off));
-            try self.emitU8(op.OP_STORE_MEM);
-            try self.emitU8(@intCast(@min(8, data.len - off)));
         }
         for (self.ctx.globals.relocs) |reloc| {
             const target = reloc.target;
@@ -2858,8 +2939,8 @@ fn writeResult(out: anytype, abi_id: u8, ptr_size: u32, result: abi.CompileResul
     }
     for (result.plans) |plan| {
         try out.print("plan {s} args={d} retlocs={d} stack={d} sret={d} sse={d} retsize={d} conv={d}\n", .{
-            plan.name, plan.args.len, plan.ret_locs.len, plan.stack_size,
-            @intFromBool(plan.sret), plan.sse_count, plan.ret_size, plan.conv,
+            plan.name,               plan.args.len,  plan.ret_locs.len, plan.stack_size,
+            @intFromBool(plan.sret), plan.sse_count, plan.ret_size,     plan.conv,
         });
         for (plan.args, 0..) |arg, i| {
             try out.print("  arg{d} size={d} align={d} struct={d} locs=", .{

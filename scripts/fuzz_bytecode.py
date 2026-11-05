@@ -27,12 +27,14 @@ OPCODES = [
     0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E,
     0x8F, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98,
     0x99, 0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F, 0xA0, 0xA1, 0xA2,
+    0xA3, 0xA4, 0xA5,
 ]
 
 
 def compile_seed(name: str, out: Path) -> Path:
     package = out / f"{name}.cib"
-    src = str(ROOT / "examples" / f"{name}.c")
+    src_path = next(ROOT.glob(f"examples/**/{name}.c"))
+    src = str(src_path)
     subprocess.run(
         [str(COMPILER), "compile", src, "-o", str(package)],
         check=True, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -41,10 +43,10 @@ def compile_seed(name: str, out: Path) -> Path:
 
 
 def module_span(data: bytes) -> tuple[int, int] | None:
-    if len(data) < 18 or data[:5] != b"CIPKG" or data[5] != 3:
+    if len(data) < 22 or data[:5] != b"CIPKG" or data[5] != 4:
         return None
     module_len = struct.unpack_from("<I", data, 6)[0]
-    start = 18
+    start = 22
     if start + module_len > len(data):
         return None
     return start, module_len
@@ -52,20 +54,14 @@ def module_span(data: bytes) -> tuple[int, int] | None:
 
 def functions(data: bytes, start: int, length: int) -> list[dict]:
     module = data[start : start + length]
-    if len(module) < 10 or module[:4] != b"CIVM":
+    if len(module) < 10 or module[:4] != b"CIVM" or module[4] != 2:
         return []
     count = struct.unpack_from("<H", module, 6)[0]
     pos = 10
     out = []
-    for _ in range(count):
-        if pos + 1 > len(module):
+    for index in range(count):
+        if pos + 8 > len(module):
             break
-        name_len = module[pos]
-        pos += 1
-        if pos + name_len + 8 > len(module):
-            break
-        name = module[pos : pos + name_len]
-        pos += name_len
         params_off = pos
         params = struct.unpack_from("<H", module, pos)[0]
         locals_off = pos + 2
@@ -77,7 +73,7 @@ def functions(data: bytes, start: int, length: int) -> list[dict]:
         if pos > len(module):
             break
         out.append({
-            "name": name.decode("utf-8", "replace"),
+            "index": index,
             "params_off": start + params_off,
             "locals_off": start + locals_off,
             "code_len_off": start + code_len_off,

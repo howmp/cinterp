@@ -45,14 +45,16 @@ const FunctionSpec = struct {
 
 fn buildModule(buf: []u8, funcs: []const FunctionSpec) []const u8 {
     var a = Asm{ .buf = buf };
+    var entry: u16 = 0xFFFF;
+    for (funcs, 0..) |f, i| {
+        if (std.mem.eql(u8, f.name, "main")) entry = @intCast(i);
+    }
     a.bytes("CIVM");
-    a.u8v(1);
+    a.u8v(2);
     a.u8v(1);
     a.u16v(@intCast(funcs.len));
-    a.u16v(0);
+    a.u16v(entry);
     for (funcs) |f| {
-        a.u8v(@intCast(f.name.len));
-        a.bytes(f.name);
         a.u16v(f.params);
         a.u16v(f.locals);
         a.u32v(@intCast(f.code.len));
@@ -66,8 +68,7 @@ fn buildPlans(buf: []u8) []const u8 {
     var a = Asm{ .buf = buf };
     a.u8v(platform.abi_id);
     a.u16v(1);
-    a.u8v("cb".len);
-    a.bytes("cb");
+    a.u16v(0); // name_ref -> "cb"
     a.u8v(0); // args
     a.u8v(1); // rets
     a.u16v(0); // stack
@@ -89,16 +90,27 @@ fn buildEmptyPlans(buf: []u8) []const u8 {
     return a.code();
 }
 
-/// A v3 trusted CIPKG package: 18-byte header, then module/plans.
+/// A minimal CIPC header with no names/data.
+fn buildCipc() [16]u8 {
+    var cipc: [16]u8 = [_]u8{0} ** 16;
+    @memcpy(cipc[0..4], "CIPC");
+    cipc[4] = 1;
+    return cipc;
+}
+
+/// A v4 trusted CIPKG package: 22-byte header, then module/plans/CIPC.
 fn buildPackage(buf: []u8, module: []const u8, plans: []const u8) []const u8 {
     var a = Asm{ .buf = buf };
+    const cipc = buildCipc();
     a.bytes("CIPKG");
-    a.u8v(3);
+    a.u8v(4);
     a.u32v(@intCast(module.len));
     a.u32v(@intCast(plans.len));
     a.u32v(0);
+    a.u32v(cipc.len);
     a.bytes(module);
     a.bytes(plans);
+    a.bytes(&cipc);
     return a.code();
 }
 
@@ -157,17 +169,13 @@ test "CIVM module returns 42" {
     var p: usize = 0;
     @memcpy(module[0..4], "CIVM");
     p = 4;
-    module[p] = 1;
+    module[p] = 2;
     p += 1;
     module[p] = 1;
     p += 1;
     putU16(&module, &p, 1);
     putU16(&module, &p, 0);
 
-    module[p] = 4;
-    p += 1;
-    @memcpy(module[p .. p + 4], "main");
-    p += 4;
     putU16(&module, &p, 0);
     putU16(&module, &p, 0);
     putU32(&module, &p, 10);
@@ -457,7 +465,7 @@ const CallbackFixture = struct {
 
     fn load(self: *const CallbackFixture, machine: *vm.VM) !void {
         try machine.loadModuleBytes(self.module);
-        try machine.loadPlans(self.plans);
+        try machine.loadPlans(self.plans, &.{"cb"});
     }
 };
 
@@ -523,10 +531,10 @@ test "explicit callback acquire/release reuses trampoline slots" {
     try std.testing.expectEqual(@as(u32, 0), retired);
 
     // A release puts the slot back where the next acquire finds it.
-    const first = try machine.runEntry("acquire");
+    const first = try machine.runEntryIndex(3, &.{});
     try std.testing.expect(first != 0);
     try std.testing.expectEqual(@as(i64, 0), try releaseOne(machine, first));
-    const second = try machine.runEntry("acquire");
+    const second = try machine.runEntryIndex(3, &.{});
     try std.testing.expectEqual(first, second);
     try std.testing.expectEqual(@as(i64, 0), try releaseOne(machine, second));
 }
@@ -542,7 +550,7 @@ test "callback release reports busy while a dispatch is still active" {
     defer vm.ci_vm_destroy(machine);
     try fixture.load(machine);
 
-    const addr = try machine.runEntry("acquire");
+    const addr = try machine.runEntryIndex(3, &.{});
     try std.testing.expect(addr != 0);
 
     // Pretend a native dispatcher is inside the callback right now.
@@ -580,7 +588,7 @@ test "unreleased callback slots are retired, released slots are not" {
     {
         const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
         try acquire_fixture.load(machine);
-        try std.testing.expect((try machine.runEntry("acquire")) != 0);
+        try std.testing.expect((try machine.runEntryIndex(3, &.{})) != 0);
         vm.ci_callback_pool_stats(&total, &live, &reusable, &retired);
         try std.testing.expectEqual(@as(u32, 1), live);
         vm.ci_vm_destroy(machine);
@@ -611,8 +619,8 @@ test "unreleased callback slots are retired, released slots are not" {
         const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
         defer vm.ci_vm_destroy(machine);
         try acquire_fixture.load(machine);
-        try std.testing.expect((try machine.runEntry("acquire")) != 0);
-        try machine.loadPlans(acquire_fixture.plans);
+        try std.testing.expect((try machine.runEntryIndex(3, &.{})) != 0);
+        try machine.loadPlans(acquire_fixture.plans, &.{"cb"});
         vm.ci_callback_pool_stats(&total, &live, &reusable, &retired);
         try std.testing.expectEqual(@as(u32, 0), live);
         try std.testing.expectEqual(@as(u32, 2), retired);
@@ -631,7 +639,7 @@ test "a callback while another thread runs the VM fails fast; an idle VM runs it
     defer vm.ci_vm_destroy(machine);
     try fixture.load(machine);
 
-    const addr = try machine.runEntry("acquire");
+    const addr = try machine.runEntryIndex(3, &.{});
     try std.testing.expect(addr != 0);
     const slot = callbackSlotOf(@intCast(addr)).?;
 
@@ -707,14 +715,14 @@ test "retired callback trampoline slots are not reused" {
         const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
         defer vm.ci_vm_destroy(machine);
         try machine.loadModuleBytes(module);
-        try machine.loadPlans(plans);
+        try machine.loadPlans(plans, &.{"cb"});
         try std.testing.expectEqual(@as(i64, 0), try machine.runEntry("main"));
     }
 
     const overflow = vm.ci_vm_create(0) orelse return error.OutOfMemory;
     defer vm.ci_vm_destroy(overflow);
     try overflow.loadModuleBytes(module);
-    try overflow.loadPlans(plans);
+    try overflow.loadPlans(plans, &.{"cb"});
     try std.testing.expectError(error.TooManyCallbacks, overflow.runEntry("main"));
 }
 
@@ -907,8 +915,8 @@ test "a failed run keeps the last successful result" {
     try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
 
     // A run that fails after the fresh-image reset must not clear the result.
-    try std.testing.expectEqual(vm.CI_E_RUNTIME, vm.ci_vm_run(machine, "bad"));
-    try std.testing.expectEqual(vm.CI_E_RUNTIME, vm.ci_vm_last_error_code(machine));
+    try std.testing.expectEqual(vm.CI_E_ENTRY, vm.ci_vm_run(machine, "bad"));
+    try std.testing.expectEqual(vm.CI_E_ENTRY, vm.ci_vm_last_error_code(machine));
     try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
 
     // An unknown entry fails before the reset and must not clear it either.

@@ -84,15 +84,17 @@ int main(int argc, char **argv) {
     free(bad);
     if (ci_vm_run(vm, "main") != CI_OK || ci_vm_result(vm) != 42) return 13;
 
-    /* v3 trusted package: 18-byte header, then module/plans/imports. */
-    if (hello_size < 18 || memcmp(hello, "CIPKG", 5) != 0 || hello[5] != 3) return 30;
+    /* v4 trusted package: 22-byte header, then module/plans/imports/CIPC. */
+    if (hello_size < 22 || memcmp(hello, "CIPKG", 5) != 0 || hello[5] != 4) return 30;
     uint32_t module_len = read_u32(hello + 6);
     uint32_t plan_len = read_u32(hello + 10);
     uint32_t import_len = read_u32(hello + 14);
-    size_t plan_off = 18 + (size_t)module_len;
+    uint32_t const_len = read_u32(hello + 18);
+    size_t plan_off = 22 + (size_t)module_len;
     size_t import_off = plan_off + (size_t)plan_len;
+    size_t const_off = import_off + (size_t)import_len;
     if (plan_len != 0 && plan_len < 3) return 31;
-    if (import_off + (size_t)import_len != hello_size) return 31;
+    if (const_len < 16 || const_off + (size_t)const_len != hello_size) return 31;
 
     unsigned char *broken = malloc(hello_size);
     if (!broken) return 11;

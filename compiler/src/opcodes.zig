@@ -110,3 +110,5 @@ pub const OP_CALLBACK_ACQUIRE: u8 = 0xA3;
 /// (0 = released, negative = unknown/already released/still executing).
 /// Emitted for the compiler builtin `__ci_callback_release`.
 pub const OP_CALLBACK_RELEASE: u8 = 0xA4;
+/// `LOAD_CONST_POOL u32 offset`: push eight bytes from the CIPC data blob.
+pub const OP_LOAD_CONST_POOL: u8 = 0xA5;

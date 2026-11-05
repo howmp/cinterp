@@ -6,6 +6,7 @@ const plan_loader = @import("ffi/plan_loader.zig");
 const platform = @import("ffi/platform.zig");
 const native = @import("ffi/native.zig");
 const link_loader = @import("ffi/link_loader.zig");
+const cipc = @import("ffi/cipc.zig");
 
 const debug_errors = builtin.mode == .Debug;
 
@@ -138,6 +139,9 @@ pub const OP_CALLBACK_ACQUIRE: u8 = 0xA3;
 /// `ci_callback_release`; the C contract is that the pointer is dead after a
 /// successful release, so the reused slot cannot be reached through it.
 pub const OP_CALLBACK_RELEASE: u8 = 0xA4;
+/// `OP_LOAD_CONST_POOL u32 ref`: read a 1/2/4/8-byte constant from CIPC
+/// data (`ref` carries offset, width and signedness).
+pub const OP_LOAD_CONST_POOL: u8 = 0xA5;
 
 fn floatToI64Safe(x: anytype) !i64 {
     const xf: f64 = @floatCast(x);
@@ -219,7 +223,8 @@ pub const Value = extern union {
 };
 
 pub const Function = struct {
-    name: []const u8,
+    /// Kept empty in v2 modules; entry lookup uses `VM.entry_func_index`.
+    name: []const u8 = "",
     param_count: u16,
     local_count: u16,
     code: []const u8,
@@ -543,6 +548,8 @@ pub const VM = struct {
     module_len: usize = 0,
     functions: [MAX_FUNCS]Function = undefined,
     func_count: usize = 0,
+    entry_func_index: u16 = 0xffff,
+    const_pool: ?cipc.Pool = null,
     values: []Value = &.{},
     sp: usize = 0,
     mem: []u8 = &.{},
@@ -635,8 +642,8 @@ pub const VM = struct {
         std.heap.page_allocator.destroy(backup);
     }
 
-    pub fn loadPlans(self: *VM, bytes: []const u8) !void {
-        const new_store = try plan_loader.decode(std.heap.page_allocator, bytes);
+    pub fn loadPlans(self: *VM, bytes: []const u8, names: []const []const u8) !void {
+        const new_store = try plan_loader.decode(std.heap.page_allocator, bytes, names);
         if (new_store.abi_id != platform.abi_id) {
             new_store.deinit(std.heap.page_allocator);
             return error.BadAbi;
@@ -773,28 +780,38 @@ pub const VM = struct {
 
     fn loadPackageInPlace(self: *VM, bytes: []const u8) !void {
         if (!platform.libc_supported) return error.UnsupportedLibc;
-        if (bytes.len < 18) return error.BadPackage;
+        if (bytes.len < 22) return error.BadPackage;
         if (!std.mem.eql(u8, bytes[0..5], "CIPKG")) return error.BadPackageMagic;
-        if (bytes[5] != 3) return error.BadPackageVersion;
+        if (bytes[5] != 4) return error.BadPackageVersion;
         const module_len = readU32At(bytes, 6);
         const plan_len = readU32At(bytes, 10);
         const import_len = readU32At(bytes, 14);
+        const const_len = readU32At(bytes, 18);
         const m: usize = module_len;
         const p: usize = plan_len;
         const im: usize = import_len;
-        if (18 + m + p + im != bytes.len) return error.BadPackageSize;
-        const import_bytes = bytes[18 + m + p ..];
-        const imports = try link_loader.decodeImports(import_bytes);
-        try self.loadModuleBytesInPlace(bytes[18 .. 18 + m]);
-        if (p != 0) try self.loadPlans(bytes[18 + m .. 18 + m + p]);
+        const cm: usize = const_len;
+        if (22 + m + p + im + cm != bytes.len) return error.BadPackageSize;
+        const import_bytes = bytes[22 + m + p .. 22 + m + p + im];
+        const const_bytes = bytes[22 + m + p + im ..];
+        const pool = try cipc.Pool.parse(std.heap.page_allocator, const_bytes);
+        errdefer {
+            var p2 = pool;
+            p2.deinit(std.heap.page_allocator);
+        }
+        const imports = try link_loader.decodeImports(import_bytes, pool.names);
+        try self.loadModuleBytesInPlace(bytes[22 .. 22 + m]);
+        if (p != 0) try self.loadPlans(bytes[22 + m .. 22 + m + p], pool.names);
         try self.validateImports(&imports);
+        if (self.const_pool) |*old| old.deinit(std.heap.page_allocator);
+        self.const_pool = pool;
         self.imports = imports;
     }
 
     pub fn loadPackage(self: *VM, bytes: []const u8) !void {
         // Validate the complete package in a scratch VM before touching this
-        // VM. The scratch VM owns the new plan store and module buffer; only a
-        // validated package is transferred.
+        // VM. The scratch VM owns the new plan store, module buffer and CIPC
+        // pool; only a validated package is transferred.
         const scratch = try std.heap.page_allocator.create(VM);
         initMachine(scratch);
         scratch.loadPackageInPlace(bytes) catch |err| {
@@ -806,9 +823,13 @@ pub const VM = struct {
 
         self.freePlans();
         const old_module = self.module_buf;
+        if (self.const_pool) |*old_pool| old_pool.deinit(std.heap.page_allocator);
 
         self.module_buf = scratch.module_buf;
         self.module_len = scratch.module_len;
+        self.const_pool = scratch.const_pool;
+        scratch.const_pool = null;
+        self.entry_func_index = scratch.entry_func_index;
         @memcpy(self.functions[0..scratch.func_count], scratch.functions[0..scratch.func_count]);
         self.func_count = scratch.func_count;
         self.plan_store = scratch.plan_store;
@@ -822,6 +843,7 @@ pub const VM = struct {
         scratch.module_buf = &.{};
         scratch.module_len = 0;
         scratch.func_count = 0;
+        scratch.entry_func_index = 0xffff;
         std.heap.page_allocator.destroy(scratch);
         if (old_module.len > 0) std.heap.page_allocator.free(old_module);
     }
@@ -847,19 +869,6 @@ pub const VM = struct {
                 return error.BadImportPlan;
             if (entry.provider_count == 0 and (entry.flags & 1) != 0)
                 return error.BadImportProvider;
-            if (entry.arch_mask != 0) {
-                const bit: u8 = switch (platform.arch_id) {
-                    1 => 1,
-                    2 => 2,
-                    3 => 4,
-                    else => 0,
-                };
-                if ((entry.arch_mask & bit) == 0) return error.ImportArchMismatch;
-            }
-            if (entry.min_os != 0 and platform.os_id == 2) {
-                const current = native.windowsVersion();
-                if (current != 0 and current < entry.min_os) return error.ImportUnavailable;
-            }
         }
     }
 
@@ -1154,8 +1163,13 @@ pub const VM = struct {
             std.heap.page_allocator.free(self.module_buf);
             self.module_buf = &.{};
         }
+        if (self.const_pool) |*pool| {
+            pool.deinit(std.heap.page_allocator);
+            self.const_pool = null;
+        }
         self.module_len = 0;
         self.func_count = 0;
+        self.entry_func_index = 0xffff;
     }
 
     fn ensureRuntimeBuffers(self: *VM) !void {
@@ -1183,28 +1197,25 @@ pub const VM = struct {
         const magic = try r.take(4);
         if (!std.mem.eql(u8, magic, "CIVM")) return error.BadMagic;
         const version = try r.readU8();
-        if (version != 1) return error.BadVersion;
+        if (version != 2) return error.BadVersion;
         const arch = try r.readU8();
         if (arch != 1) return error.BadArch;
         const count = try r.readU16();
-        _ = try r.readU16();
+        const entry = try r.readU16();
         const n: usize = count;
         if (n > MAX_FUNCS) return error.TooManyFunctions;
+        if (entry != 0xffff and entry >= count) return error.BadFunction;
         self.func_count = n;
+        self.entry_func_index = entry;
 
         var i: usize = 0;
         while (i < n) : (i += 1) {
-            const name_len = try r.readU8();
-            const nl: usize = name_len;
-            if (nl > MAX_NAME) return error.NameTooLong;
-            const name = try r.take(nl);
             const params = try r.readU16();
             const locals = try r.readU16();
             const code_len = try r.readU32();
             if (locals < params) return error.BadLocals;
             const code = try r.take(code_len);
             self.functions[i] = .{
-                .name = name,
                 .param_count = params,
                 .local_count = locals,
                 .code = code,
@@ -1219,17 +1230,25 @@ pub const VM = struct {
     }
 
     pub fn runEntryArgs(self: *VM, name: []const u8, cargs: []const []const u8) !i64 {
+        if (!std.mem.eql(u8, name, "main")) return error.EntryNotFound;
+        return self.runEntryIndex(self.entry_func_index, cargs);
+    }
+
+    pub fn runEntryIndex(self: *VM, index: u16, cargs: []const []const u8) !i64 {
         try self.ensureRuntimeBuffers();
-        var fi: usize = 0;
-        while (fi < self.func_count) : (fi += 1) {
-            if (std.mem.eql(u8, self.functions[fi].name, name)) break;
-        }
-        if (fi == self.func_count) return error.EntryNotFound;
+        if (index == 0xffff) return error.EntryNotFound;
+        const fi: usize = index;
+        if (fi >= self.func_count) return error.EntryNotFound;
 
         // Every run starts from a fresh image. `result` is deliberately not
         // reset here: `ci_vm_result` reports the last *successful* run, so a
         // run that fails must leave the previous value in place.
         self.resetRunImage();
+        if (self.const_pool) |pool| {
+            if (pool.data.len > self.mem.len) return error.OutOfMemory;
+            @memcpy(self.mem[0..pool.data.len], pool.data);
+            self.mem_top = pool.data.len;
+        }
 
         const entry_fn = self.functions[fi];
         const entry_locals: usize = entry_fn.local_count;
@@ -1403,6 +1422,27 @@ pub const VM = struct {
                 OP_LOAD_CONST_I64 => {
                     const v = try readI64(code, &ip);
                     try self.push(.{ .i = v });
+                },
+                OP_LOAD_CONST_POOL => {
+                    const ref = try readU32(code, &ip);
+                    const pool = self.const_pool orelse return error.BadAddress;
+                    const width_code = (ref >> 28) & 0x3;
+                    const width: usize = @as(usize, 1) << @intCast(width_code);
+                    const signed = (ref & (1 << 30)) != 0;
+                    if ((ref & (1 << 31)) != 0) return error.BadOpcode;
+                    const o: usize = ref & 0x0FFFFFFF;
+                    if (o + width > pool.data.len or o + width > self.mem.len)
+                        return error.BadAddress;
+                    var bits: u64 = 0;
+                    var bi: usize = 0;
+                    while (bi < width) : (bi += 1) {
+                        bits |= @as(u64, self.mem[o + bi]) << @as(u6, @intCast(bi * 8));
+                    }
+                    if (signed and width < 8) {
+                        const sign_bit = @as(u64, 1) << @as(u6, @intCast(width * 8 - 1));
+                        if ((bits & sign_bit) != 0) bits |= ~((@as(u64, 1) << @as(u6, @intCast(width * 8))) - 1);
+                    }
+                    try self.push(.{ .i = @bitCast(bits) });
                 },
                 OP_ADD => {
                     const b = try self.pop();
@@ -2897,6 +2937,12 @@ pub fn errorCode(err: anyerror) c_int {
         error.BadImportVersion,
         error.TooManyImports,
         error.TooManyProviders,
+        error.BadPool,
+        error.BadPoolVersion,
+        error.BadPoolName,
+        error.TruncatedPool,
+        error.TrailingPool,
+        error.BadConstIndex,
         => CI_E_BAD_PACKAGE,
         error.UnsupportedLibc => CI_E_TARGET,
         error.NoPlans,
@@ -3044,6 +3090,7 @@ fn destroyVm(m: *VM) void {
     callback_mutex.unlock();
     m.freePlans();
     if (m.module_buf.len > 0) std.heap.page_allocator.free(m.module_buf);
+    if (m.const_pool) |*pool| pool.deinit(std.heap.page_allocator);
     if (m.values.len > 0) std.heap.page_allocator.free(m.values);
     if (m.mem.len > 0) std.heap.page_allocator.free(m.mem);
     if (m.run_state) |state| std.heap.page_allocator.destroy(state);
@@ -3143,7 +3190,7 @@ pub export fn ci_vm_load_plans(machine: ?*VM, data: [*]const u8, size: usize) c_
     if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);
     if (beginVmMutation(m)) |status| return status;
     defer endVmMutation(m);
-    m.loadPlans(data[0..size]) catch |err| return fail(m, err);
+    m.loadPlans(data[0..size], &.{}) catch |err| return fail(m, err);
     m.clearError();
     return CI_OK;
 }

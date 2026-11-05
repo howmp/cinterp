@@ -5,6 +5,7 @@ const lower_ast = @import("lower_ast.zig");
 const ir = @import("ir/parser.zig");
 const verify = @import("ir/verify.zig");
 const imports = @import("imports.zig");
+const cipc = @import("cipc.zig");
 const libc_defs = @import("libc_defs.zig");
 const link_wrappers = @import("link_wrappers.zig");
 const win_defs = @import("win_defs.zig");
@@ -108,7 +109,7 @@ fn limitMessage(err: LimitError) []const u8 {
 fn moduleByteLen(functions: []const abi.Function) usize {
     var total: usize = 10;
     for (functions) |func| {
-        total += 1 + func.name.len + 2 + 2 + 4 + func.code.items.len;
+        total += 2 + 2 + 4 + func.code.items.len;
     }
     return total;
 }
@@ -188,18 +189,17 @@ fn archMask(arch: u8) u8 {
     };
 }
 
-fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]u8 {
+fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8, names: *cipc.NamePool) ![]u8 {
     if (plans.len == 0) return allocator.alloc(u8, 0);
     if (plans.len > std.math.maxInt(u16)) return error.TooManyPlans;
     var out = std.ArrayList(u8).init(allocator);
     try out.append(abi_id);
     try writeU16(&out, @intCast(plans.len));
     for (plans) |plan| {
-        if (plan.name.len > std.math.maxInt(u8)) return error.NameTooLong;
+        if (plan.name.len > Limits.name) return error.NameTooLong;
         if (plan.args.len > std.math.maxInt(u8) or plan.ret_locs.len > std.math.maxInt(u8)) return error.TooManyLocs;
         if (plan.sse_count > 15 or plan.conv > 3) return error.TooManyLocs;
-        try out.append(@intCast(plan.name.len));
-        try out.appendSlice(plan.name);
+        try writeU16(&out, try names.ref(plan.name));
         try out.append(@intCast(plan.args.len));
         try out.append(@intCast(plan.ret_locs.len));
         try writeU16(&out, plan.stack_size);
@@ -361,17 +361,21 @@ fn dumpImports(writer: anytype, table: *const imports.Table) !void {
 
 fn moduleSerialize(allocator: Allocator, functions: []const abi.Function) ![]u8 {
     if (functions.len > std.math.maxInt(u16)) return error.TooManyFunctions;
+    var entry_index: u16 = 0xFFFF;
+    for (functions, 0..) |func, index| {
+        if (std.mem.eql(u8, func.name, "main")) {
+            entry_index = @intCast(index);
+            break;
+        }
+    }
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIVM");
-    try out.append(1);
+    try out.append(2);
     try out.append(1);
     try writeU16(&out, @intCast(functions.len));
-    try writeU16(&out, 0);
+    try writeU16(&out, entry_index);
     for (functions) |func| {
-        if (func.name.len > std.math.maxInt(u8)) return error.NameTooLong;
         if (func.code.items.len > std.math.maxInt(u32)) return error.FunctionCodeTooLarge;
-        try out.append(@intCast(func.name.len));
-        try out.appendSlice(func.name);
         try writeU16(&out, func.param_count);
         try writeU16(&out, func.local_count);
         try writeU32(&out, @intCast(func.code.items.len));
@@ -385,20 +389,24 @@ fn packageSerialize(
     module: []const u8,
     plans: []const u8,
     import_bytes: []const u8,
+    const_bytes: []const u8,
 ) ![]u8 {
     // CIPKG lengths are u32; every section is bounded by validateLimits, but
     // guard the narrowing casts locally as well.
     if (module.len > std.math.maxInt(u32) or plans.len > std.math.maxInt(u32) or
-        import_bytes.len > std.math.maxInt(u32)) return error.PackageTooLarge;
+        import_bytes.len > std.math.maxInt(u32) or const_bytes.len > std.math.maxInt(u32))
+        return error.PackageTooLarge;
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIPKG");
-    try out.append(3);
+    try out.append(4);
     try writeU32(&out, @intCast(module.len));
     try writeU32(&out, @intCast(plans.len));
     try writeU32(&out, @intCast(import_bytes.len));
+    try writeU32(&out, @intCast(const_bytes.len));
     try out.appendSlice(module);
     try out.appendSlice(plans);
     try out.appendSlice(import_bytes);
+    try out.appendSlice(const_bytes);
     return out.toOwnedSlice();
 }
 
@@ -460,7 +468,9 @@ fn lowerModule(allocator: Allocator, ir_text: []const u8, opts: Options) !abi.Co
         std.debug.print("IR target verification failed: {s}\n", .{@errorName(e)});
         return error.IrTargetMismatch;
     };
-    return lower_ast.compile(allocator, &module, opts.target.abi, opts.target.ptr_bits / 8);
+    return lower_ast.compileWithOptions(allocator, &module, opts.target.abi, opts.target.ptr_bits / 8, .{
+        .legacy_codegen = false,
+    });
 }
 
 /// Remove the per-compile temporary IR file and force-included header unless
@@ -638,17 +648,21 @@ pub fn main() !void {
     };
 
     const module = try moduleSerialize(allocator, result.functions);
-    const plans = try serializePlans(allocator, result.plans, target.abi);
-    const import_bytes = try import_table.serialize(allocator);
-    const package = try packageSerialize(allocator, module, plans, import_bytes);
+    var names = cipc.NamePool.init(allocator);
+    defer names.deinit();
+    const plans = try serializePlans(allocator, result.plans, target.abi, &names);
+    try import_table.internNames(&names);
+    const const_bytes = try cipc.serialize(allocator, &names, result.const_data);
+    const import_bytes = try import_table.serialize(allocator, &names);
+    const package = try packageSerialize(allocator, module, plans, import_bytes, const_bytes);
     const file = try std.fs.cwd().createFile(out, .{});
     defer file.close();
     try file.writeAll(package);
 
     const stdout = std.io.getStdOut().writer();
     try stdout.print(
-        "{s}: {d}B module, {d}B plans, {d} functions, {d} external plans, target={s}, cib=v3, imports={d}, cc=zig\n",
-        .{ out, module.len, plans.len, result.functions.len, result.plans.len, target.name, import_table.count() },
+        "{s}: {d}B module, {d}B plans, {d}B const, {d} functions, {d} external plans, target={s}, cib=v4, imports={d}, cc=zig\n",
+        .{ out, module.len, plans.len, const_bytes.len, result.functions.len, result.plans.len, target.name, import_table.count() },
     );
     if (dump) {
         for (result.functions) |func| {
@@ -716,17 +730,18 @@ test "embedded callback header declares the builtins and macros" {
     try std.testing.expect(std.mem.indexOf(u8, callbacks_header, "#ifndef CINTERP_CALLBACKS_H") != null);
 }
 
-test "package v3 uses the 18-byte trusted header" {
+test "package v4 uses the 22-byte trusted header" {
     const module = "CIVM";
     const plans = "CIPL";
-    const package = try packageSerialize(std.testing.allocator, module, plans, "");
+    const package = try packageSerialize(std.testing.allocator, module, plans, "", "");
     defer std.testing.allocator.free(package);
     try std.testing.expectEqualSlices(u8, "CIPKG", package[0..5]);
-    try std.testing.expectEqual(@as(u8, 3), package[5]);
+    try std.testing.expectEqual(@as(u8, 4), package[5]);
     try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, package[6..10], .little));
     try std.testing.expectEqual(@as(u32, 4), std.mem.readInt(u32, package[10..14], .little));
     try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, package[14..18], .little));
-    try std.testing.expectEqual(@as(usize, 26), package.len);
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, package[18..22], .little));
+    try std.testing.expectEqual(@as(usize, 30), package.len);
 }
 
 test "lowerModule parses and lowers IR through the AST frontend" {
@@ -756,8 +771,7 @@ test "lowerModule parses and lowers IR through the AST frontend" {
     // (32-bit truncated) return.
     const op = @import("opcodes.zig");
     const code = result.functions[0].code.items;
-    try std.testing.expectEqual(@as(u8, op.OP_LOAD_CONST_I64), code[0]);
-    try std.testing.expectEqual(@as(i64, 42), std.mem.readInt(i64, code[1..9], .little));
+    try std.testing.expectEqual(@as(u8, op.OP_LOAD_CONST_POOL), code[0]);
     try std.testing.expectEqual(@as(u8, op.OP_RET), code[code.len - 1]);
 }
 
@@ -788,9 +802,9 @@ test "moduleByteLen matches moduleSerialize and a small package validates" {
     defer funcs[0].code.deinit();
     const result = abi.CompileResult{ .functions = &funcs, .plans = &.{}, .external_data = &.{} };
 
-    // 10-byte CIVM header + u8 len + "main" + 2+2 counts + u32 code len.
+    // 10-byte CIVM v2 header + 2+2 counts + u32 code len.
     const expected = moduleByteLen(result.functions);
-    try std.testing.expectEqual(@as(usize, 23), expected);
+    try std.testing.expectEqual(@as(usize, 18), expected);
     const bytes = try moduleSerialize(std.testing.allocator, result.functions);
     defer std.testing.allocator.free(bytes);
     try std.testing.expectEqual(expected, bytes.len);

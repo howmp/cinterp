@@ -1,7 +1,7 @@
 # 版本与兼容性策略
 
 本文记录 cinterp 当前的版本和二进制格式。项目尚未正式发布，运行时只接受当前
-`CIPKG` v3 trusted 格式；旧包格式和迁移路径不保留。
+`CIPKG` v4 trusted 格式；旧包格式和迁移路径不保留。
 
 ## 单一版本源
 
@@ -19,13 +19,14 @@
 
 | 组件 | 版本 | 写入方 | 读取方 |
 | --- | ---: | --- | --- |
-| CIPKG 包 | 3（trusted） | `cinterp-cc` | 运行时只读 3 |
-| CIVM 字节码模块 | 1 | 编译器 | 运行时只读 1 |
-| CIPL FFI 计划表 | 3 | 编译器 | 运行时只读 3 |
-| CIPI 导入表 | 1 | 编译器 | 运行时只读 1 |
+| CIPKG 包 | 4（trusted） | `cinterp-cc` | 运行时只读 4 |
+| CIVM 字节码模块 | 2 | 编译器 | 运行时只读 2 |
+| CIPL FFI 计划表 | 4 | 编译器 | 运行时只读 4 |
+| CIPI 导入表 | 2 | 编译器 | 运行时只读 2 |
+| CIPC 常量/名称池 | 1 | 编译器 | 运行时只读 1 |
 | C ABI | 2（`CI_ABI_VERSION`） | `cinterp.h` / `libcinterp` | 嵌入方 |
 
-`CIPKG` v3 只包含 18 字节头、CIVM、CIPL 和 CIPI，不携带目标声明。包必须由与
+`CIPKG` v4 只包含 22 字节头、CIVM、CIPL、CIPI 和 CIPC，不携带目标声明。包必须由与
 编译目标匹配的运行时加载；运行时保留 CIPL `abi_id` 检查，用于拒绝明显的 ABI 混用。
 
 ## C ABI
@@ -50,7 +51,7 @@
 
 ## 编译器与运行时
 
-- v3 包不记录 `producer`、`triple` 或 `link_db`；运行时不做目标声明校验。
+- v4 包不记录 `producer`、`triple` 或 `link_db`；运行时不做目标声明校验。
 - 不支持的目标（macOS、musl、32 位 Linux、Windows ARM64 等）在编译或加载阶段显式拒绝，
   不得静默回退到 Linux。
 - 包格式或 C ABI 发生不兼容变化时，直接更新版本和文档；当前不提供旧格式读取或迁移路径。

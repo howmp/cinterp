@@ -4,6 +4,7 @@
 //! same provider bindings that are written into the package.
 
 const std = @import("std");
+const cipc = @import("cipc.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -57,54 +58,52 @@ pub const Table = struct {
         return self.entries.items.len;
     }
 
-    pub fn serialize(self: *const Table, allocator: Allocator) ![]u8 {
+    /// Add every string that the CIPI writer will reference to the CIPC name
+    /// pool. Must be called before `cipc.serialize`.
+    pub fn internNames(self: *const Table, names: *cipc.NamePool) !void {
+        for (self.entries.items) |entry| {
+            if (entry.kind != 0) _ = try names.ref(entry.name);
+            for (entry.providers) |provider| {
+                if (provider.lib.len > 0) _ = try names.ref(provider.lib);
+                if (provider.symbol.len > 0 and !std.mem.eql(u8, provider.symbol, entry.name)) {
+                    _ = try names.ref(provider.symbol);
+                }
+            }
+        }
+    }
+
+    pub fn serialize(self: *const Table, allocator: Allocator, names: *const cipc.NamePool) ![]u8 {
         if (self.entries.items.len > MAX_IMPORTS) return error.TooManyImports;
-        // An empty CIPI section is valid and costs no bytes; the runtime's
-        // decodeImports already treats a zero-length section as empty.
         if (self.entries.items.len == 0) return allocator.alloc(u8, 0);
         var out = std.ArrayList(u8).init(allocator);
         errdefer out.deinit();
-        try out.appendSlice("CIPI");
-        try out.append(1);
-        try out.append(0);
         try writeU16(&out, @intCast(self.entries.items.len));
-        try writeU16(&out, 0);
         for (self.entries.items) |entry| {
             if (entry.name.len > MAX_IMPORT_NAME) return error.NameTooLong;
             if (entry.providers.len > MAX_PROVIDERS) return error.TooManyProviders;
             try writeU16(&out, entry.plan_index);
             try out.append(entry.kind);
             try out.append(entry.flags);
-            try out.append(entry.call_conv);
-            try out.append(entry.arch_mask);
-            try writeU16(&out, entry.min_os);
-            // Function entries reuse the CIPL plan name; only data entries
-            // need a name in CIPI.
+            // Function entries derive the name from CIPL; data entries need a
+            // real name reference.
             if (entry.kind == 0) {
-                try out.append(0);
+                try writeU16(&out, 0xFFFF);
             } else {
-                try out.append(@intCast(entry.name.len));
-                try out.appendSlice(entry.name);
+                try writeU16(&out, names.get(entry.name) orelse return error.NameNotInterned);
             }
             try out.append(@intCast(entry.providers.len));
             for (entry.providers) |provider| {
-                if (provider.lib.len > MAX_PROVIDER_NAME or
-                    provider.symbol.len > MAX_SYMBOL or
-                    provider.version.len > MAX_VERSION) return error.NameTooLong;
-                try out.append(provider.kind);
-                try out.append(@intCast(provider.lib.len));
-                try out.appendSlice(provider.lib);
-                // When the provider symbol is exactly the CIPL plan/data
-                // symbol, omit the duplicate and let the runtime reuse it.
-                if (provider.symbol.len > 0 and std.mem.eql(u8, provider.symbol, entry.name)) {
-                    try out.append(0);
-                } else {
-                    try out.append(@intCast(provider.symbol.len));
-                    try out.appendSlice(provider.symbol);
-                }
+                if (provider.lib.len > MAX_PROVIDER_NAME or provider.symbol.len > MAX_SYMBOL)
+                    return error.NameTooLong;
+                const lib_ref = names.get(provider.lib) orelse return error.NameNotInterned;
+                const symbol_ref: u16 = if (provider.symbol.len == 0 or
+                    std.mem.eql(u8, provider.symbol, entry.name))
+                    0xFFFF
+                else
+                    names.get(provider.symbol) orelse return error.NameNotInterned;
+                try writeU16(&out, lib_ref);
+                try writeU16(&out, symbol_ref);
                 try writeU16(&out, provider.ordinal);
-                try out.append(@intCast(provider.version.len));
-                try out.appendSlice(provider.version);
             }
         }
         return out.toOwnedSlice();
@@ -120,7 +119,9 @@ fn writeU16(out: *std.ArrayList(u8), value: u16) !void {
 test "empty table serializes no CIPI bytes" {
     var table = Table.init(std.testing.allocator);
     defer table.deinit();
-    const bytes = try table.serialize(std.testing.allocator);
+    var names = cipc.NamePool.init(std.testing.allocator);
+    defer names.deinit();
+    const bytes = try table.serialize(std.testing.allocator, &names);
     defer std.testing.allocator.free(bytes);
     try std.testing.expectEqual(@as(usize, 0), bytes.len);
 }
@@ -128,6 +129,8 @@ test "empty table serializes no CIPI bytes" {
 test "entry serialization preserves providers and flags" {
     var table = Table.init(std.testing.allocator);
     defer table.deinit();
+    var names = cipc.NamePool.init(std.testing.allocator);
+    defer names.deinit();
     const providers = [_]Provider{
         .{ .lib = "libc.so.6", .symbol = "puts" },
         .{ .lib = "libm.so.6", .symbol = "puts" },
@@ -137,40 +140,48 @@ test "entry serialization preserves providers and flags" {
         .name = "puts",
         .providers = @constCast(&providers),
     });
-    const bytes = try table.serialize(std.testing.allocator);
+    try table.internNames(&names);
+    const bytes = try table.serialize(std.testing.allocator, &names);
     defer std.testing.allocator.free(bytes);
-    try std.testing.expectEqualSlices(u8, "CIPI", bytes[0..4]);
-    try std.testing.expectEqual(@as(u16, 1), std.mem.readInt(u16, bytes[6..8], .little));
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "libc.so.6") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "libm.so.6") != null);
+    try std.testing.expectEqual(@as(u16, 1), std.mem.readInt(u16, bytes[0..2], .little));
+    try std.testing.expectEqual(@as(u16, 0xFFFF), std.mem.readInt(u16, bytes[6..8], .little));
+    try std.testing.expectEqual(@as(u8, 2), bytes[8]);
+    try std.testing.expectEqual(@as(u16, 0), std.mem.readInt(u16, bytes[9..11], .little));
+    try std.testing.expectEqual(@as(u16, 1), std.mem.readInt(u16, bytes[15..17], .little));
 }
 
 test "serialization rejects records beyond the runtime caps" {
     var table = Table.init(std.testing.allocator);
     defer table.deinit();
 
+    var names = cipc.NamePool.init(std.testing.allocator);
+    defer names.deinit();
     const no_providers: [0]Provider = .{};
     // > 64-byte import name.
     try table.add(.{ .plan_index = 0, .name = "i" ** 65, .providers = @constCast(&no_providers) });
-    try std.testing.expectError(error.NameTooLong, table.serialize(std.testing.allocator));
+    try table.internNames(&names);
+    try std.testing.expectError(error.NameTooLong, table.serialize(std.testing.allocator, &names));
 
     var long_lib = Table.init(std.testing.allocator);
     defer long_lib.deinit();
     const bad_provider = [_]Provider{.{ .lib = "l" ** 65, .symbol = "puts" }};
     try long_lib.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&bad_provider) });
-    try std.testing.expectError(error.NameTooLong, long_lib.serialize(std.testing.allocator));
+    try long_lib.internNames(&names);
+    try std.testing.expectError(error.NameTooLong, long_lib.serialize(std.testing.allocator, &names));
 
     var long_symbol = Table.init(std.testing.allocator);
     defer long_symbol.deinit();
     const bad_symbol = [_]Provider{.{ .lib = "libc.so.6", .symbol = "s" ** 65 }};
     try long_symbol.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&bad_symbol) });
-    try std.testing.expectError(error.NameTooLong, long_symbol.serialize(std.testing.allocator));
+    try long_symbol.internNames(&names);
+    try std.testing.expectError(error.NameTooLong, long_symbol.serialize(std.testing.allocator, &names));
 
     var many_providers = Table.init(std.testing.allocator);
     defer many_providers.deinit();
     const nine = [_]Provider{.{ .lib = "libc.so.6", .symbol = "puts" }} ** 9;
     try many_providers.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&nine) });
-    try std.testing.expectError(error.TooManyProviders, many_providers.serialize(std.testing.allocator));
+    try many_providers.internNames(&names);
+    try std.testing.expectError(error.TooManyProviders, many_providers.serialize(std.testing.allocator, &names));
 
     var many_imports = Table.init(std.testing.allocator);
     defer many_imports.deinit();
@@ -178,5 +189,6 @@ test "serialization rejects records beyond the runtime caps" {
     while (i <= MAX_IMPORTS) : (i += 1) {
         try many_imports.add(.{ .plan_index = 0, .name = "puts", .providers = @constCast(&no_providers) });
     }
-    try std.testing.expectError(error.TooManyImports, many_imports.serialize(std.testing.allocator));
+    try many_imports.internNames(&names);
+    try std.testing.expectError(error.TooManyImports, many_imports.serialize(std.testing.allocator, &names));
 }

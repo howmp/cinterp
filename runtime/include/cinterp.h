@@ -140,6 +140,9 @@ int ci_vm_destroy_ex(ci_vm *vm, unsigned flags);
 /*
  * Loaders. They are transactional: a failed load leaves the previous state
  * intact. They return CI_E_BUSY while the VM is executing, from any thread.
+ * ci_vm_load_package is the canonical loader: it also installs the CIPC
+ * constant/name pool. The standalone module/plan loaders only accept data
+ * that does not need CIPC references.
  */
 int ci_vm_load_module(ci_vm *vm, const uint8_t *data, size_t size);
 int ci_vm_load_plans(ci_vm *vm, const uint8_t *data, size_t size);
@@ -149,7 +152,9 @@ int ci_vm_load_package(ci_vm *vm, const uint8_t *data, size_t size);
 int ci_vm_load_library(ci_vm *vm, const char *path);
 
 /*
- * Run the named entry. The return value is a status, not main()'s result.
+ * Run the package entry. `entry` is the "main" alias; v2 modules store an
+ * entry function index, not function names, so any other name returns
+ * CI_E_ENTRY. The return value is a status, not main()'s result.
  * Returns CI_E_BUSY when another thread is running the VM and CI_E_RUNTIME
  * when the calling thread already runs it (a nested run).
  */

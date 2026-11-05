@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dump cinterp CIPKG v3 headers and disassemble CIVM bytecode.
+"""Dump cinterp CIPKG v4 headers and disassemble CIVM bytecode.
 
 Usage:
   scripts/cib_dump.py [--headers|--asm] package.cib [...]
@@ -182,6 +182,7 @@ OPS: dict[int, tuple[str, str]] = {
     0xA2: ("FPCLASS", "u8"),
     0xA3: ("CALLBACK_ACQUIRE", "callback_acquire"),
     0xA4: ("CALLBACK_RELEASE", NO_ARG),
+    0xA5: ("LOAD_CONST_POOL", "pool"),
 }
 
 
@@ -191,15 +192,16 @@ def parse_civm(module: bytes) -> dict:
     if len(module) < 10:
         raise Bad("CIVM header truncated")
     version = read_u8(module, 4)
+    if version != 2:
+        raise Bad(f"unsupported CIVM version {version}")
     arch = read_u8(module, 5)
     count = read_u16(module, 6)
+    entry = read_u16(module, 8)
+    if entry != 0xFFFF and entry >= count:
+        raise Bad("CIVM entry index out of range")
     pos = 10
     functions = []
     for index in range(count):
-        name_len = read_u8(module, pos)
-        pos += 1
-        name_bytes, pos = take(module, pos, name_len)
-        name = name_bytes.decode("utf-8", "replace")
         params = read_u16(module, pos)
         locals_ = read_u16(module, pos + 2)
         code_len = read_u32(module, pos + 4)
@@ -208,7 +210,6 @@ def parse_civm(module: bytes) -> dict:
         functions.append(
             {
                 "index": index,
-                "name": name,
                 "params": params,
                 "locals": locals_,
                 "code": code,
@@ -217,7 +218,7 @@ def parse_civm(module: bytes) -> dict:
         )
     if pos != len(module):
         raise Bad(f"CIVM trailing bytes {len(module) - pos}")
-    return {"version": version, "arch": arch, "functions": functions}
+    return {"version": version, "arch": arch, "entry": entry, "functions": functions}
 
 
 def parse_locs(data: bytes, pos: int, count: int) -> tuple[list[dict], int]:
@@ -232,7 +233,7 @@ def parse_locs(data: bytes, pos: int, count: int) -> tuple[list[dict], int]:
     return locs, pos
 
 
-def parse_cipl(plans: bytes) -> dict:
+def parse_cipl(plans: bytes, names: list[str]) -> dict:
     if not plans:
         return {"abi": 0, "plans": [], "omitted": True}
     if len(plans) < 3:
@@ -242,10 +243,11 @@ def parse_cipl(plans: bytes) -> dict:
     pos = 3
     parsed = []
     for pi in range(count):
-        name_len = read_u8(plans, pos)
-        pos += 1
-        name_bytes, pos = take(plans, pos, name_len)
-        name = name_bytes.decode("utf-8", "replace")
+        name_ref = read_u16(plans, pos)
+        if name_ref >= len(names):
+            raise Bad(f"CIPL name ref {name_ref} out of range")
+        name = names[name_ref]
+        pos += 2
         args_count = read_u8(plans, pos)
         ret_count = read_u8(plans, pos + 1)
         stack_size = read_u16(plans, pos + 2)
@@ -284,54 +286,45 @@ def parse_cipl(plans: bytes) -> dict:
     return {"abi": abi, "plans": parsed, "omitted": False}
 
 
-def parse_imports(imports: bytes) -> dict:
+def parse_imports(imports: bytes, names: list[str]) -> dict:
     if not imports:
         return {"entries": [], "omitted": True}
-    if len(imports) < 10 or imports[:4] != b"CIPI":
-        raise Bad("CIPI magic/header")
-    version = read_u8(imports, 4)
-    if version != 1:
-        raise Bad(f"unsupported CIPI version {version}")
-    pos = 6
+    pos = 0
     count = read_u16(imports, pos)
-    pos += 4
+    pos += 2
     entries = []
     for _ in range(count):
         plan_index = read_u16(imports, pos)
         kind = read_u8(imports, pos + 2)
         flags = read_u8(imports, pos + 3)
-        call_conv = read_u8(imports, pos + 4)
-        arch_mask = read_u8(imports, pos + 5)
-        min_os = read_u16(imports, pos + 6)
-        pos += 8
-        name_len = read_u8(imports, pos)
-        pos += 1
-        name_bytes, pos = take(imports, pos, name_len)
-        name = name_bytes.decode("utf-8", "replace")
+        name_ref = read_u16(imports, pos + 4)
+        pos += 6
+        if name_ref != 0xFFFF:
+            if name_ref >= len(names):
+                raise Bad(f"CIPI name ref {name_ref} out of range")
+            name = names[name_ref]
+        else:
+            name = ""
         provider_count = read_u8(imports, pos)
         pos += 1
         providers = []
         for _ in range(provider_count):
-            provider_kind = read_u8(imports, pos)
-            pos += 1
-            lib_len = read_u8(imports, pos)
-            pos += 1
-            lib_bytes, pos = take(imports, pos, lib_len)
-            symbol_len = read_u8(imports, pos)
-            pos += 1
-            symbol_bytes, pos = take(imports, pos, symbol_len)
-            ordinal = read_u16(imports, pos)
-            pos += 2
-            version_len = read_u8(imports, pos)
-            pos += 1
-            version_bytes, pos = take(imports, pos, version_len)
+            lib_ref = read_u16(imports, pos)
+            symbol_ref = read_u16(imports, pos + 2)
+            ordinal = read_u16(imports, pos + 4)
+            pos += 6
+            if lib_ref >= len(names):
+                raise Bad(f"CIPI lib ref {lib_ref} out of range")
+            symbol = ""
+            if symbol_ref != 0xFFFF:
+                if symbol_ref >= len(names):
+                    raise Bad(f"CIPI symbol ref {symbol_ref} out of range")
+                symbol = names[symbol_ref]
             providers.append(
                 {
-                    "kind": provider_kind,
-                    "lib": lib_bytes.decode("utf-8", "replace"),
-                    "symbol": symbol_bytes.decode("utf-8", "replace"),
+                    "lib": names[lib_ref],
+                    "symbol": symbol,
                     "ordinal": ordinal,
-                    "version": version_bytes.decode("utf-8", "replace"),
                 }
             )
         entries.append(
@@ -339,9 +332,6 @@ def parse_imports(imports: bytes) -> dict:
                 "plan_index": plan_index,
                 "kind": kind,
                 "flags": flags,
-                "call_conv": call_conv,
-                "arch_mask": arch_mask,
-                "min_os": min_os,
                 "name": name,
                 "providers": providers,
             }
@@ -351,27 +341,64 @@ def parse_imports(imports: bytes) -> dict:
     return {"entries": entries, "omitted": False}
 
 
+def parse_cipc(pool: bytes) -> dict:
+    if len(pool) < 16 or pool[:4] != b"CIPC":
+        raise Bad("CIPC magic/header")
+    if read_u8(pool, 4) != 1:
+        raise Bad("CIPC version")
+    count = read_u16(pool, 6)
+    blob_len = read_u32(pool, 8)
+    data_len = read_u32(pool, 12)
+    offsets_end = 16 + count * 2
+    blob_start = offsets_end
+    if blob_start + blob_len > len(pool):
+        raise Bad("CIPC name blob truncated")
+    data_start = (blob_start + blob_len + 15) & ~15
+    if data_start + data_len != len(pool):
+        raise Bad("CIPC data length")
+    names = []
+    for i in range(count):
+        off = read_u16(pool, 16 + i * 2)
+        begin = blob_start + off
+        end = pool.find(b"\x00", begin, blob_start + blob_len)
+        if begin >= blob_start + blob_len or end < 0:
+            raise Bad("CIPC name offset")
+        names.append(pool[begin:end].decode("utf-8", "replace"))
+    return {
+        "name_count": count,
+        "names": names,
+        "name_blob_len": blob_len,
+        "data_len": data_len,
+        "data": pool[data_start:],
+    }
+
+
 def parse_cib(path: Path) -> dict:
     data = path.read_bytes()
-    if len(data) < 18 or data[:5] != b"CIPKG" or data[5] != 3:
-        raise Bad("expected CIPKG v3")
+    if len(data) < 22 or data[:5] != b"CIPKG" or data[5] != 4:
+        raise Bad("expected CIPKG v4")
     module_len = read_u32(data, 6)
     plan_len = read_u32(data, 10)
     import_len = read_u32(data, 14)
-    if 18 + module_len + plan_len + import_len != len(data):
+    const_len = read_u32(data, 18)
+    if 22 + module_len + plan_len + import_len + const_len != len(data):
         raise Bad("CIPKG section lengths do not match file size")
-    module = data[18 : 18 + module_len]
-    plans = data[18 + module_len : 18 + module_len + plan_len]
-    imports = data[18 + module_len + plan_len :]
+    module = data[22 : 22 + module_len]
+    plans = data[22 + module_len : 22 + module_len + plan_len]
+    imports = data[22 + module_len + plan_len : 22 + module_len + plan_len + import_len]
+    pool = data[22 + module_len + plan_len + import_len :]
+    cipc = parse_cipc(pool)
     return {
         "path": path,
         "size": len(data),
         "module_len": module_len,
         "plan_len": plan_len,
         "import_len": import_len,
+        "const_len": const_len,
         "civm": parse_civm(module),
-        "cipl": parse_cipl(plans),
-        "cipi": parse_imports(imports),
+        "cipl": parse_cipl(plans, cipc["names"]),
+        "cipi": parse_imports(imports, cipc["names"]),
+        "cipc": cipc,
     }
 
 
@@ -387,17 +414,19 @@ def header_text(cib: dict) -> str:
     lines = [
         f"file: {cib['path']}",
         f"size: {cib['size']} bytes",
-        "CIPKG: v3",
-        f"  module: off=18 len={cib['module_len']}",
-        f"  plans:  off={18 + cib['module_len']} len={cib['plan_len']}"
+        "CIPKG: v4",
+        f"  module: off=22 len={cib['module_len']}",
+        f"  plans:  off={22 + cib['module_len']} len={cib['plan_len']}"
         + (" (omitted)" if cipl["omitted"] else ""),
-        f"  imports: off={18 + cib['module_len'] + cib['plan_len']} len={cib['import_len']}"
+        f"  imports: off={22 + cib['module_len'] + cib['plan_len']} len={cib['import_len']}"
         + (" (omitted)" if cipi["omitted"] else ""),
-        f"CIVM: v{civm['version']} arch={civm['arch']} functions={len(civm['functions'])}",
+        f"  const:   off={22 + cib['module_len'] + cib['plan_len'] + cib['import_len']} len={cib['const_len']}",
+        f"CIVM: v{civm['version']} arch={civm['arch']} entry={civm['entry']} functions={len(civm['functions'])}",
+        f"CIPC: names={len(cib['cipc']['names'])} data={cib['cipc']['data_len']} bytes",
     ]
     for fn in civm["functions"]:
         lines.append(
-            f"  [{fn['index']}] {fn['name']}: params={fn['params']} "
+            f"  [{fn['index']}] params={fn['params']} "
             f"locals={fn['locals']} code={len(fn['code'])} bytes"
         )
     if cipl["omitted"]:
@@ -443,10 +472,9 @@ def header_text(cib: dict) -> str:
                 f"name={display_name} providers={len(entry['providers'])}"
             )
             for provider in entry["providers"]:
-                version = f" version={provider['version']}" if provider["version"] else ""
                 ordinal = f" ordinal={provider['ordinal']}" if provider["ordinal"] else ""
                 symbol = provider["symbol"] or display_name
-                lines.append(f"      {provider['lib']}:{symbol}{ordinal}{version}")
+                lines.append(f"      {provider['lib']}:{symbol}{ordinal}")
     return "\n".join(lines)
 
 
@@ -459,6 +487,12 @@ def read_operand(kind: str, code: bytes, pos: int, functions: list[dict], plans:
         return f" {read_u16(code, pos)}", pos + 2
     if kind == "u32":
         return f" {read_u32(code, pos)}", pos + 4
+    if kind == "pool":
+        ref = read_u32(code, pos)
+        off = ref & 0x0FFFFFFF
+        width = 1 << ((ref >> 28) & 3)
+        signed = bool(ref & (1 << 30))
+        return f" off={off} width={width} signed={int(signed)}", pos + 4
     if kind == "u32target":
         value = read_u32(code, pos)
         return f" @0x{value:04x}", pos + 4
@@ -476,7 +510,7 @@ def read_operand(kind: str, code: bytes, pos: int, functions: list[dict], plans:
         return f" {raw.hex()}", pos
     if kind == "func":
         index = read_u16(code, pos)
-        name = functions[index]["name"] if index < len(functions) else "?"
+        name = f"fn{index}" if index < len(functions) else "?"
         return f" {index} ({name})", pos + 2
     if kind == "plan":
         index = read_u16(code, pos)
@@ -490,14 +524,14 @@ def read_operand(kind: str, code: bytes, pos: int, functions: list[dict], plans:
         slot = read_u16(code, pos)
         func = read_u16(code, pos + 2)
         plan = read_u16(code, pos + 4)
-        fname = functions[func]["name"] if func < len(functions) else "?"
+        fname = f"fn{func}" if func < len(functions) else "?"
         pname = plans[plan]["name"] if plan < len(plans) else "?"
         return f" slot={slot} func={func} ({fname}) plan={plan} ({pname})", pos + 6
     if kind == "callback_acquire":
         plan = read_u16(code, pos)
         func = read_u16(code, pos + 2)
         pname = plans[plan]["name"] if plan < len(plans) else "?"
-        fname = functions[func]["name"] if func < len(functions) else "?"
+        fname = f"fn{func}" if func < len(functions) else "?"
         return f" plan={plan} ({pname}) func={func} ({fname})", pos + 4
     if kind == "u16u8":
         size = read_u16(code, pos)
@@ -506,13 +540,13 @@ def read_operand(kind: str, code: bytes, pos: int, functions: list[dict], plans:
     if kind == "variadic":
         func = read_u16(code, pos)
         total = read_u16(code, pos + 2)
-        fname = functions[func]["name"] if func < len(functions) else "?"
+        fname = f"fn{func}" if func < len(functions) else "?"
         return f" func={func} ({fname}) total={total}", pos + 4
     if kind == "variadic_typed":
         func = read_u16(code, pos)
         total = read_u16(code, pos + 2)
         pos += 4
-        fname = functions[func]["name"] if func < len(functions) else "?"
+        fname = f"fn{func}" if func < len(functions) else "?"
         params = functions[func]["params"] if func < len(functions) else 0
         extra = max(total - params, 0)
         types = []
@@ -536,8 +570,9 @@ def asm_text(cib: dict) -> str:
     lines = []
     for fn in functions:
         code = fn["code"]
+        marker = " entry" if fn["index"] == cib["civm"]["entry"] else ""
         lines.append(
-            f"\n{fn['name']}: params={fn['params']} locals={fn['locals']} code={len(code)}"
+            f"\nfn{fn['index']}{marker}: params={fn['params']} locals={fn['locals']} code={len(code)}"
         )
         pos = 0
         while pos < len(code):

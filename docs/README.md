@@ -5,7 +5,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [`cib.md`](cib.md) | `.cib` 包格式：`CIPKG` v3 trusted 容器、`CIVM` 字节码、`CIPL` 调用计划、`CIPI` 链接元数据，以及运行时状态码 |
+| [`cib.md`](cib.md) | `.cib` 包格式：`CIPKG` v4 trusted 容器、`CIVM` v2 字节码、`CIPL` 调用计划、`CIPI` 链接元数据、`CIPC` 常量/名称池，以及运行时状态码 |
 | [`embedding.md`](embedding.md) | 在 C 宿主中嵌入 `libcinterp`：构建/安装、`ci_vm_*` C ABI、错误生命周期、回调与内存限制注意事项 |
 | [`multi-cib.md`](multi-cib.md) | 单进程多 CIB：`ci_process_*` 注册表、重复运行的全新镜像、每 VM 线程/执行权、CLI `--run-all`/`--repeat`/`--jobs`，以及 CIB 内显式 callback acquire/release |
 | [`compatibility.md`](compatibility.md) | 版本与兼容性契约：单一 `VERSION` 来源、各组件版本、N−1 读取保证、C ABI 版本、编译器/运行时配对、弃用策略 |

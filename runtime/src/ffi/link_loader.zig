@@ -22,9 +22,6 @@ pub const ImportEntry = struct {
     plan_index: u16 = 0,
     kind: u8 = 0,
     flags: u8 = 0,
-    call_conv: u8 = 0,
-    arch_mask: u8 = 0,
-    min_os: u16 = 0,
     name: [MAX_IMPORT_NAME]u8 = undefined,
     name_len: u8 = 0,
     provider_count: u8 = 0,
@@ -87,33 +84,11 @@ fn copyStringU8(dst: []u8, src: []const u8, len: *u8) !void {
     len.* = @intCast(src.len);
 }
 
-fn readProvider(r: *Reader) !Provider {
-    var p = Provider{};
-    p.kind = try r.readU8();
-    const name_len = try r.readU8();
-    const name = try r.take(name_len);
-    try copyStringU8(&p.name, name, &p.name_len);
-    const symbol_len = try r.readU8();
-    const symbol = try r.take(symbol_len);
-    try copyStringU8(&p.symbol, symbol, &p.symbol_len);
-    p.ordinal = try r.readU16();
-    const version_len = try r.readU8();
-    const version = try r.take(version_len);
-    try copyStringU8(&p.version, version, &p.version_len);
-    return p;
-}
-
-pub fn decodeImports(bytes: []const u8) !Table {
+pub fn decodeImports(bytes: []const u8, names: []const []const u8) !Table {
     var table = Table{};
     if (bytes.len == 0) return table;
     var r = Reader{ .data = bytes };
-    const magic = try r.take(4);
-    if (!std.mem.eql(u8, magic, "CIPI")) return error.BadImportMagic;
-    const version = try r.readU8();
-    if (version != 1) return error.BadImportVersion;
-    _ = try r.readU8();
     const count = try r.readU16();
-    _ = try r.readU16();
     if (count > MAX_IMPORTS) return error.TooManyImports;
     table.count = count;
 
@@ -123,18 +98,26 @@ pub fn decodeImports(bytes: []const u8) !Table {
         entry.plan_index = try r.readU16();
         entry.kind = try r.readU8();
         entry.flags = try r.readU8();
-        entry.call_conv = try r.readU8();
-        entry.arch_mask = try r.readU8();
-        entry.min_os = try r.readU16();
-        const name_len = try r.readU8();
-        const name = try r.take(name_len);
-        try copyStringU8(&entry.name, name, &entry.name_len);
+        const name_ref = try r.readU16();
+        if (name_ref != 0xFFFF) {
+            if (name_ref >= names.len) return error.BadConstIndex;
+            try copyStringU8(&entry.name, names[name_ref], &entry.name_len);
+        }
         const provider_count = try r.readU8();
         if (provider_count > MAX_PROVIDERS) return error.TooManyProviders;
         entry.provider_count = provider_count;
         var pi: usize = 0;
         while (pi < provider_count) : (pi += 1) {
-            entry.providers[pi] = try readProvider(&r);
+            const provider = &entry.providers[pi];
+            const lib_ref = try r.readU16();
+            const symbol_ref = try r.readU16();
+            if (lib_ref >= names.len) return error.BadConstIndex;
+            try copyStringU8(&provider.name, names[lib_ref], &provider.name_len);
+            if (symbol_ref != 0xFFFF) {
+                if (symbol_ref >= names.len) return error.BadConstIndex;
+                try copyStringU8(&provider.symbol, names[symbol_ref], &provider.symbol_len);
+            }
+            provider.ordinal = try r.readU16();
         }
         table.entries[i] = entry;
     }

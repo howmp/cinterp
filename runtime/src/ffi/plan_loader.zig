@@ -132,7 +132,7 @@ fn readLoc(r: *Reader) !abi.Loc {
     return .{ .kind = kind, .index = index, .size = size, .offset = offset };
 }
 
-pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
+pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, names: []const []const u8) !*Store {
     var r = Reader{ .data = bytes };
     const abi_id = try r.readU8();
     if (abi_id < 1 or abi_id > 4) return error.BadAbi;
@@ -150,12 +150,12 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
     var pi: usize = 0;
     while (pi < total) : (pi += 1) {
         const plan = &store.plans[pi];
-        const name_len = try r.readU8();
-        const nl: usize = name_len;
-        if (nl > MAX_NAME) return error.NameTooLong;
-        const name = try r.take(nl);
-        @memcpy(plan.name[0..nl], name);
-        plan.name_len = name_len;
+        const name_ref = try r.readU16();
+        if (name_ref >= names.len) return error.BadConstIndex;
+        const name = names[name_ref];
+        if (name.len > MAX_NAME) return error.NameTooLong;
+        @memcpy(plan.name[0..name.len], name);
+        plan.name_len = @intCast(name.len);
 
         const args_count = try r.readU8();
         const ret_count = try r.readU8();

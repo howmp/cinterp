@@ -237,7 +237,7 @@ cinterp-run [--lib PATH]... [--load-only] [--dump-target] [--dump-imports]
 - `--run-all`：`--` 之前的每个位置参数都是包。必须显式给出；`cinterp-run a.cib b.cib`
   仍解释为“包 a.cib、入口 b”，不会破坏旧脚本。
 - `--repeat N`：同一个 VM 运行 N 次（N ≥ 1），不重新加载包，每次全新镜像。
-- `--entry NAME`：所有包、所有运行的入口；与位置入口互斥。缺省入口是 `main`。
+- `--entry NAME`：所有包、所有运行的入口；与位置入口互斥。CIVM v2 不保存函数名，因此只有 `main` 别名可用；其他名称返回 `CI_E_ENTRY`。
 - `--jobs N`：N 个 worker 线程（N ≥ 1，默认 1）。每个包/VM 只属于一个 worker，
   因此同一 VM 不会被两个线程运行。N 大于包数时按包数封顶。
 - `--` 之后的参数应用到每次运行；`argv[0]` 仍是包路径。
