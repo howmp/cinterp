@@ -144,10 +144,10 @@ fn initFpu() void {
     }
 }
 
-pub fn main() !void {
+pub fn main() u8 {
     initFpu();
     const allocator = std.heap.page_allocator;
-    const args = try std.process.argsAlloc(allocator);
+    const args = std.process.argsAlloc(allocator) catch return 2;
     defer std.process.argsFree(allocator, args);
 
     var load_only = false;
@@ -168,11 +168,11 @@ pub fn main() !void {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--version")) {
             std.debug.print("cinterp-run {s}\n", .{build_options.version});
-            return;
+            return 0;
         }
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             std.debug.print("{s}", .{usage});
-            return;
+            return 0;
         }
         if (std.mem.eql(u8, arg, "--load-only")) {
             load_only = true;
@@ -260,14 +260,14 @@ pub fn main() !void {
     for (package_paths) |path| {
         const bytes = std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| {
             std.debug.print("cinterp-run: cannot read {s}: {s}\n", .{ path, @errorName(err) });
-            std.process.exit(2);
+            return 2;
         };
         var machine_opt: ?*vm.VM = null;
         const status = vm.ci_process_load_package(process, bytes.ptr, bytes.len, &machine_opt);
         allocator.free(bytes);
         if (status != 0) {
             std.debug.print("cinterp-run: load failed: {s}\n", .{std.mem.span(vm.ci_process_last_error(process))});
-            if (!multi) std.process.exit(1);
+            if (!multi) return 1;
             load_failed = true;
             continue;
         }
@@ -276,7 +276,7 @@ pub fn main() !void {
         for (libs.items) |lib| {
             if (vm.ci_vm_load_library(machine, lib.ptr) != 0) {
                 std.debug.print("cinterp-run: load library failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(machine))});
-                if (!multi) std.process.exit(1);
+                if (!multi) return 1;
                 load_failed = true;
                 lib_failed = true;
                 break;
@@ -285,7 +285,7 @@ pub fn main() !void {
         if (lib_failed) continue;
         runs.append(.{ .path = path, .machine = machine }) catch outOfMemory();
     }
-    if (load_failed) std.process.exit(1);
+    if (load_failed) return 1;
 
     if (dump_target or dump_imports) {
         for (runs.items) |job| dumpPackage(job, dump_target, dump_imports, multi);
@@ -294,7 +294,7 @@ pub fn main() !void {
     // a libc atexit handler that still has to run against its VM, so the process
     // and its VMs stay alive until the final process exit (they only leak into
     // the kernel at that point).
-    if (load_only) std.process.exit(0);
+    if (load_only) return 0;
 
     var runner = Runner{
         .targets = runs.items,
@@ -325,7 +325,7 @@ pub fn main() !void {
     }
     // A failed run must not call std.process.exit off a worker thread, so the
     // main thread owns the final status.
-    if (runner.failed.load(.monotonic)) std.process.exit(1);
+    if (runner.failed.load(.monotonic)) return 1;
     // Keep every VM alive while the host runs ordinary atexit handlers.
-    std.process.exit(0);
+    return 0;
 }
