@@ -344,7 +344,7 @@ make check-version        # VERSION 单一来源校验
 - `scripts/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行。
 - 多 CIB/线程：`scripts/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）以及 CLI `--repeat 300` 的自动/显式 callback 用例。
 - 本地 c-testsuite 17/17；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
-- ReleaseSmall：native Linux x64 115,760 B；size-cross static sysv 103,264 B、Win64 89,088 B、Win32 98,304 B、ARM64 115,360 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。
+- ReleaseSmall：native Linux x64 104,408 B；size-cross static sysv 91,752 B、Win64 81,920 B、Win32 86,528 B、ARM64 103,648 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。CLI 使用最小 stderr writer（不拉入 `std.fmt`/`std.debug`），并以行级锁保证 `--jobs` 输出不交错。
 - release tarball：Linux x86-64 含 `bin/cinterp-cc` 和 `bin/cinterp`，其余为 runtime-only；每个 tarball 带自己的 README、SBOM，compiler tarball 额外带 `THIRD_PARTY_NOTICES.md`。
 
 ## 13. 当前边界与明确不支持
