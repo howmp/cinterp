@@ -1,6 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const vm = @import("vm.zig");
 const build_options = @import("build_options");
+
+const debug_errors = builtin.mode == .Debug;
 
 /// Largest C argv a run can carry: `ci_vm_run_args` accepts at most 256
 /// entries and argv[0] (the package path) is one of them.
@@ -65,7 +68,11 @@ const Runner = struct {
                 std.debug.print("package: {s} run: {d}/{d}\n", .{ job.path, done + 1, self.repeat });
             }
             if (vm.ci_vm_run_args(job.machine, self.entry, @intCast(argc), argv_buf[0..argc].ptr) != 0) {
-                std.debug.print("cinterp-run: run failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(job.machine))});
+                if (comptime debug_errors) {
+                    std.debug.print("cinterp-run: run failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(job.machine))});
+                } else {
+                    std.debug.print("cinterp-run: run failed: error {d}\n", .{vm.ci_vm_last_error_code(job.machine)});
+                }
                 return false;
             }
             std.debug.print("result: {d}\n", .{@as(i32, @truncate(vm.ci_vm_result(job.machine)))});
@@ -259,14 +266,22 @@ pub fn main() u8 {
     var load_failed = false;
     for (package_paths) |path| {
         const bytes = std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| {
-            std.debug.print("cinterp-run: cannot read {s}: {s}\n", .{ path, @errorName(err) });
+            if (comptime debug_errors) {
+                std.debug.print("cinterp-run: cannot read {s}: {s}\n", .{ path, @errorName(err) });
+            } else {
+                std.debug.print("cinterp-run: cannot read {s}\n", .{path});
+            }
             return 2;
         };
         var machine_opt: ?*vm.VM = null;
         const status = vm.ci_process_load_package(process, bytes.ptr, bytes.len, &machine_opt);
         allocator.free(bytes);
         if (status != 0) {
-            std.debug.print("cinterp-run: load failed: {s}\n", .{std.mem.span(vm.ci_process_last_error(process))});
+            if (comptime debug_errors) {
+                std.debug.print("cinterp-run: load failed: {s}\n", .{std.mem.span(vm.ci_process_last_error(process))});
+            } else {
+                std.debug.print("cinterp-run: load failed: error {d}\n", .{vm.ci_process_last_error_code(process)});
+            }
             if (!multi) return 1;
             load_failed = true;
             continue;
@@ -275,7 +290,11 @@ pub fn main() u8 {
         var lib_failed = false;
         for (libs.items) |lib| {
             if (vm.ci_vm_load_library(machine, lib.ptr) != 0) {
-                std.debug.print("cinterp-run: load library failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(machine))});
+                if (comptime debug_errors) {
+                    std.debug.print("cinterp-run: load library failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(machine))});
+                } else {
+                    std.debug.print("cinterp-run: load library failed: error {d}\n", .{vm.ci_vm_last_error_code(machine)});
+                }
                 if (!multi) return 1;
                 load_failed = true;
                 lib_failed = true;

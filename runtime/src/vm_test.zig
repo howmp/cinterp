@@ -449,9 +449,8 @@ const callback_body = [_]u8{
 /// `int release_one(unsigned long p) { return ci_callback_release(p); }` so a
 /// test can drive `OP_CALLBACK_RELEASE` with an arbitrary trampoline address.
 const callback_release_fn = [_]u8{
-    vm.OP_LOAD_LOCAL, 0, 0,
-    vm.OP_CALLBACK_RELEASE,
-    vm.OP_RET,
+    vm.OP_LOAD_LOCAL,       0,         0,
+    vm.OP_CALLBACK_RELEASE, vm.OP_RET,
 };
 
 /// `void *acquire(void) { return ci_callback_acquire(&cb); }`.
@@ -855,21 +854,30 @@ test "linear memory allocations stop at the argv area" {
 /// the first word, writes a marker over it, and adds the old value to 42.
 const fresh_image_main = [_]u8{
     vm.OP_ADDR_CONST,
-    0,    0, 0, 0, // &mem[0]
-    vm.OP_LOAD_MEM,
-    8,
-    vm.OP_STORE_LOCAL,
-    0, 0, // local 0 = *(i64*)mem
-    vm.OP_LOAD_CONST_I64,
-    0x55, 0, 0, 0, 0, 0, 0, 0,
-    vm.OP_ADDR_CONST,
-    0,    0, 0, 0,
+    0,              0, 0,                 0, // &mem[0]
+    vm.OP_LOAD_MEM, 8, vm.OP_STORE_LOCAL,
+    0,                    0, // local 0 = *(i64*)mem
+    vm.OP_LOAD_CONST_I64, 0x55,
+    0,                    0,
+    0,                    0,
+    0,                    0,
+    0,                    vm.OP_ADDR_CONST,
+    0,                    0,
+    0,                    0,
     vm.OP_STORE_MEM,
     8, // *(i64*)mem = 0x55
     vm.OP_LOAD_LOCAL,
-    0, 0,
+    0,
+    0,
     vm.OP_LOAD_CONST_I64,
-    42, 0, 0, 0, 0, 0, 0, 0,
+    42,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
     vm.OP_ADD,
     vm.OP_RET,
 };
@@ -1261,7 +1269,8 @@ test "a process loads, runs, unloads and destroys independent VMs" {
     try std.testing.expectEqual(vm.CI_E_BAD_PACKAGE, loadTestPackage(process, broken_buf[0..package.len], &unused));
     try std.testing.expect(unused == null);
     try std.testing.expectEqual(vm.CI_E_BAD_PACKAGE, vm.ci_process_last_error_code(process));
-    try std.testing.expect(vm.ci_process_last_error(process)[0] != 0);
+    if (@import("builtin").mode == .Debug)
+        try std.testing.expect(vm.ci_process_last_error(process)[0] != 0);
     try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(second.?, "main"));
 
     // Unloading is one-shot; the borrowed handle is dead afterwards. (Only its

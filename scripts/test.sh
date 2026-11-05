@@ -33,6 +33,11 @@ echo "== compiler unit tests"
 
 echo "== build runtime"
 (cd runtime && zig build -Doptimize=ReleaseSmall)
+if grep -a -q -E 'OutOfMemory|StackOverflow|FrameOverflow' "$RUNTIME"; then
+    echo "FAIL release runtime retains Zig error-name strings" >&2
+    exit 1
+fi
+echo "OK release runtime has no error-name strings"
 
 run_case() {
     local name="$1"
@@ -316,7 +321,7 @@ if "$RUNTIME" "$OUT/hello-win.cib" >"$OUT/target-mismatch.txt" 2>&1; then
     echo "FAIL target mismatch was accepted" >&2
     exit 1
 fi
-grep -Fq "TargetMismatch" "$OUT/target-mismatch.txt"
+grep -Fq "error -5" "$OUT/target-mismatch.txt"
 echo "OK target mismatch rejected"
 
 compile examples/basics/hello.c --cib-version 1 -o "$OUT/hello-v1.cib" >/dev/null

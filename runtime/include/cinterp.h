@@ -73,8 +73,10 @@ typedef struct ci_process ci_process;
  * Functions that return a status return CI_OK on success, or a negative
  * CI_E_* value on failure. CI_ERROR (-1) is only returned when the runtime
  * cannot categorize the failure; all other failures use a specific CI_E_*
- * value. The category of the last failed operation is also available from
- * ci_vm_last_error_code(), and ci_vm_last_error() returns its message.
+ * value. The category of the last failed operation is available from
+ * ci_vm_last_error_code(). ci_vm_last_error() returns an error name only in
+ * Debug builds; Release builds return an empty string and callers should use
+ * the status code.
  *
  * CI_E_BUSY was appended for the per-VM threading model; existing values are
  * unchanged (ABI 2 stays append-only).
@@ -163,7 +165,8 @@ int64_t ci_vm_result(const ci_vm *vm);
 /* 1 while the VM is executing on any thread, 0 when it is idle. */
 int ci_vm_busy(const ci_vm *vm);
 
-/* Error text and a stable category for the last failed operation. */
+/* Debug error text and a stable category for the last failed operation.
+ * Release builds return an empty string from ci_vm_last_error(). */
 const char *ci_vm_last_error(const ci_vm *vm);
 int ci_vm_last_error_code(const ci_vm *vm);
 
@@ -230,7 +233,8 @@ int ci_process_load_package(ci_process *process, const uint8_t *data,
 /* Unload an idle VM. A VM that is executing is reported as CI_E_BUSY. */
 int ci_process_unload_package(ci_process *process, ci_vm *vm);
 
-/* Last process-level error text and its CI_E_* category. */
+/* Debug process-level error text and its CI_E_* category.
+ * Release builds return an empty string. */
 const char *ci_process_last_error(const ci_process *process);
 int ci_process_last_error_code(const ci_process *process);
 

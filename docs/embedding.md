@@ -67,7 +67,7 @@ C 宿主。`Error` 携带三个字段：
 - `Error.code` 是 `ci_vm_last_error_code()` 报告的类别（一个 `CI_E_*` 值；若 VM 未
   记录任何类别，则为原始状态码）；
 - `Error.status` 是失败调用返回的负值（`CI_ERROR` 或 `CI_E_*`）；
-- `Error.message` 是来自 `ci_vm_last_error()` 的文本。
+- `Error.message` 是来自 `ci_vm_last_error()` 的文本；Debug 构建包含错误名，Release 构建为空字符串。
 
 控制流请匹配 `code`，日志记录请使用 `status`。对于 VM 报告的错误，两者当前持有相同
 的负值；`code` 是稳定的类别，而 `status` 精确记录该调用返回的内容。
@@ -159,17 +159,17 @@ VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划�
 ## 错误与所有权
 
 - 函数返回 `CI_OK` 或**特定类别的负 `CI_E_*` 状态码**。只有当运行时无法对失败进行
-  分类时才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别，
-  `ci_vm_last_error` 返回具体的错误名（例如 `BadPackageMagic`）。
+  分类时才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别；Debug 构建的
+  `ci_vm_last_error` 返回具体错误名（例如 `BadPackageMagic`），Release 构建返回空字符串。
 - `CI_E_BUSY`（-12）表示另一线程正在执行该 VM，或 loader/`ci_vm_destroy_ex`
   遇到 busy；`ci_vm_run` 在同一线程嵌套调用时返回 `CI_E_RUNTIME`。
 - 成功的 `ci_vm_load_*`、`ci_vm_run`、`ci_vm_run_args` 或 `ci_vm_load_library` 会
   同时清除错误文本和类别。`ci_vm_clear_error(vm)` 显式清除它们并返回 `CI_OK`。
-- `ci_vm_last_error` 返回的文本位于 VM 自己拥有的 128 字节缓冲区中。该指针一直有效，
+- Debug 构建中，`ci_vm_last_error` 返回的文本位于 VM 自己拥有的缓冲区中。该指针一直有效，
   直到在该 VM 上发生下一次设置或清除错误的调用（一次失败的 load/run、一次成功的
-  调用，或 `ci_vm_clear_error`），或直到调用 `ci_vm_destroy`。不要释放它。
-  `ci_vm_last_error(NULL)` 返回空字符串；`ci_vm_last_error_code(NULL)`
-  返回 `CI_E_INVALID_ARGUMENT`。
+  调用，或 `ci_vm_clear_error`），或直到调用 `ci_vm_destroy`。不要释放它。Release
+  构建返回静态空字符串，错误信息只能从状态码获取。`ci_vm_last_error(NULL)` 返回空字符串；
+  `ci_vm_last_error_code(NULL)` 返回 `CI_E_INVALID_ARGUMENT`。
 - `ci_version()` 返回指向静态字符串的指针，该字符串在进程的整个生命周期内保持有效；
   不要释放它。
 - 加载器是事务性的：失败的 `ci_vm_load_package` 会保持之前已加载的包完好无损。

@@ -259,7 +259,7 @@ const char *ci_version(void);
 ```
 
 - 返回 `int` 的接口成功返回 `CI_OK`，失败返回具体负值 `CI_E_*`；`CI_ERROR` (-1) 仅用于无法归类的错误。`CI_E_BUSY = -12` 是 ABI 2 的追加值，用于另一线程正在执行同一 VM、loader 遇到 busy、`CI_DESTROY_TRY` 等场景。
-- `ci_vm_last_error_code()` 返回同一类别，`ci_vm_last_error()` 返回具体错误名，`ci_vm_clear_error()` 清除两者（以及 callback dispatch 错误）。
+- `ci_vm_last_error_code()` 返回同一类别；`ci_vm_last_error()` 只在 Debug 构建返回具体错误名，Release 构建返回空字符串并仅使用状态码；`ci_vm_clear_error()` 清除两者（以及 callback dispatch 错误）。
 - `ci_vm_run`/`ci_vm_run_args` 返回状态而不是 C `main` 返回值；结果用 `ci_vm_result` 读取。另一线程运行中返回 `CI_E_BUSY`，同线程嵌套返回 `CI_E_RUNTIME`。
 - loader 是事务性的；失败不会替换已加载包。loader 和 `ci_vm_load_library` 在 VM 执行期间返回 `CI_E_BUSY`。
 - `ci_vm_config` 的 `struct_size` 兼容旧调用方；`stack_size=0` 使用默认 8192 槽，`memory_size=0` 使用默认 1 MiB（最大 16 MiB）。
@@ -371,8 +371,9 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 
 构建配置：`Debug`/`ReleaseSafe` 保留完整诊断、unwind 表、帧指针和 panic 栈回溯；
 `ReleaseSmall`（`make runtime` 的默认值）剥离 unwind 表、帧指针、panic 跟踪和符号，
-ELF 发布产物还会去掉 `.eh_frame`/`.eh_frame_hdr`。当前 Linux x64 体积约为
-Debug 8.8 MiB、ReleaseSmall 111,456 B。详细体积和 post-link 处理见下文。
+ELF 发布产物还会去掉 `.eh_frame`/`.eh_frame_hdr`。错误名表仅 Debug 构建保留；
+ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当前 Linux x64
+体积约为 Debug 8.8 MiB、ReleaseSmall 106,832 B。详细体积和 post-link 处理见下文。
 
 ### 12.2 当前基线
 
@@ -384,7 +385,7 @@ Debug 8.8 MiB、ReleaseSmall 111,456 B。详细体积和 post-link 处理见下�
 - `scripts/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
 - 多 CIB/线程：`scripts/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）以及 CLI `--repeat 300` 的自动/显式 callback 用例。
 - 本地 c-testsuite 17/17；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
-- ReleaseSmall：native Linux x64 111,456 B；size-cross static sysv 98,784 B、Win64 88,576 B、Win32 93,696 B、ARM64 110,912 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。
+- ReleaseSmall：native Linux x64 106,832 B；size-cross static sysv 94,416 B、Win64 83,968 B、Win32 90,112 B、ARM64 106,448 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
 
 ### 12.3 发布压缩包
 

@@ -574,11 +574,11 @@ xxd -g1 build/hello.cib
 ./runtime/zig-out/bin/cinterp-run build/hello.cib main
 ```
 
-运行时加载失败会返回错误名（`BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageHeader`、`BadPackageSize`、`BadTargetMagic`、`BadTargetVersion`、`BadTargetHeader`、`TargetMismatch`、`UnsupportedFeature`、`RuntimeTooOld`、`BadAbi`、`BadImportMagic`、`BadImportVersion`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`Truncated`、`TrailingBytes`、`BadPlan` 等），CLI 输出 `load failed` / `run failed`。
+运行时失败始终返回稳定的 `CI_E_*` 类别；Debug 构建把具体错误名（`BadPackage`、`BadPackageMagic`、`BadTargetMagic`、`TargetMismatch`、`BadAbi`、`BadPlan` 等）写入 `ci_vm_last_error`/`ci_process_last_error` 并输出，Release 构建返回空字符串，只保留状态码。CLI 在 Release 下输出 `load failed: error <code>` / `run failed: error <code>`。
 
 ### 7.1 C ABI 错误码
 
-`ci_vm_load_module`/`ci_vm_load_plans`/`ci_vm_load_package`/`ci_vm_load_library`/`ci_vm_run`/`ci_vm_run_args` 返回 `CI_OK`（0）或下列稳定负值。`ci_vm_destroy_ex`、`ci_process_load_package`、`ci_process_unload_package` 和 `ci_process_last_error_code` 也使用同一套 `CI_E_*` 类别。**返回值本身就是类别**：失败时返回对应的 `CI_E_*`；只有 `errorCode` 无法归类的错误才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别，`ci_vm_last_error` 返回具体错误名（如 `BadPackageMagic`）。成功的调用（以及 `ci_vm_clear_error`）清空错误文本与类别；`ci_vm_result` 返回上次成功运行的 `main` 返回值，不是状态码。
+`ci_vm_load_module`/`ci_vm_load_plans`/`ci_vm_load_package`/`ci_vm_load_library`/`ci_vm_run`/`ci_vm_run_args` 返回 `CI_OK`（0）或下列稳定负值。`ci_vm_destroy_ex`、`ci_process_load_package`、`ci_process_unload_package` 和 `ci_process_last_error_code` 也使用同一套 `CI_E_*` 类别。**返回值本身就是类别**：失败时返回对应的 `CI_E_*`；只有 `errorCode` 无法归类的错误才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别；`ci_vm_last_error` 仅在 Debug 构建返回具体错误名（如 `BadPackageMagic`），Release 构建返回空字符串。成功的调用（以及 `ci_vm_clear_error`）清空错误文本与类别；`ci_vm_result` 返回上次成功运行的 `main` 返回值，不是状态码。
 
 | 值 | 名称 | 覆盖的错误名 |
 | ---: | --- | --- |

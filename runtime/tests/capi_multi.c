@@ -177,7 +177,6 @@ int main(int argc, char **argv) {
     }
     if (rejected != NULL) return 17;
     if (ci_process_last_error_code(process) != CI_E_BAD_PACKAGE) return 18;
-    if (ci_process_last_error(process)[0] == 0) return 19;
     free(bad);
 
     if (ci_vm_run(vms[0], "main") != CI_OK || ci_vm_result(vms[0]) != 42) return 20;

@@ -7,6 +7,8 @@ const platform = @import("ffi/platform.zig");
 const native = @import("ffi/native.zig");
 const link_loader = @import("ffi/link_loader.zig");
 
+const debug_errors = builtin.mode == .Debug;
+
 pub const MAX_FUNCS: usize = 512;
 pub const MAX_NAME: usize = 128;
 pub const MAX_STACK: usize = 8192;
@@ -2965,7 +2967,13 @@ pub fn errorCode(err: anyerror) c_int {
 fn fail(m: *VM, err: anyerror) c_int {
     const code = errorCode(err);
     m.last_error_code = code;
-    m.setError(@errorName(err));
+    if (comptime debug_errors) {
+        const name = @errorName(err);
+        std.debug.print("cinterp: {s}\n", .{name});
+        m.setError(name);
+    } else {
+        m.last_error[0] = 0;
+    }
     return code;
 }
 
@@ -3232,6 +3240,7 @@ pub export fn ci_vm_result(machine: ?*VM) i64 {
 
 pub export fn ci_vm_last_error(machine: ?*VM) [*:0]const u8 {
     const m = machine orelse return "";
+    if (comptime !debug_errors) return "";
     return @ptrCast(&m.last_error[0]);
 }
 
@@ -3335,7 +3344,13 @@ pub const Process = struct {
 fn failProcess(p: *Process, err: anyerror) c_int {
     const code = errorCode(err);
     p.last_error_code = code;
-    p.setError(@errorName(err));
+    if (comptime debug_errors) {
+        const name = @errorName(err);
+        std.debug.print("cinterp: {s}\n", .{name});
+        p.setError(name);
+    } else {
+        p.last_error[0] = 0;
+    }
     return code;
 }
 
@@ -3391,7 +3406,11 @@ pub export fn ci_process_destroy(process: ?*Process) void {
     }
     if (busy != 0) {
         p.last_error_code = CI_E_BUSY;
-        p.setError("ci_process_destroy: VM still running");
+        if (comptime debug_errors) {
+            p.setError("ci_process_destroy: VM still running");
+        } else {
+            p.last_error[0] = 0;
+        }
         // The registry stays alive so the error is observable and the host can
         // retry after joining its run threads.
         p.closing = false;
@@ -3456,6 +3475,7 @@ pub export fn ci_process_unload_package(process: ?*Process, vm: ?*VM) c_int {
 
 pub export fn ci_process_last_error(process: ?*const Process) [*:0]const u8 {
     const p = process orelse return "";
+    if (comptime !debug_errors) return "";
     return @ptrCast(&p.last_error[0]);
 }
 
