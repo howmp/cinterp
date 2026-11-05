@@ -189,35 +189,28 @@ fn archMask(arch: u8) u8 {
 }
 
 fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8) ![]u8 {
-    // CIPL counts are u16 and each length is u8; `validateLimits` already
-    // enforces the runtime caps, these checks keep the serializer safe on its
-    // own (e.g. when called directly from a test).
+    if (plans.len == 0) return allocator.alloc(u8, 0);
     if (plans.len > std.math.maxInt(u16)) return error.TooManyPlans;
     var out = std.ArrayList(u8).init(allocator);
-    try out.appendSlice("CIPL");
-    try out.append(3);
     try out.append(abi_id);
     try writeU16(&out, @intCast(plans.len));
-    try writeU16(&out, 0);
     for (plans) |plan| {
         if (plan.name.len > std.math.maxInt(u8)) return error.NameTooLong;
-        if (plan.args.len > std.math.maxInt(u16) or plan.ret_locs.len > std.math.maxInt(u16)) return error.TooManyLocs;
+        if (plan.args.len > std.math.maxInt(u8) or plan.ret_locs.len > std.math.maxInt(u8)) return error.TooManyLocs;
+        if (plan.sse_count > 15 or plan.conv > 3) return error.TooManyLocs;
         try out.append(@intCast(plan.name.len));
         try out.appendSlice(plan.name);
-        try writeU16(&out, @intCast(plan.args.len));
-        try writeU16(&out, @intCast(plan.ret_locs.len));
+        try out.append(@intCast(plan.args.len));
+        try out.append(@intCast(plan.ret_locs.len));
         try writeU16(&out, plan.stack_size);
-        try out.append(if (plan.sret) 1 else 0);
-        try out.append(plan.sse_count);
-        try out.append(plan.conv);
+        try out.append((if (plan.sret) @as(u8, 1) else 0) |
+            (@as(u8, plan.sse_count) << 1) |
+            (@as(u8, plan.conv) << 5));
         try writeU16(&out, plan.ret_size);
         for (plan.args) |arg| {
-            if (arg.locs.len > std.math.maxInt(u8)) return error.TooManyLocs;
-            try out.append(@intCast(arg.locs.len));
+            if (arg.locs.len > 7) return error.TooManyLocs;
+            try out.append(@as(u8, @intCast(arg.locs.len)) | (if (arg.is_struct) @as(u8, 0x80) else 0));
             try writeU16(&out, arg.size);
-            try writeU16(&out, arg.alignment);
-            try out.append(if (arg.is_struct) 1 else 0);
-            try out.append(0);
             for (arg.locs) |loc| {
                 try out.append(loc.kind);
                 try writeU16(&out, loc.index);

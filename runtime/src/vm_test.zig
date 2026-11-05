@@ -64,20 +64,15 @@ fn buildModule(buf: []u8, funcs: []const FunctionSpec) []const u8 {
 /// One `void cb(void)` plan so `OP_CREATE_CALLBACK` has plan metadata to bind.
 fn buildPlans(buf: []u8) []const u8 {
     var a = Asm{ .buf = buf };
-    a.bytes("CIPL");
-    a.u8v(3);
     a.u8v(platform.abi_id);
     a.u16v(1);
-    a.u16v(0);
     a.u8v("cb".len);
     a.bytes("cb");
-    a.u16v(0);
-    a.u16v(1);
-    a.u16v(0);
-    a.u8v(0);
-    a.u8v(0);
-    a.u8v(0);
-    a.u16v(8);
+    a.u8v(0); // args
+    a.u8v(1); // rets
+    a.u16v(0); // stack
+    a.u8v(0); // flags
+    a.u16v(8); // ret_size
     a.u8v(@intFromEnum(abi.LocKind.rax));
     a.u16v(0);
     a.u16v(8);
@@ -89,10 +84,7 @@ fn buildPlans(buf: []u8) []const u8 {
 /// native calls.
 fn buildEmptyPlans(buf: []u8) []const u8 {
     var a = Asm{ .buf = buf };
-    a.bytes("CIPL");
-    a.u8v(3);
     a.u8v(platform.abi_id);
-    a.u16v(0);
     a.u16v(0);
     return a.code();
 }

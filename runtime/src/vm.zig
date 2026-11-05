@@ -786,7 +786,7 @@ pub const VM = struct {
         const import_bytes = bytes[18 + m + p ..];
         const imports = try link_loader.decodeImports(import_bytes);
         try self.loadModuleBytesInPlace(bytes[18 .. 18 + m]);
-        try self.loadPlans(bytes[18 + m .. 18 + m + p]);
+        if (p != 0) try self.loadPlans(bytes[18 + m .. 18 + m + p]);
         try self.validateImports(&imports);
         self.imports = imports;
     }
@@ -827,8 +827,19 @@ pub const VM = struct {
     }
 
     fn validateImports(self: *VM, imports: *const link_loader.Table) !void {
-        const store = self.plan_store orelse return error.NoPlans;
+        if (imports.count == 0) return;
         const total: usize = imports.count;
+        if (self.plan_store == null) {
+            // A package with no FFI plans can still carry external-data
+            // entries for OP_ADDR_EXTERN.
+            var data_i: usize = 0;
+            while (data_i < total) : (data_i += 1) {
+                if (imports.entries[data_i].plan_index != 0xffff)
+                    return error.BadImportPlan;
+            }
+            return;
+        }
+        const store = self.plan_store.?;
         var i: usize = 0;
         while (i < total) : (i += 1) {
             const entry = &imports.entries[i];

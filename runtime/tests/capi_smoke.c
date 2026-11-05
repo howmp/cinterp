@@ -91,15 +91,16 @@ int main(int argc, char **argv) {
     uint32_t import_len = read_u32(hello + 14);
     size_t plan_off = 18 + (size_t)module_len;
     size_t import_off = plan_off + (size_t)plan_len;
-    if (plan_len < 10) return 31;
+    if (plan_len != 0 && plan_len < 3) return 31;
     if (import_off + (size_t)import_len != hello_size) return 31;
 
     unsigned char *broken = malloc(hello_size);
     if (!broken) return 11;
-    memcpy(broken, hello, hello_size);
-    broken[plan_off + 6] = 0xFF;
-    broken[plan_off + 7] = 0xFF;
-    if (!expect_load_error(vm, broken, hello_size, CI_E_PLANS)) return 33;
+    if (plan_len > 0) {
+        memcpy(broken, hello, hello_size);
+        broken[plan_off] = 0xFF;
+        if (!expect_load_error(vm, broken, hello_size, CI_E_PLANS)) return 33;
+    }
 
     if (import_len > 0) {
         memcpy(broken, hello, hello_size);

@@ -134,15 +134,9 @@ fn readLoc(r: *Reader) !abi.Loc {
 
 pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
     var r = Reader{ .data = bytes };
-
-    const magic = try r.take(4);
-    if (!std.mem.eql(u8, magic, "CIPL")) return error.BadMagic;
-    const version = try r.readU8();
-    if (version != 3) return error.BadVersion;
     const abi_id = try r.readU8();
     if (abi_id < 1 or abi_id > 4) return error.BadAbi;
     const count = try r.readU16();
-    _ = try r.readU16();
     if (count > MAX_PLANS) return error.TooManyPlans;
 
     const store = try allocator.create(Store);
@@ -163,12 +157,10 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
         @memcpy(plan.name[0..nl], name);
         plan.name_len = name_len;
 
-        const args_count = try r.readU16();
-        const ret_count = try r.readU16();
+        const args_count = try r.readU8();
+        const ret_count = try r.readU8();
         const stack_size = try r.readU16();
-        const sret = try r.readU8();
-        const sse_count = try r.readU8();
-        const conv = try r.readU8();
+        const flags = try r.readU8();
         const ret_size = try r.readU16();
 
         const ac: usize = args_count;
@@ -178,25 +170,24 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
         plan.arg_count = args_count;
         plan.ret_count = ret_count;
         plan.stack_size = stack_size;
-        plan.sret = sret != 0;
-        plan.sse_count = sse_count;
+        plan.sret = (flags & 1) != 0;
+        plan.sse_count = (flags >> 1) & 0xf;
+        plan.conv = (flags >> 5) & 3;
         plan.ret_size = ret_size;
-        plan.conv = conv;
 
         var ai: usize = 0;
         while (ai < ac) : (ai += 1) {
             const arg = &plan.args[ai];
-            const loc_count = try r.readU8();
+            const arg_flags = try r.readU8();
+            const loc_count = arg_flags & 0x0f;
             const lc: usize = loc_count;
             const size = try r.readU16();
-            const alignment = try r.readU16();
-            const is_struct = try r.readU8();
-            _ = try r.readU8();
+            const is_struct = (arg_flags & 0x80) != 0;
             if (lc > MAX_LOCS) return error.TooManyLocs;
             arg.loc_count = loc_count;
             arg.size = size;
-            arg.alignment = alignment;
-            arg.is_struct = is_struct != 0;
+            arg.alignment = size;
+            arg.is_struct = is_struct;
 
             var li: usize = 0;
             while (li < lc) : (li += 1) {
@@ -205,8 +196,8 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) !*Store {
             plan.arg_plans[ai] = .{
                 .locs = arg.locs[0..lc],
                 .size = size,
-                .alignment = alignment,
-                .is_struct = is_struct != 0,
+                .alignment = size,
+                .is_struct = is_struct,
             };
         }
 

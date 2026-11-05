@@ -72,18 +72,17 @@ def parse_civm(module: bytes) -> tuple[int, list[str]]:
 
 
 def parse_cipl(plans: bytes) -> tuple[int, int]:
-    if len(plans) < 10 or plans[:4] != b"CIPL":
-        raise Bad("CIPL magic/header")
-    version = plans[4]
-    if version != 3:
-        raise Bad(f"unsupported CIPL version {version}")
-    abi = plans[5]
+    if not plans:
+        return 0, 0
+    if len(plans) < 3:
+        raise Bad("CIPL header truncated")
+    abi = plans[0]
     if abi not in (1, 2, 3, 4):
         raise Bad(f"bad ABI id {abi}")
-    count = u16(plans, 6)
+    count = u16(plans, 1)
     if count > 1024:
         raise Bad(f"plan count {count} > 1024")
-    p = 10
+    p = 3
     for pi in range(count):
         if p >= len(plans):
             raise Bad(f"plan {pi} truncated")
@@ -92,26 +91,21 @@ def parse_cipl(plans: bytes) -> tuple[int, int]:
         if nlen == 0 or nlen > 128 or p + nlen > len(plans):
             raise Bad(f"plan {pi} bad name length {nlen}")
         p += nlen
-        if p + 8 > len(plans):
+        if p + 7 > len(plans):
             raise Bad(f"plan {pi} header truncated")
-        args_count = u16(plans, p)
-        ret_count = u16(plans, p + 2)
-        stack_size = u16(plans, p + 4)
-        p += 8
-        if p >= len(plans):
-            raise Bad(f"plan {pi} conv truncated")
-        p += 1
-        if p + 2 > len(plans):
-            raise Bad(f"plan {pi} ret_size truncated")
-        p += 2
+        args_count = plans[p]
+        ret_count = plans[p + 1]
+        stack_size = u16(plans, p + 2)
+        p += 7
         if args_count > 64 or ret_count > 8 or stack_size > 4096:
             raise Bad(f"plan {pi}: counts/stack out of range")
         for ai in range(args_count):
-            if p + 7 > len(plans):
+            if p + 3 > len(plans):
                 raise Bad(f"plan {pi} arg {ai} truncated")
-            locs = plans[p]
+            flags = plans[p]
+            locs = flags & 0x0F
             size = u16(plans, p + 1)
-            p += 7
+            p += 3
             if locs == 0 or locs > 8 or size == 0:
                 raise Bad(f"plan {pi} arg {ai}: bad locs/size")
             if p + locs * 7 > len(plans):
@@ -123,7 +117,6 @@ def parse_cipl(plans: bytes) -> tuple[int, int]:
     if p != len(plans):
         raise Bad(f"CIPL trailing bytes {len(plans) - p}")
     return abi, count
-
 
 def lint(path: Path, load: bool = True) -> list[str]:
     findings: list[str] = []

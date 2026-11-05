@@ -327,51 +327,40 @@ f80/f128 **不是** 8 字节栈值本身：
 
 ## 5. CIPL 计划表
 
+CIPL v3 是紧凑计划表：没有 magic/version/reserved 头，计划数为 0 时整个 section 省略。
+
 ### 5.1 头部
 
 ```
 offset size field
-0      4    magic = "CIPL"
-4      1    version（2 或 3；编译器当前写 3）
-5      1    abi_id
-6      2    plan_count (u16)
-8      2    reserved = 0
+0      1    abi_id
+1      2    plan_count (u16 LE)
 ```
-
-`version` 兼容：
-
-- v2：每计划没有 `conv` 字节；
-- 每计划包含 `conv` 字节；当前编译器写 v3，loader 只接受 v3。
 
 ### 5.2 计划记录（重复 `plan_count` 次）
 
 ```
 size  field
 1     name_len
-N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列化前按 128 拒绝）
-2     args_count
-2     ret_count
+N     name bytes（ASCII/UTF-8，有效上限 128）
+1     args_count
+1     ret_count
 2     stack_size
-1     sret（0/1）
-1     sse_count
-1     conv（仅 v3；Win32：0=cdecl、1=stdcall、2=fastcall、3=thiscall；其他 ABI 忽略）
+1     flags：bit0=sret，bits1..4=sse_count，bits5..6=conv
 2     ret_size
 ```
 
 随后 `args_count` 个参数记录：
 
 ```
-1     loc_count
+1     flags：低 4 位=loc_count，bit7=is_struct
 2     size
-2     alignment
-1     is_struct（0/1）
-1     reserved
 ...   loc_count × Loc
 ```
 
 最后 `ret_count` 个返回 `Loc`。
 
-`Loc`：
+`Loc`（7 B）：
 
 ```
 1     kind
@@ -402,16 +391,13 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 - `args_count`：实际传入的参数个数；上限 64。
 - `loc_count`：一个参数可拆成多个位置（HFA 的 xmm0/xmm1…）；上限 8。
 - `size`：参数的字节宽度。
-- `offset`：
-  - 参数：在 **marshal arg block** 中的偏移；
-  - `stack` loc：`index` 是栈参数缓冲区内的字节偏移；
-  - 返回 loc：在返回缓冲区中的偏移。
-- `is_struct=1`：参数的 VM 值是“指向结构体字节的指针”；运行时从该地址拷贝 `size` 字节到 arg block（byval/HFA/大结构体）。
+- `offset`：参数在 marshal arg block 中的偏移；`stack` loc 的 `index` 是栈参数缓冲区内的字节偏移；返回 loc 的 offset 是返回缓冲区偏移。
+- `is_struct=1`：参数的 VM 值是指向结构体字节的指针；运行时从该地址拷贝 `size` 字节到 arg block。
 - `sret=1`：隐藏返回指针；`sret` loc 指示隐藏指针槽。
-- `sse_count`：SysV `%al` / Win64 varargs 的向量计数；其他 ABI 通常为 0。
-- `conv`：Win32 调用约定；0=cdecl，1=stdcall，2=fastcall，3=thiscall；其他 ABI 忽略该字节。fastcall/thiscall 可用于原生、间接和 callback 计划；trampoline 会保存 ECX/EDX（thiscall 只用 ECX），并按对应的寄存器/栈 layout 读取参数。
-- `ret_size`：sret/聚合返回缓冲区的字节数。
-- `ret_count > 0`：普通返回 loc（`ret_count ≤ 8`）；多 loc、`st0` 或单 loc `size > 8` 时，运行时会把返回块复制到按调用分配的 VM 临时块并压入其地址（供 `extractvalue`/聚合 store）。该块存活到当前帧返回；长循环中大量宽返回会消耗线性内存。AArch64 的 4 元素 HFA 用 `xmm0`-`xmm3` 四个返回 loc（kind 6/7/9/10）。
+- `sse_count`：SysV `%al` / Win64 varargs 的向量计数。
+- `conv`：Win32 调用约定；0=cdecl，1=stdcall，2=fastcall，3=thiscall；其他 ABI 忽略。
+- `ret_size`：sret/聚合返回缓冲区字节数。
+- `ret_count > 0`：普通返回 loc（`ret_count ≤ 8`）；多 loc、`st0` 或单 loc `size > 8` 时，运行时会把返回块复制到按调用分配的 VM 临时块并压入其地址。
 - `stack_size`：计划需要的栈参数字节数；运行时校验不超过 4096。
 
 ### 5.4 ABI id 与 LocKind 的对应
@@ -423,17 +409,17 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 | 3 | Win32 x86 | `call_x86_win32.S` |
 | 4 | AArch64 AAPCS64 | `call_arm64_aapcs.S` |
 
-计划表只描述位置，不描述实际寄存器编号映射；具体 `gpr[0]`/`xmm[0]` 由目标 ABI 的 `platform.zig` frame 和固定汇编引擎映射。计划中的 `index` 是 ABI 约定的槽位号，不是宿主绝对寄存器号。
+计划表只描述位置，不描述实际寄存器编号映射；具体 `gpr[0]`/`xmm[0]` 由目标 ABI 的 `platform.zig` frame 和固定汇编引擎映射。
 
 ## 6. 完整示例：`hello.cib`
 
-运行 `./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib` 后（CIPKG v3），下面是一次实际构建的 `xxd -g1` 注解；不同编译器版本可能改变寄存器/指令选择，但字段布局不变。该包共 111B：module 83B、plans 10B、imports 0B，CIVM `code_len` 为 60B：
+运行 `./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib` 后（CIPKG v3），下面是一次实际构建的 `xxd -g1` 注解；该包共 101B：module 83B、plans 0B、imports 0B，CIVM `code_len` 为 60B：
 
 ```
 43 49 50 4b 47        CIPKG
 03                    version 3
 53 00 00 00           module_len = 83
-0a 00 00 00           plan_len = 10
+00 00 00 00           plan_len = 0
 00 00 00 00           import_len = 0
 
 43 49 56 4d           CIVM
@@ -458,15 +444,9 @@ N     name bytes（ASCII/UTF-8，运行时有效上限 128；编译器在序列�
 10 20 00 00 00 00 00 00 00   LOAD_CONST_I64 32
 1f                    SHR_S
 01                    RET
-
-43 49 50 4c           CIPL
-03                    version 3
-01                    abi_id 1 (SysV)
-00 00                 plan_count = 0
-00 00                 reserved
 ```
 
-该包没有外部调用，所以没有 CIPI section（`import_len=0`）。带自动链接的包会在 CIPI 中追加 provider 记录；可用 `--dump-imports` 查看，例如：
+该包没有计划和外部调用，所以 CIPL/CIPI 两个 section 都省略。带自动链接的包会在 section 末尾追加 CIPI；可用 `--dump-imports` 查看，例如：
 
 ```
 >>> cinterp-run --dump-target --dump-imports --load-only build/ffi_printf.cib
