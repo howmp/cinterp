@@ -329,24 +329,92 @@ make fuzz-bytecode        # 结构化 CIVM 变异
 make fuzz-ffi-exec
 make fuzz-capi-asan
 make fuzz-sanitizer
-make size                 # Runtime ReleaseSmall 体积
+make size                  # Runtime ReleaseSmall 体积
 make size-cross           # 四个目标体积
+make test-winapi          # Windows <windows.h> 示例（Wine）
+make test-suites-cross    # Win64/Win32/ARM64 交叉套件
 make release-artifacts    # tarball + SBOM + SHA256SUMS
 make evidence             # test/lint/size/smoke/differential + checker
 make check-version        # VERSION 单一来源校验
 ```
 
-当前基线：
+### 12.1 命令行与构建选项
+
+编译器：
+
+```bash
+./build/cinterp-cc compile source.c -o out.cib \
+  [--dump] [--dump-ast] [--dump-imports] [--keep-ir] [--target TARGET] \
+  [--cc zig] [--cc-path PATH] [--cib-version 1|2] [--no-auto-link]
+```
+
+`--dump` 打印函数和 FFI 计划（包括 `conv`）；`--dump-ast` 打印解析后的 typed AST；
+`--dump-imports` 打印 CIB provider 绑定；`--keep-ir` 保留生成的 LLVM IR。
+`--cc-path` 选择作为 C 前端的 `zig`，`--cc` 目前只接受 `zig`；`--cib-version 1`
+生成不带 CIPM/CIPI 的旧包；`--no-auto-link` 关闭 C 标准库/Windows API 自动绑定。
+目标为 `x86_64-linux`（默认）、`x86_64-windows`、`i686-windows`、`aarch64-linux`。
+Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖；Windows exe 使用
+`WinStartup`/TLS 入口而不链接 MinGW CRT，静态库/共享库仍保留 CRT。
+
+运行时：
+
+```bash
+./runtime/zig-out/bin/cinterp-run <package.cib> [entry] [-- arg...]
+./runtime/zig-out/bin/cinterp-run --repeat N [--entry NAME] [--jobs N] <package.cib> [entry] [-- arg...]
+./runtime/zig-out/bin/cinterp-run --repeat N [--entry NAME] [--jobs N] --run-all <package.cib>... [-- arg...]
+```
+
+单包单次运行输出一行 `result: <i32>`；`--repeat N` 在同一个 VM 上使用全新镜像重复运行；
+`--run-all` 为每个包创建 VM；`--jobs N` 并行运行不同 VM；`--load-only`、
+`--dump-target`、`--dump-imports` 对每个包生效。成功退出码 0，加载/运行失败 1，
+用法或 I/O 错误 2；C `main` 的返回值只通过 `result:` 输出。
+
+构建配置：`Debug`/`ReleaseSafe` 保留完整诊断、unwind 表、帧指针和 panic 栈回溯；
+`ReleaseSmall`（`make runtime` 的默认值）剥离 unwind 表、帧指针、panic 跟踪和符号，
+ELF 发布产物还会去掉 `.eh_frame`/`.eh_frame_hdr`。当前 Linux x64 体积约为
+Debug 8.8 MiB、ReleaseSmall 111,456 B。详细体积和 post-link 处理见下文。
+
+### 12.2 当前基线
 
 - `make test-suites-full`：**4318/4521 通过，203 skip**；其中 4 个 compile-only 压力用例因超过运行时上限显式 skip（512 imports / 64 args / 2 MiB module），另有 1 个 libc-test 用例因异步外部线程 callback 的 fail-fast 策略显式 skip。
+- 通过用例中约 55% 是仅编译（gcc-torture-compile 1408 + llvm-regression-c 934 + compcert-compile 30 = 2372）；它们只验证编译器接受源码并产出包，不验证程序输出。可执行基线是其余 1861 个通过用例。
 - `make test-suites`：395/495（100 skip）。
 - `make test-suites-nightly`：4446/4649（203 skip）；YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure。
 - 并发：`test_suites.py --jobs` 默认 CPU 核数，且所有选中 suite 共用一个全局 worker 池；`SUITE_JOBS` 可覆盖。nightly 由 `scripts/test_nightly.sh` 并行执行 suite 与 `generate_diff`，`GEN_JOBS`/`MINIMIZE_JOBS` 控制差分并发，日志为 `build/nightly-suite.log` 和 `build/nightly-diff.log`；顺序模式为 `make test-suites-nightly-serial`，`NIGHTLY_MINIMIZE=0` 跳过最小化。
-- `scripts/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行。
+- `scripts/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
 - 多 CIB/线程：`scripts/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）以及 CLI `--repeat 300` 的自动/显式 callback 用例。
 - 本地 c-testsuite 17/17；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
 - ReleaseSmall：native Linux x64 111,456 B；size-cross static sysv 98,784 B、Win64 88,576 B、Win32 93,696 B、ARM64 110,912 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。
-- release tarball：Linux x86-64 含 `bin/cinterp-cc` 和 `bin/cinterp`，其余为 runtime-only；每个 tarball 带自己的 README、SBOM，compiler tarball 额外带 `THIRD_PARTY_NOTICES.md`。
+
+### 12.3 发布压缩包
+
+`make release-artifacts` 会把四个目标压缩包写入 `build/release/`，并生成每个目标的
+SPDX SBOM 和 `SHA256SUMS`（设置 `CINTERP_GPG_KEY` 时进行 GPG 签名）：
+
+| 压缩包 | 内容 |
+| --- | --- |
+| `cinterp-<version>-sysv-x86_64` | 编译器 + 运行时，Linux x86-64（`bin/cinterp-cc`、`bin/cinterp`） |
+| `cinterp-<version>-win64-x86_64` | 仅运行时，Windows x64 |
+| `cinterp-<version>-win32-x86` | 仅运行时，Windows x86 |
+| `cinterp-<version>-arm64` | 仅运行时，Linux AArch64 |
+
+只有 Linux x86-64 压缩包包含 `bin/cinterp-cc`；另外三个包含运行时、头文件、
+pkg-config/CMake 元数据和 Rust 绑定。每个压缩包的 `README.md` 由
+[`packaging/README.release.md.in`](./packaging/README.release.md.in) 渲染。
+`THIRD_PARTY_NOTICES.md` 只随编译器压缩包发布；runtime-only 包不携带派生符号索引。
+
+### 12.4 验证与证据
+
+运行时在调用原生代码前校验包长度、目标元数据（arch/OS/ABI/指针宽度/特性）、CIPI 的
+plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引以及 marshal 偏移/大小；
+格式错误的包会干净地失败。`cinterp-run --load-only` 不执行即可校验包，`make fuzz` 对种子包
+做变异/截断并检查崩溃。自动 provider 只接受库名，不接受路径；指向原生分配内存的 C 指针
+属于受信任边界，不可信包应由宿主隔离。
+
+`scripts/check_plan_evidence.py` 读取结构化产物（`build/test-suites*.json`、
+`build/generate-diff-nightly.json`、`build/release/*.tar.gz`、`SHA256SUMS` 和各交叉运行时），
+不依赖文本日志。`make evidence` 会生成本地子集并运行 checker；完整、交叉和 nightly 报告在
+本地报告为 "not provided"，由 CI 产物补齐。
 
 ## 13. 当前边界与明确不支持
 
