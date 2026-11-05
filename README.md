@@ -126,7 +126,7 @@ make release-artifacts
 - `-Doptimize=ReleaseSmall`（`make runtime` 的默认值）：剥离 unwind 表、帧指针、panic
   跟踪和符号；ELF 发布产物还会额外去掉 `.eh_frame`/`.eh_frame_hdr`。简洁的错误码和 CLI
   消息仍然保留。
-- 当前体积：Debug ≈ 8.8 MiB，ReleaseSmall 104,408 B ≈ 102 KiB（Linux x64）。
+- 当前体积：Debug ≈ 8.8 MiB，ReleaseSmall 111,664 B ≈ 109 KiB（Linux x64）。
 
 `make test` 会运行运行时与编译器的单元测试、所有端到端示例、C 嵌入 API（静态库和共享
 库）以及负向路径（缺失输入、损坏/截断的包、未知符号、目标不匹配）。`make c-testsuite`

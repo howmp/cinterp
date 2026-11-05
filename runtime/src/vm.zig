@@ -6,7 +6,6 @@ const plan_loader = @import("ffi/plan_loader.zig");
 const platform = @import("ffi/platform.zig");
 const native = @import("ffi/native.zig");
 const link_loader = @import("ffi/link_loader.zig");
-const emit = @import("out.zig");
 
 pub const MAX_FUNCS: usize = 512;
 pub const MAX_NAME: usize = 128;
@@ -1264,24 +1263,21 @@ pub const VM = struct {
     }
 
     fn buildArgArea(self: *VM, cargs: []const []const u8) !struct { usize, u64, u64 } {
-        if (comptime builtin.os.tag == .windows) return self.buildArgAreaWindows(cargs);
-        return self.buildArgAreaPosix(cargs);
-    }
-
-    /// POSIX: `std.os.environ` is already a NUL-terminated UTF-8 `KEY=VALUE`
-    /// array, so the C `envp` image is copied without allocating.
-    fn buildArgAreaPosix(self: *VM, cargs: []const []const u8) !struct { usize, u64, u64 } {
         const ptr_size = @sizeOf(usize);
         const max_ptrs = 256;
         if (cargs.len > max_ptrs) return error.TooManyArgs;
-        const env = std.os.environ;
+        var env = std.process.getEnvMap(std.heap.page_allocator) catch return error.OutOfMemory;
+        defer env.deinit();
         const arg_count = cargs.len;
-        if (env.len > max_ptrs - arg_count) return error.TooManyArgs;
+        if (env.count() > max_ptrs - arg_count) return error.TooManyArgs;
         var strings_len: usize = 0;
         for (cargs) |arg| strings_len += arg.len + 1;
-        for (env) |entry| strings_len += std.mem.len(entry) + 1;
+        var env_iter_count = env.iterator();
+        while (env_iter_count.next()) |entry| {
+            strings_len += entry.key_ptr.*.len + 1 + entry.value_ptr.*.len + 1;
+        }
         const arg_ptrs_size = (arg_count + 1) * ptr_size;
-        const env_ptrs_size = (env.len + 1) * ptr_size;
+        const env_ptrs_size = (env.count() + 1) * ptr_size;
         const total = strings_len + arg_ptrs_size + env_ptrs_size + 16;
         if (total >= self.mem.len) return error.OutOfMemory;
         const area = self.mem.len - total;
@@ -1295,12 +1291,18 @@ pub const VM = struct {
             pos += arg.len + 1;
         }
         var env_ptrs: [max_ptrs]usize = undefined;
+        var env_iter = env.iterator();
         var env_count: usize = 0;
-        for (env) |entry| {
-            const item = std.mem.span(entry);
+        while (env_iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const value = entry.value_ptr.*;
             env_ptrs[env_count] = @intFromPtr(&self.mem[pos]);
-            @memcpy(self.mem[pos .. pos + item.len], item);
-            pos += item.len;
+            @memcpy(self.mem[pos .. pos + key.len], key);
+            pos += key.len;
+            self.mem[pos] = '=';
+            pos += 1;
+            @memcpy(self.mem[pos .. pos + value.len], value);
+            pos += value.len;
             self.mem[pos] = 0;
             pos += 1;
             env_count += 1;
@@ -1322,77 +1324,11 @@ pub const VM = struct {
             pos += ptr_size;
         }
         @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&zero));
-        return .{ arg_count, @intFromPtr(&self.mem[argv_off]), @intFromPtr(&self.mem[envp_off]) };
-    }
-
-    /// Windows: the PEB environment block is UTF-16. Convert each entry to
-    /// WTF-8 directly into linear memory (upper bound: 3 bytes per WCHAR) so
-    /// the process still supplies a real `envp` to C `main`.
-    fn buildArgAreaWindows(self: *VM, cargs: []const []const u8) !struct { usize, u64, u64 } {
-        const ptr_size = @sizeOf(usize);
-        const max_ptrs = 256;
-        if (cargs.len > max_ptrs) return error.TooManyArgs;
-        const wenv = std.os.windows.peb().ProcessParameters.Environment;
-        const arg_count = cargs.len;
-        var env_count: usize = 0;
-        var env_bytes: usize = 0;
-        var wi: usize = 0;
-        while (wenv[wi] != 0) {
-            var wj = wi;
-            while (wenv[wj] != 0) wj += 1;
-            env_bytes += (wj - wi) * 3 + 1;
-            env_count += 1;
-            wi = wj + 1;
-        }
-        if (env_count > max_ptrs - arg_count) return error.TooManyArgs;
-        var strings_len: usize = 0;
-        for (cargs) |arg| strings_len += arg.len + 1;
-        const arg_ptrs_size = (arg_count + 1) * ptr_size;
-        const env_ptrs_size = (env_count + 1) * ptr_size;
-        const total = strings_len + env_bytes + arg_ptrs_size + env_ptrs_size + 16;
-        if (total >= self.mem.len) return error.OutOfMemory;
-        const area = self.mem.len - total;
-        self.arg_area_start = area;
-        var pos: usize = area;
-        var arg_ptrs: [max_ptrs]usize = undefined;
-        for (cargs, 0..) |arg, idx| {
-            arg_ptrs[idx] = @intFromPtr(&self.mem[pos]);
-            @memcpy(self.mem[pos .. pos + arg.len], arg);
-            self.mem[pos + arg.len] = 0;
-            pos += arg.len + 1;
-        }
-        var env_ptrs: [max_ptrs]usize = undefined;
-        var n: usize = 0;
-        wi = 0;
-        while (wenv[wi] != 0) {
-            var wj = wi;
-            while (wenv[wj] != 0) wj += 1;
-            env_ptrs[n] = @intFromPtr(&self.mem[pos]);
-            const len = std.unicode.wtf16LeToWtf8(self.mem[pos..], wenv[wi..wj]);
-            pos += len;
-            self.mem[pos] = 0;
-            pos += 1;
-            n += 1;
-            wi = wj + 1;
-        }
-        pos = (pos + ptr_size - 1) & ~@as(usize, ptr_size - 1);
-        const argv_off = pos;
-        for (arg_ptrs[0..arg_count]) |p| {
-            var ptr: usize = p;
-            @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&ptr));
-            pos += ptr_size;
-        }
-        var zero: usize = 0;
-        @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&zero));
-        pos += ptr_size;
-        const envp_off = pos;
-        for (env_ptrs[0..env_count]) |p| {
-            var ptr: usize = p;
-            @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&ptr));
-            pos += ptr_size;
-        }
-        @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&zero));
-        return .{ arg_count, @intFromPtr(&self.mem[argv_off]), @intFromPtr(&self.mem[envp_off]) };
+        return .{
+            arg_count,
+            @intFromPtr(&self.mem[argv_off]),
+            @intFromPtr(&self.mem[envp_off]),
+        };
     }
 
     pub fn runCallback(self: *VM, func_index: usize, args: []const Value) !i64 {
@@ -2491,15 +2427,7 @@ pub const VM = struct {
                     ip = 0;
                 },
                 else => {
-                    emit.lock();
-                    emit.str("bad opcode 0x");
-                    emit.hex(op);
-                    emit.str(" func=");
-                    emit.u64dec(current);
-                    emit.str(" ip=");
-                    emit.usizeDec(ip);
-                    emit.str("\n");
-                    emit.unlock();
+                    std.debug.print("bad opcode 0x{x} func={d} ip={d}\n", .{ op, current, ip });
                     return error.BadOpcode;
                 },
             }

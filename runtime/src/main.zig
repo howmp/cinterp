@@ -1,24 +1,6 @@
 const std = @import("std");
 const vm = @import("vm.zig");
-const out = @import("out.zig");
 const build_options = @import("build_options");
-
-const builtin = @import("builtin");
-
-/// ReleaseSmall/ReleaseFast keep panic output but skip the default handler's
-/// stack-trace machinery (which is compiled out anyway when debug info is
-/// stripped). Debug/ReleaseSafe keep the full default handler.
-pub const panic = if (builtin.mode == .ReleaseSmall or builtin.mode == .ReleaseFast)
-    struct {
-        fn handler(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
-            out.str("panic: ");
-            out.str(msg);
-            out.str("\n");
-            std.posix.abort();
-        }
-    }.handler
-else
-    std.builtin.default_panic;
 
 /// Largest C argv a run can carry: `ci_vm_run_args` accepts at most 256
 /// entries and argv[0] (the package path) is one of them.
@@ -80,29 +62,13 @@ const Runner = struct {
         var done: usize = 0;
         while (done < self.repeat) : (done += 1) {
             if (self.multi) {
-                out.lock();
-                out.str("package: ");
-                out.str(job.path);
-                out.str(" run: ");
-                out.usizeDec(done + 1);
-                out.str("/");
-                out.usizeDec(self.repeat);
-                out.str("\n");
-                out.unlock();
+                std.debug.print("package: {s} run: {d}/{d}\n", .{ job.path, done + 1, self.repeat });
             }
             if (vm.ci_vm_run_args(job.machine, self.entry, @intCast(argc), argv_buf[0..argc].ptr) != 0) {
-                out.lock();
-                out.str("cinterp-run: run failed: ");
-                out.str(std.mem.span(vm.ci_vm_last_error(job.machine)));
-                out.str("\n");
-                out.unlock();
+                std.debug.print("cinterp-run: run failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(job.machine))});
                 return false;
             }
-            out.lock();
-            out.str("result: ");
-            out.i64dec(@as(i32, @truncate(vm.ci_vm_result(job.machine))));
-            out.str("\n");
-            out.unlock();
+            std.debug.print("result: {d}\n", .{@as(i32, @truncate(vm.ci_vm_result(job.machine)))});
         }
         return true;
     }
@@ -119,96 +85,50 @@ const Runner = struct {
     }
 };
 
-fn usageFail(msg: []const u8) noreturn {
-    out.str("cinterp-run: ");
-    out.str(msg);
-    out.str("\n");
-    out.str(usage);
-    std.process.exit(2);
-}
-
-/// `usageFail` for the two messages that name a flag and/or its bad value.
-fn usageFailFlag(flag: []const u8, msg: []const u8) noreturn {
-    out.str("cinterp-run: ");
-    out.str(flag);
-    out.str(msg);
-    out.str("\n");
-    out.str(usage);
-    std.process.exit(2);
-}
-
-fn usageFailValue(flag: []const u8, value: []const u8) noreturn {
-    out.str("cinterp-run: ");
-    out.str(flag);
-    out.str(" requires an integer >= 1, got '");
-    out.str(value);
-    out.str("'\n");
-    out.str(usage);
+fn usageFail(comptime fmt: []const u8, fmt_args: anytype) noreturn {
+    std.debug.print("cinterp-run: " ++ fmt ++ "\n", fmt_args);
+    std.debug.print("{s}", .{usage});
     std.process.exit(2);
 }
 
 fn outOfMemory() noreturn {
-    out.str("cinterp-run: out of memory\n");
+    std.debug.print("cinterp-run: out of memory\n", .{});
     std.process.exit(2);
 }
 
 /// `--repeat`/`--jobs` value: a decimal integer >= 1.
 fn countValue(args: []const [:0]u8, i: *usize, flag: []const u8) usize {
-    if (i.* + 1 >= args.len) usageFailFlag(flag, " requires a value");
+    if (i.* + 1 >= args.len) usageFail("{s} requires a value", .{flag});
     const text: []const u8 = args[i.* + 1];
-    const value = out.parseUsize(text) orelse usageFailValue(flag, text);
-    if (value < 1) usageFailValue(flag, text);
+    const value = std.fmt.parseUnsigned(usize, text, 10) catch
+        usageFail("{s} requires an integer >= 1, got '{s}'", .{ flag, text });
+    if (value < 1) usageFail("{s} requires an integer >= 1, got '{s}'", .{ flag, text });
     i.* += 2;
     return value;
 }
 
 fn dumpPackage(job: Job, dump_target: bool, dump_imports: bool, header: bool) void {
-    if (header) {
-        out.str("package: ");
-        out.str(job.path);
-        out.str("\n");
-    }
+    if (header) std.debug.print("package: {s}\n", .{job.path});
     if (dump_target) {
         if (job.machine.target) |t| {
-            out.str("target: ");
-            out.str(t.triple[0..t.triple_len]);
-            out.str(" arch=");
-            out.u64dec(t.arch);
-            out.str(" os=");
-            out.u64dec(t.os);
-            out.str(" abi=");
-            out.u64dec(t.abi);
-            out.str(" ptr=");
-            out.u64dec(t.ptr_bits);
-            out.str(" endian=");
-            out.u64dec(t.endian);
-            out.str(" features=0x");
-            out.hex(t.features);
-            out.str(" link_db=");
-            out.str(t.link_db[0..t.link_db_len]);
-            out.str("\n");
+            std.debug.print("target: {s} arch={d} os={d} abi={d} ptr={d} endian={d} features=0x{x} link_db={s}\n", .{
+                t.triple[0..t.triple_len], t.arch, t.os, t.abi, t.ptr_bits, t.endian, t.features, t.link_db[0..t.link_db_len],
+            });
         } else {
-            out.str("target: legacy-v1 (inferred)\n");
+            std.debug.print("target: legacy-v1 (inferred)\n", .{});
         }
     }
     if (dump_imports) {
         var ii: usize = 0;
         while (ii < job.machine.imports.count) : (ii += 1) {
             const e = &job.machine.imports.entries[ii];
-            out.str("import[plan ");
-            out.u64dec(e.plan_index);
-            out.str("] ");
-            out.str(e.name[0..e.name_len]);
-            out.str(":");
+            std.debug.print("import[plan {d}] {s}:", .{ e.plan_index, e.name[0..e.name_len] });
             var pi: usize = 0;
             while (pi < e.provider_count) : (pi += 1) {
                 const pr = &e.providers[pi];
-                out.str(" ");
-                out.str(pr.name[0..pr.name_len]);
-                out.str(":");
-                out.str(pr.symbol[0..pr.symbol_len]);
+                std.debug.print(" {s}:{s}", .{ pr.name[0..pr.name_len], pr.symbol[0..pr.symbol_len] });
             }
-            out.str("\n");
+            std.debug.print("\n", .{});
         }
     }
 }
@@ -247,13 +167,11 @@ pub fn main() !void {
     while (i < args.len) {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--version")) {
-            out.str("cinterp-run ");
-            out.str(build_options.version);
-            out.str("\n");
+            std.debug.print("cinterp-run {s}\n", .{build_options.version});
             return;
         }
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            out.str(usage);
+            std.debug.print("{s}", .{usage});
             return;
         }
         if (std.mem.eql(u8, arg, "--load-only")) {
@@ -285,13 +203,13 @@ pub fn main() !void {
             continue;
         }
         if (std.mem.eql(u8, arg, "--entry")) {
-            if (i + 1 >= args.len) usageFail("--entry requires a name");
+            if (i + 1 >= args.len) usageFail("--entry requires a name", .{});
             chosen_entry = args[i + 1].ptr;
             i += 2;
             continue;
         }
         if (std.mem.eql(u8, arg, "--lib")) {
-            if (i + 1 >= args.len) usageFail("--lib requires a path");
+            if (i + 1 >= args.len) usageFail("--lib requires a path", .{});
             libs.append(args[i + 1]) catch outOfMemory();
             i += 2;
             continue;
@@ -306,8 +224,8 @@ pub fn main() !void {
     if (i < args.len) i += 1;
     while (i < args.len) : (i += 1) tail.append(args[i].ptr) catch outOfMemory();
 
-    if (packages.items.len == 0) usageFail("missing package");
-    if (tail.items.len + 1 > max_args) usageFail("too many arguments after --");
+    if (packages.items.len == 0) usageFail("missing package", .{});
+    if (tail.items.len + 1 > max_args) usageFail("too many arguments after --", .{});
 
     // Legacy grammar: `<package.cib> [entry]`. `--run-all` is the only way to
     // name more than one package, so `cinterp-run a.cib b.cib` still means
@@ -315,10 +233,10 @@ pub fn main() !void {
     var entry: [*:0]const u8 = "main";
     if (!run_all) {
         if (packages.items.len > 2) {
-            usageFail("unexpected extra argument; use --run-all to run multiple packages");
+            usageFail("unexpected extra argument; use --run-all to run multiple packages", .{});
         }
         if (packages.items.len == 2) {
-            if (chosen_entry != null) usageFail("a positional entry and --entry are mutually exclusive");
+            if (chosen_entry != null) usageFail("a positional entry and --entry are mutually exclusive", .{});
             entry = packages.items[1].ptr;
         }
     }
@@ -341,20 +259,14 @@ pub fn main() !void {
     var load_failed = false;
     for (package_paths) |path| {
         const bytes = std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| {
-            out.str("cinterp-run: cannot read ");
-            out.str(path);
-            out.str(": ");
-            out.str(@errorName(err));
-            out.str("\n");
+            std.debug.print("cinterp-run: cannot read {s}: {s}\n", .{ path, @errorName(err) });
             std.process.exit(2);
         };
         var machine_opt: ?*vm.VM = null;
         const status = vm.ci_process_load_package(process, bytes.ptr, bytes.len, &machine_opt);
         allocator.free(bytes);
         if (status != 0) {
-            out.str("cinterp-run: load failed: ");
-            out.str(std.mem.span(vm.ci_process_last_error(process)));
-            out.str("\n");
+            std.debug.print("cinterp-run: load failed: {s}\n", .{std.mem.span(vm.ci_process_last_error(process))});
             if (!multi) std.process.exit(1);
             load_failed = true;
             continue;
@@ -363,9 +275,7 @@ pub fn main() !void {
         var lib_failed = false;
         for (libs.items) |lib| {
             if (vm.ci_vm_load_library(machine, lib.ptr) != 0) {
-                out.str("cinterp-run: load library failed: ");
-                out.str(std.mem.span(vm.ci_vm_last_error(machine)));
-                out.str("\n");
+                std.debug.print("cinterp-run: load library failed: {s}\n", .{std.mem.span(vm.ci_vm_last_error(machine))});
                 if (!multi) std.process.exit(1);
                 load_failed = true;
                 lib_failed = true;
