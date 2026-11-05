@@ -70,14 +70,14 @@ offset size field
 1     callconv         # 0=cdecl, 1=stdcall/winapi, 2=fastcall, 3=thiscall（后三者仅 Win32）
 1     arch_mask        # bit0=x86_64, bit1=x86, bit2=aarch64; 0=all
 2     min_os           # 0=unknown; Windows 编码为 (major<<8)|minor
-1     name_len
-N     name             # 逻辑符号名（plan 名，可能含 Win32 修饰）
+1     name_len         # function entry 固定为 0；data entry 为名字长度
+N     name             # data 符号名；function 复用 CIPL plan name
 1     provider_count
 provider[]:
   1   kind             # 0=system library name, 1=SONAME/DLL name, 2=path（自动链接禁用）
   1   name_len
   N   name             # e.g. libc.so.6 / libm.so.6 / ucrtbase.dll / user32.dll
-  1   symbol_len
+  1   symbol_len       # 0 = 复用该 entry 的 plan/data 名称
   N   symbol           # provider 内真实符号，例如 _snprintf / GetTickCount64
   2   ordinal          # 0=按名；非 0=Windows ordinal
   1   version_len

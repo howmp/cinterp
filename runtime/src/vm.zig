@@ -937,6 +937,17 @@ pub const VM = struct {
         return handle;
     }
 
+    fn importedSymbolName(self: *VM, plan_index: u16, entry: *const link_loader.ImportEntry, provider: *const link_loader.Provider) []const u8 {
+        const explicit = provider.symbol[0..provider.symbol_len];
+        if (explicit.len != 0) return explicit;
+        if (entry.kind == 0) {
+            const store = self.plan_store orelse return "";
+            const plan = store.planAt(plan_index) orelse return "";
+            return plan.name[0..plan.name_len];
+        }
+        return entry.name[0..entry.name_len];
+    }
+
     fn loadImported(self: *VM, plan_index: u16, entry_index: usize, entry: *const link_loader.ImportEntry) !?*const anyopaque {
         _ = entry_index;
         var pi: usize = 0;
@@ -952,7 +963,8 @@ pub const VM = struct {
                 if (native.symbolOrdinal(handle, provider.ordinal)) |sym| return sym;
                 continue;
             }
-            const sym_name = provider.symbol[0..provider.symbol_len];
+            const sym_name = self.importedSymbolName(plan_index, entry, provider);
+            if (sym_name.len == 0) continue;
             if (sym_name.len >= self.symbol_buf.len) return error.SymbolTooLong;
             @memcpy(self.symbol_buf[0..sym_name.len], sym_name);
             self.symbol_buf[sym_name.len] = 0;
@@ -975,9 +987,11 @@ pub const VM = struct {
             const slot = entry_index * link_loader.MAX_PROVIDERS + pi;
             const handle = try self.cachedProvider(&self.data_import_handles, slot, lib_name) orelse continue;
             const sym_name = provider.symbol[0..provider.symbol_len];
-            if (sym_name.len >= self.symbol_buf.len) return error.SymbolTooLong;
-            @memcpy(self.symbol_buf[0..sym_name.len], sym_name);
-            self.symbol_buf[sym_name.len] = 0;
+            const resolved_name = if (sym_name.len != 0) sym_name else name;
+            if (resolved_name.len == 0) continue;
+            if (resolved_name.len >= self.symbol_buf.len) return error.SymbolTooLong;
+            @memcpy(self.symbol_buf[0..resolved_name.len], resolved_name);
+            self.symbol_buf[resolved_name.len] = 0;
             const cname: [*:0]const u8 = @ptrCast(&self.symbol_buf[0]);
             if (native.symbol(handle, cname)) |sym| return sym;
         }

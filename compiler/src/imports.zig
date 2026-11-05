@@ -78,8 +78,14 @@ pub const Table = struct {
             try out.append(entry.call_conv);
             try out.append(entry.arch_mask);
             try writeU16(&out, entry.min_os);
-            try out.append(@intCast(entry.name.len));
-            try out.appendSlice(entry.name);
+            // Function entries reuse the CIPL plan name; only data entries
+            // need a name in CIPI.
+            if (entry.kind == 0) {
+                try out.append(0);
+            } else {
+                try out.append(@intCast(entry.name.len));
+                try out.appendSlice(entry.name);
+            }
             try out.append(@intCast(entry.providers.len));
             for (entry.providers) |provider| {
                 if (provider.lib.len > MAX_PROVIDER_NAME or
@@ -88,8 +94,14 @@ pub const Table = struct {
                 try out.append(provider.kind);
                 try out.append(@intCast(provider.lib.len));
                 try out.appendSlice(provider.lib);
-                try out.append(@intCast(provider.symbol.len));
-                try out.appendSlice(provider.symbol);
+                // When the provider symbol is exactly the CIPL plan/data
+                // symbol, omit the duplicate and let the runtime reuse it.
+                if (provider.symbol.len > 0 and std.mem.eql(u8, provider.symbol, entry.name)) {
+                    try out.append(0);
+                } else {
+                    try out.append(@intCast(provider.symbol.len));
+                    try out.appendSlice(provider.symbol);
+                }
                 try writeU16(&out, provider.ordinal);
                 try out.append(@intCast(provider.version.len));
                 try out.appendSlice(provider.version);

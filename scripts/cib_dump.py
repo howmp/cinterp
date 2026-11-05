@@ -431,16 +431,22 @@ def header_text(cib: dict) -> str:
                 if entry["plan_index"] == 0xFFFF
                 else f"plan {entry['plan_index']}"
             )
+            display_name = entry["name"]
+            if not display_name and entry["plan_index"] != 0xFFFF:
+                display_name = (
+                    cipl["plans"][entry["plan_index"]]["name"]
+                    if entry["plan_index"] < len(cipl["plans"])
+                    else ""
+                )
             lines.append(
                 f"  [{index}] {plan} kind={entry['kind']} flags=0x{entry['flags']:02x} "
-                f"name={entry['name']} providers={len(entry['providers'])}"
+                f"name={display_name} providers={len(entry['providers'])}"
             )
             for provider in entry["providers"]:
                 version = f" version={provider['version']}" if provider["version"] else ""
                 ordinal = f" ordinal={provider['ordinal']}" if provider["ordinal"] else ""
-                lines.append(
-                    f"      {provider['lib']}:{provider['symbol']}{ordinal}{version}"
-                )
+                symbol = provider["symbol"] or display_name
+                lines.append(f"      {provider['lib']}:{symbol}{ordinal}{version}")
     return "\n".join(lines)
 
 

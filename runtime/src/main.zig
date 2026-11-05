@@ -123,11 +123,21 @@ fn dumpPackage(job: Job, dump_target: bool, dump_imports: bool, header: bool) vo
         var ii: usize = 0;
         while (ii < job.machine.imports.count) : (ii += 1) {
             const e = &job.machine.imports.entries[ii];
-            std.debug.print("import[plan {d}] {s}:", .{ e.plan_index, e.name[0..e.name_len] });
+            var entry_name: []const u8 = e.name[0..e.name_len];
+            if (entry_name.len == 0) {
+                if (job.machine.plan_store) |store| {
+                    if (e.plan_index != 0xffff) {
+                        if (store.planAt(e.plan_index)) |p| entry_name = p.name[0..p.name_len];
+                    }
+                }
+            }
+            std.debug.print("import[plan {d}] {s}:", .{ e.plan_index, entry_name });
             var pi: usize = 0;
             while (pi < e.provider_count) : (pi += 1) {
                 const pr = &e.providers[pi];
-                std.debug.print(" {s}:{s}", .{ pr.name[0..pr.name_len], pr.symbol[0..pr.symbol_len] });
+                var symbol: []const u8 = pr.symbol[0..pr.symbol_len];
+                if (symbol.len == 0) symbol = entry_name;
+                std.debug.print(" {s}:{s}", .{ pr.name[0..pr.name_len], symbol });
             }
             std.debug.print("\n", .{});
         }

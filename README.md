@@ -18,11 +18,11 @@
 2. **支持 FFI 和 callback**：编译期生成调用计划，支持结构体、varargs，以及
    cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback。
 3. **运行时紧凑，约 100 KiB**（ReleaseSmall）：
-   1. Linux x86-64（native）：103,952 B ≈ 102 KiB
-   2. Linux x86-64（static SysV）：93,152 B ≈ 91 KiB
+   1. Linux x86-64（native）：104,336 B ≈ 102 KiB
+   2. Linux x86-64（static SysV）：93,488 B ≈ 91 KiB
    3. Windows x86-64：81,408 B ≈ 80 KiB
-   4. Windows x86：87,040 B ≈ 85 KiB
-   5. Linux AArch64：103,456 B ≈ 101 KiB
+   4. Windows x86：87,552 B ≈ 86 KiB
+   5. Linux AArch64：103,936 B ≈ 102 KiB
 
 4. **可用于替代 BOF 场景**：直接编译普通 C 源文件（包括直接 `#include <windows.h>`），
    不再需要手动声明 WinAPI 函数原型。参见 [`examples/bof`](examples/bof/) 和
