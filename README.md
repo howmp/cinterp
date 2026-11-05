@@ -11,7 +11,24 @@
 - **目标平台**：Linux x86-64、Linux AArch64、Windows x86-64、Windows x86。
 - **包格式**：`CIPKG` v2，包含字节码、FFI 计划、目标元数据和符号链接元数据。
 
-## 2. 原理（编译 → 执行）
+## 2. 特性
+
+1. **不需要动态申请可执行内存**：VM 和固定汇编 ABI 引擎不生成 JIT/stub 代码，callback
+   使用进程级静态 trampoline 池。
+2. **支持 FFI 和 callback**：编译期生成调用计划，支持结构体、varargs，以及
+   cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback。
+3. **运行时紧凑，约 100 KiB**（ReleaseSmall）：
+   1. Linux x86-64（native）：111,456 B ≈ 109 KiB
+   2. Linux x86-64（static SysV）：98,784 B ≈ 96 KiB
+   3. Windows x86-64：88,576 B ≈ 87 KiB
+   4. Windows x86：93,696 B ≈ 92 KiB
+   5. Linux AArch64：110,912 B ≈ 108 KiB
+
+4. **可用于替代 BOF 场景**：直接编译普通 C 源文件（包括直接 `#include <windows.h>`），
+   不再需要手动声明 WinAPI 函数原型。参见 [`examples/bof`](examples/bof/) 和
+   [`examples/windows`](examples/windows/)。
+
+## 3. 原理（编译 → 执行）
 
 ```text
 C 源码
@@ -33,9 +50,9 @@ CIPKG
 - callback 使用进程级静态 trampoline 池，不生成可执行内存。
 - 一个 VM 一次持有一个 CIB；同一进程可通过 `ci_process_*` 持有多个 VM 并行运行。
 
-## 3. 现状
+## 4. 现状
 
-### 3.1 测试覆盖情况
+### 4.1 测试覆盖情况
 
 - `make test` 覆盖运行时/编译器单元测试、全部示例、C 嵌入 API（静态库和共享库）以及
   损坏包、未知符号、目标不匹配等负向路径。
@@ -47,7 +64,7 @@ CIPKG
 - 另有 `make differential`、fuzz（loader/执行/字节码/FFI/sanitizer）和结构化报告校验
   （`make evidence`）。
 
-### 3.2 不支持的特性
+### 4.2 不支持的特性
 
 - **平台**：macOS、musl、Windows ARM64、Linux i386/ARM32。
 - **C/ABI**：向量类型和向量参数、`_Complex`、Win64 `__vectorcall`/COM、SysV `i128`、
@@ -59,7 +76,7 @@ CIPKG
 
 完整的 ABI 边界、暂缓功能和已知限制见 [`dev.md` §13/§14](./dev.md#13-当前边界与明确不支持)。
 
-## 4. 用法
+## 5. 用法
 
 环境要求：Zig 0.13；测试、fuzz 和基准脚本还需要 Python 3.10+。
 
@@ -127,7 +144,7 @@ make release-artifacts  # tarball + SBOM + SHA256SUMS
 
 C 嵌入 API、错误码和链接方式见 [`docs/embedding.md`](docs/embedding.md)。
 
-## 5. 文档引用
+## 6. 文档引用
 
 - [`dev.md`](dev.md) — 架构、实现决策、ABI、构建/测试/发布细节和已知限制
 - [`docs/README.md`](docs/README.md) — 文档索引
