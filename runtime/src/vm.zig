@@ -1433,11 +1433,13 @@ pub const VM = struct {
                     const o: usize = ref & 0x0FFFFFFF;
                     if (o + width > pool.data.len or o + width > self.mem.len)
                         return error.BadAddress;
-                    var bits: u64 = 0;
-                    var bi: usize = 0;
-                    while (bi < width) : (bi += 1) {
-                        bits |= @as(u64, self.mem[o + bi]) << @as(u6, @intCast(bi * 8));
-                    }
+                    var bits: u64 = switch (width) {
+                        1 => self.mem[o],
+                        2 => std.mem.readInt(u16, self.mem[o..][0..2], .little),
+                        4 => std.mem.readInt(u32, self.mem[o..][0..4], .little),
+                        8 => std.mem.readInt(u64, self.mem[o..][0..8], .little),
+                        else => unreachable,
+                    };
                     if (signed and width < 8) {
                         const sign_bit = @as(u64, 1) << @as(u6, @intCast(width * 8 - 1));
                         if ((bits & sign_bit) != 0) bits |= ~((@as(u64, 1) << @as(u6, @intCast(width * 8))) - 1);

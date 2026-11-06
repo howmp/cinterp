@@ -43,6 +43,7 @@ pub const OP_FUNC_ADDR: u8 = 0x41;
 pub const OP_CALL_INDIRECT: u8 = 0x42;
 pub const OP_ALLOCA: u8 = 0x60;
 pub const OP_DUP: u8 = 0x14;
+pub const OP_SWAP: u8 = 0x16;
 pub const OP_LOAD_MEM: u8 = 0x61;
 pub const OP_STORE_MEM: u8 = 0x62;
 pub const OP_MEMCPY: u8 = 0x63;

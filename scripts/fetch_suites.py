@@ -41,7 +41,7 @@ SPECS = {
     "gcc-torture": {
         "repo": "https://github.com/gcc-mirror/gcc",
         "commit": "f75e33b7c1ddc42ce9d6d455e0076dbe373b46b5",
-        "sparse": ["gcc/testsuite/gcc.c-torture"],
+        "sparse": ["gcc/testsuite/gcc.c-torture", "gcc/testsuite/gcc.dg"],
     },
     "CompCert": {
         "repo": "https://github.com/AbsInt/CompCert",

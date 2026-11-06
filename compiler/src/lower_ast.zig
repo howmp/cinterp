@@ -960,9 +960,16 @@ const Lowerer = struct {
         const key: u128 = @as(u128, bits) |
             (@as(u128, width) << 64) |
             (@as(u128, @intFromBool(signed)) << 72);
+        if (self.ctx.const_data.items.len >= (1 << 28)) {
+            // The compact ref has a 28-bit data offset. Very large global
+            // images can push the pool past that range; keep compiling them
+            // as inline immediates instead of failing the translation unit.
+            try self.emitU8(op.OP_LOAD_CONST_I64);
+            try self.emitI64(@bitCast(bits));
+            return;
+        }
         const offset = self.ctx.const_map.get(key) orelse blk: {
             while (self.ctx.const_data.items.len % width != 0) try self.ctx.const_data.append(0);
-            if (self.ctx.const_data.items.len >= (1 << 28)) return error.ConstPoolTooLarge;
             const at: u32 = @intCast(self.ctx.const_data.items.len);
             var bi: u8 = 0;
             while (bi < width) : (bi += 1) {
@@ -2123,6 +2130,20 @@ const Lowerer = struct {
             save_slot = try self.slotFor(save_name);
             try self.emitStoreSlot(save_slot.?);
         }
+
+        // A callee returning x86_fp80/fp128 returns a pointer into its own
+        // linear-memory frame. OP_RET releases that frame before the caller
+        // can store the result, so reserve a caller-owned 16-byte block and
+        // copy the value before doing anything else.
+        var wide_ret_slot: ?u16 = null;
+        if (!self.ctx.opts.legacy_codegen and result != null and isF80OrF128(call.ret)) {
+            try self.emitU8(op.OP_ALLOCA_ALIGNED);
+            try self.emitU16(16);
+            try self.emitU8(16);
+            const name = try std.fmt.allocPrint(self.allocator, "__widret_{d}", .{self.func.code.items.len});
+            wide_ret_slot = try self.slotFor(name);
+            try self.emitStoreSlot(wide_ret_slot.?);
+        }
         for (call.args) |arg| {
             if (isF80OrF128(arg.ty) and isTag(arg.val, .local)) {
                 try self.emitU8(op.OP_ALLOCA);
@@ -2166,7 +2187,17 @@ const Lowerer = struct {
         }
         if (!call.ret.isVoid()) {
             const res = result orelse return error.NoResult;
-            try self.emitStoreSlot(try self.slotFor(res.name));
+            const res_slot = try self.slotFor(res.name);
+            if (wide_ret_slot) |dst| {
+                try self.emitLoadSlot(dst);
+                try self.emitU8(op.OP_SWAP);
+                try self.emitConst(16);
+                try self.emitU8(op.OP_MEMCPY);
+                try self.emitLoadSlot(dst);
+                try self.emitStoreSlot(res_slot);
+            } else {
+                try self.emitStoreSlot(res_slot);
+            }
         }
         if (save_slot) |ss| {
             try self.emitLoadSlot(ss);

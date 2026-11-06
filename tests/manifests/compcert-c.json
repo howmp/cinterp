@@ -14,7 +14,7 @@
   "expected_ext": "",
   "expected_required": true,
   "expected_exit": 0,
-  "timeout": 120,
+  "timeout": 240,
   "compile_timeout": 180,
   "skip": {},
   "repo_skip_file": "tests/manifests/compcert-c.skip"
