@@ -652,7 +652,7 @@ pub fn main() !void {
     defer names.deinit();
     const plans = try serializePlans(allocator, result.plans, target.abi, &names);
     try import_table.internNames(&names);
-    const const_bytes = try cipc.serialize(allocator, &names, result.const_data);
+    const const_bytes = try cipc.serialize(allocator, &names, result.const_data, result.data_base);
     const import_bytes = try import_table.serialize(allocator, &names);
     const package = try packageSerialize(allocator, module, plans, import_bytes, const_bytes);
     const file = try std.fs.cwd().createFile(out, .{});

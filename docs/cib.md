@@ -57,7 +57,7 @@ offset  size  field
 
 ### 2.2 CIPC：常量/字符串池（v1）
 
-CIPC 是必需的 section。名称池保存 CIPL 计划名、CIPI data 名、provider 库名和符号名；数据池保存模块静态数据镜像、去重后的标量常量，以及 f80/f128 常量对象。
+CIPC 是必需的 section。名称池保存 CIPL 计划名、CIPI data 名、provider 库名和符号名；数据池只保存**只读** globals、字符串、去重后的标量常量，以及 f80/f128 常量对象。mutable globals 不进入常量池。
 
 ```
 offset size field
@@ -67,18 +67,21 @@ offset size field
 6      2    name_count (u16)
 8      4    name_blob_len (u32)
 12     4    data_len (u32)
-16     2*N  name_offsets（相对 name_blob 的 u16 偏移）
+16     4    data_base (u32)
+20     2*N  name_offsets（相对 name_blob 的 u16 偏移）
 ...     name_blob：每个名字以 NUL 结尾
 pad     0..15 字节，使 data 从 16 字节边界开始
-...     data：静态数据镜像 + 标量常量
+...     data：只读 globals + 标量/宽浮点常量
 ```
 
 - `name_offsets[i]` 指向 `name_blob` 内第 `i` 个名字；名字是 UTF-8 字节串，按字节计数。
 - CIPC 名称池不保存 CIVM 内部函数名；入口由 CIVM 的 `entry_func_index` 指定。
-- data 的第一个字节对应 VM 线性内存地址 0；静态数据镜像在前，interned 标量常量随后追加。
-- 运行时每次执行前把 data 复制到线性内存起始处，并把 `mem_top` 设为 data 长度；`main` 只负责写回指针重定位，不再生成逐 chunk 的数据安装代码。
-- `OP_ADDR_CONST offset` 引用 data 起始处的全局对象；`OP_LOAD_CONST_POOL ref` 从 data 中读取 1/2/4/8 字节常量并按 signed 位扩展。
-- data 同时包含可写 globals 的初始镜像；重复运行时从同一镜像恢复，因此可写全局在 run 之间重置。
+- `data_base` 是 data 在 VM 线性内存中的安装偏移；`0 .. data_base` 是 mutable globals 的镜像/保留区。
+- mutable globals 的初始化镜像不进入 CIPC：`main` 只把非零 chunk 写入 `mem[0..data_base]`，全零/BSS 只保留地址空间。只读 globals、字符串和常量由运行时直接复制到 `mem[data_base..data_base+data_len]`。
+- 运行时在每次 `ci_vm_run*` 开始时清零 `mem`，复制 CIPC data 到 `data_base`，并把 `mem_top` 设为 `data_base + data_len`；`main` 再安装 mutable 非零数据并写回指针重定位。
+- `OP_ADDR_CONST offset` 已经是绝对 VM 内存偏移：mutable globals 指向 `0..data_base`，只读 globals/宽浮点对象指向 `data_base+pool_offset`。
+- `OP_LOAD_CONST_POOL ref` 的 offset 相对 CIPC data；运行时读取 `mem[data_base + offset ..]`，按 1/2/4/8 字节和 signed 位扩展。
+- 每次 run 都从同一 CIPC+mutable 初始镜像恢复，因此可写全局在 run 之间重置。
 
 ### 2.3 CIPI：外部符号链接表（v2）
 
@@ -424,13 +427,13 @@ CIPKG: v4
   module: off=22 len=58
   plans:  off=80 len=0 (omitted)
   imports: off=80 len=0 (omitted)
-  const:   off=80 len=48
+  const:   off=80 len=64
 CIVM: v2 arch=1 entry=0 functions=1
-CIPC: names=0 data=32 bytes
+CIPC: names=0 data=32 bytes base=0
   [0] params=0 locals=1 code=40 bytes
 ```
 
-这个包没有计划和外部调用，所以 CIPL/CIPI 为空；CIPC 仍必须存在，并保存 32 字节的标量常量数据（section 共 48 字节，含 16 字节头）。`--asm` 可以看到常量已经变成 `LOAD_CONST_POOL`：
+这个包没有计划和外部调用，所以 CIPL/CIPI 为空；CIPC 仍必须存在，并保存 32 字节的只读/标量常量数据（section 共 64 字节，含 20 字节头和 16 字节对齐 padding）。`--asm` 可以看到常量已经变成 `LOAD_CONST_POOL`：
 
 ```text
 $ ./scripts/cib_dump.py --asm build/hello.cib
@@ -496,7 +499,7 @@ xxd -g1 build/hello.cib
 ## 8. 限制与兼容性
 
 - `CIVM` 当前 v2；`CIPKG` 当前 v4；`CIPL` 当前 v4；`CIPI` 当前 v2；`CIPC` 当前 v1。
-- `CIVM` 函数数上限 512、模块上限 2097152 字节；CIPC 名称数上限 65535，名称引用为 u16（0xFFFF 为 CIPI 哨兵）。槽栈默认/上限 8192（`ci_vm_config.stack_size` 只能下调，`0` 表示默认 8192）、帧 512、线性内存默认 1 MiB（`memory_size=0`；上限 16 MiB，32 字节对齐）。
+- `CIVM` 函数数上限 512、模块上限 2097152 字节；CIPC 名称数上限 65535，名称引用为 u16（0xFFFF 为 CIPI 哨兵），`data_base` 为 u32。槽栈默认/上限 8192（`ci_vm_config.stack_size` 只能下调，`0` 表示默认 8192）、帧 512、线性内存默认 1 MiB（`memory_size=0`；上限 16 MiB，32 字节对齐）。
 - 每个进程最多 64 个 VM（`MAX_PROCESS_VMS`）；第 65 个 `ci_process_load_package` 返回 `ProcessFull`（`CI_E_RESOURCE`）。每个 VM 默认约 2 MiB（VM 记录 + 8192 槽值栈 + 1 MiB 线性内存）。
 - callback trampoline 是进程级固定的 256 个静态槽（不生成可执行内存）：自动 `OP_CREATE_CALLBACK` 槽在 VM 生命周期内保留、跨重复运行复用，VM 销毁/计划重载后退休；显式 `OP_CALLBACK_ACQUIRE` 槽在 `OP_CALLBACK_RELEASE` 后回到可复用集合，未释放的显式槽在 VM 销毁/重载时退休。释放后的旧指针不得再次调用。
 - `CIPL` 计划上限 1024、每计划参数 64、每计划返回 loc 8、每参数 loc 8、名称有效上限 128；FFI arg/stack/ret 缓冲区各 4096 字节（`stack_size` 也受 4096 限制）。

@@ -58,7 +58,9 @@ fn writeU32(out: *std.ArrayList(u8), value: u32) !void {
 
 /// Serialize a CIPC section. `data` is copied verbatim after the name table
 /// and a 16-byte pad; its offsets are relative to the start of that blob.
-pub fn serialize(allocator: Allocator, names: *const NamePool, data: []const u8) ![]u8 {
+/// `data_base` is the VM memory offset where the blob is installed (the
+/// mutable-global image occupies the bytes before it).
+pub fn serialize(allocator: Allocator, names: *const NamePool, data: []const u8, data_base: u32) ![]u8 {
     if (names.count() > 0xFFFF) return error.TooManyNames;
     if (data.len > std.math.maxInt(u32)) return error.PoolTooLarge;
 
@@ -83,6 +85,7 @@ pub fn serialize(allocator: Allocator, names: *const NamePool, data: []const u8)
     try writeU16(&out, @intCast(names.count()));
     try writeU32(&out, @intCast(name_blob.items.len));
     try writeU32(&out, @intCast(data.len));
+    try writeU32(&out, data_base);
     for (offsets.items) |offset| try writeU16(&out, offset);
     try out.appendSlice(name_blob.items);
     while (out.items.len % 16 != 0) try out.append(0);
@@ -96,7 +99,7 @@ test "CIPC names are deduplicated and offsets are stable" {
     try std.testing.expectEqual(@as(u16, 0), try names.ref("printf"));
     try std.testing.expectEqual(@as(u16, 1), try names.ref("libc.so.6"));
     try std.testing.expectEqual(@as(u16, 0), try names.ref("printf"));
-    const bytes = try serialize(std.testing.allocator, &names, "abc");
+    const bytes = try serialize(std.testing.allocator, &names, "abc", 0);
     defer std.testing.allocator.free(bytes);
     try std.testing.expectEqualSlices(u8, "CIPC", bytes[0..4]);
     try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, bytes[6..8], .little));

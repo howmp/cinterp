@@ -342,14 +342,15 @@ def parse_imports(imports: bytes, names: list[str]) -> dict:
 
 
 def parse_cipc(pool: bytes) -> dict:
-    if len(pool) < 16 or pool[:4] != b"CIPC":
+    if len(pool) < 20 or pool[:4] != b"CIPC":
         raise Bad("CIPC magic/header")
     if read_u8(pool, 4) != 1:
         raise Bad("CIPC version")
     count = read_u16(pool, 6)
     blob_len = read_u32(pool, 8)
     data_len = read_u32(pool, 12)
-    offsets_end = 16 + count * 2
+    data_base = read_u32(pool, 16)
+    offsets_end = 20 + count * 2
     blob_start = offsets_end
     if blob_start + blob_len > len(pool):
         raise Bad("CIPC name blob truncated")
@@ -358,7 +359,7 @@ def parse_cipc(pool: bytes) -> dict:
         raise Bad("CIPC data length")
     names = []
     for i in range(count):
-        off = read_u16(pool, 16 + i * 2)
+        off = read_u16(pool, 20 + i * 2)
         begin = blob_start + off
         end = pool.find(b"\x00", begin, blob_start + blob_len)
         if begin >= blob_start + blob_len or end < 0:
@@ -369,6 +370,7 @@ def parse_cipc(pool: bytes) -> dict:
         "names": names,
         "name_blob_len": blob_len,
         "data_len": data_len,
+        "data_base": data_base,
         "data": pool[data_start:],
     }
 
@@ -422,7 +424,7 @@ def header_text(cib: dict) -> str:
         + (" (omitted)" if cipi["omitted"] else ""),
         f"  const:   off={22 + cib['module_len'] + cib['plan_len'] + cib['import_len']} len={cib['const_len']}",
         f"CIVM: v{civm['version']} arch={civm['arch']} entry={civm['entry']} functions={len(civm['functions'])}",
-        f"CIPC: names={len(cib['cipc']['names'])} data={cib['cipc']['data_len']} bytes",
+        f"CIPC: names={len(cib['cipc']['names'])} data={cib['cipc']['data_len']} bytes base={cib['cipc']['data_base']}",
     ]
     for fn in civm["functions"]:
         lines.append(

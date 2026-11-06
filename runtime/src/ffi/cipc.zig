@@ -7,14 +7,16 @@ pub const Pool = struct {
     bytes: []u8,
     names: [][]const u8,
     data: []const u8,
+    data_base: u32,
 
     pub fn parse(allocator: Allocator, input: []const u8) !Pool {
-        if (input.len < 16 or !std.mem.eql(u8, input[0..4], "CIPC")) return error.BadPool;
+        if (input.len < 20 or !std.mem.eql(u8, input[0..4], "CIPC")) return error.BadPool;
         if (input[4] != 1) return error.BadPoolVersion;
         const name_count = readU16(input, 6);
         const name_blob_len = readU32(input, 8);
         const data_len = readU32(input, 12);
-        const offsets_end = 16 + @as(usize, name_count) * 2;
+        const data_base = readU32(input, 16);
+        const offsets_end = 20 + @as(usize, name_count) * 2;
         if (offsets_end > input.len) return error.TruncatedPool;
         const name_blob_start = offsets_end;
         if (name_blob_start + name_blob_len > input.len) return error.TruncatedPool;
@@ -29,7 +31,7 @@ pub const Pool = struct {
         errdefer allocator.free(names);
         var i: usize = 0;
         while (i < name_count) : (i += 1) {
-            const off = readU16(input, 16 + i * 2);
+            const off = readU16(input, 20 + i * 2);
             const start = name_blob_start + off;
             if (start >= name_blob_start + name_blob_len) return error.BadPoolName;
             const end = std.mem.indexOfScalarPos(u8, bytes, start, 0) orelse return error.BadPoolName;
@@ -40,6 +42,7 @@ pub const Pool = struct {
             .bytes = bytes,
             .names = names,
             .data = bytes[data_start .. data_start + data_len],
+            .data_base = data_base,
         };
     }
 

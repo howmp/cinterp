@@ -61,6 +61,8 @@ pub const CompileResult = struct {
     /// into VM linear memory at run start and referenced by ADDR_CONST /
     /// LOAD_CONST_POOL offsets.
     const_data: []const u8 = &.{},
+    /// VM memory offset where CIPC data is installed.
+    data_base: u32 = 0,
 };
 
 fn alignUp(n: u32, a: u32) u32 {

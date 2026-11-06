@@ -218,8 +218,8 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 ### 10.1 包格式
 
 - **CIVM v2**：magic/版本/arch、函数表、代码、入口函数索引；不保存函数名；模块上限 2 MiB，函数上限 512。
-- **CIPL v4**：CallPlan 表，计划名通过 CIPC 名称引用。计划上限 1024，每 plan 64 args、8 ret locs、每 arg 8 locs，名称上限 128。
-- **CIPKG v4（trusted）**：22 字节头（magic + version + module/plan/import/const 四个 u32 长度）+ CIVM + CIPL + CIPI + CIPC；不写目标元数据，运行时不做目标校验，包必须由匹配的运行时加载。
+- **CIPL v4**：CallPlan 表，计划名通过 CIPC 名称引用；CIPC 头含 data_base。计划上限 1024，每 plan 64 args、8 ret locs、每 arg 8 locs，名称上限 128。
+- **CIPKG v4（trusted）**：22 字节头（magic + version + module/plan/import/const 四个 u32 长度）+ CIVM + CIPL + CIPI + CIPC；CIPC 只含只读 globals/常量，mutable globals 在 VM 内存 0..data_base 由 main 安装。不写目标元数据，运行时不做目标校验，包必须由匹配的运行时加载。
 - **CIPI v2**：plan index → provider 库/真实符号/ordinal；名称通过 CIPC 引用；上限 512 entry、每 entry 8 provider，名称/符号 64 字节。
 - 详细字段和错误码见 [`docs/cib.md`](./docs/cib.md)；版本兼容策略见 [`docs/compatibility.md`](./docs/compatibility.md)。
 

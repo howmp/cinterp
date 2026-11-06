@@ -112,21 +112,21 @@ def parse_cipl(plans: bytes, name_count: int) -> tuple[int, int]:
 
 
 def parse_cipc(pool: bytes) -> int:
-    if len(pool) < 16 or pool[:4] != b"CIPC":
+    if len(pool) < 20 or pool[:4] != b"CIPC":
         raise Bad("CIPC magic/header")
     if pool[4] != 1:
         raise Bad(f"unsupported CIPC version {pool[4]}")
     count = u16(pool, 6)
     blob_len = u32(pool, 8)
     data_len = u32(pool, 12)
-    blob_start = 16 + count * 2
+    blob_start = 20 + count * 2
     if blob_start + blob_len > len(pool):
         raise Bad("CIPC name blob overruns section")
     data_start = (blob_start + blob_len + 15) & ~15
     if data_start + data_len != len(pool):
         raise Bad("CIPC data length mismatch")
     for i in range(count):
-        off = u16(pool, 16 + i * 2)
+        off = u16(pool, 20 + i * 2)
         begin = blob_start + off
         if begin >= blob_start + blob_len:
             raise Bad(f"CIPC name {i} offset out of range")

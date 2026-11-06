@@ -309,12 +309,15 @@ const Layout = struct {
 const Reloc = struct { offset: u32, target: []const u8, addend: i64 };
 
 const Globals = struct {
-    /// `@name` (without the sigil) -> offset into `data`.
+    /// `@name` (without the sigil) -> absolute VM memory offset.
     map: std.StringHashMap(u32),
     /// `@name` -> index into `external_names`.
     external: std.StringHashMap(u16),
     external_names: [][]const u8,
+    /// Mutable/bss image, installed at VM memory offset 0.
     data: []u8,
+    /// Read-only global image, copied by CIPC at `data.len`.
+    readonly: []u8,
     relocs: []const Reloc,
 };
 
@@ -612,17 +615,19 @@ fn gepBaseName(g: ast.Gep) ?[]const u8 {
     return valueGlobalRef(g.ptr.val);
 }
 
-fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const Layout, ptr_size: u32, mode: GepConstMode) !Globals {
+fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const Layout, ptr_size: u32, mode: GepConstMode, legacy_codegen: bool) !Globals {
     const Spec = struct {
         global: *const ast.Global,
         offset: u32,
         sa: SizeAlign,
+        readonly: bool,
     };
 
     var map = std.StringHashMap(u32).init(allocator);
     var external = std.StringHashMap(u16).init(allocator);
     var external_names = std.ArrayList([]const u8).init(allocator);
     var data = std.ArrayList(u8).init(allocator);
+    var readonly_data = std.ArrayList(u8).init(allocator);
 
     var specs = std.ArrayList(Spec).init(allocator);
     for (module.globals) |*g| {
@@ -645,34 +650,47 @@ fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const 
         const sa = layout.sizeAlign(g.ty) catch continue;
         const explicit: u32 = g.alignment orelse 0;
         const want_align = @max(@max(sa.alignment, explicit), 1);
-        const off = alignUp(@intCast(data.items.len), want_align);
-        while (data.items.len < off) try data.append(0);
-        try map.put(g.name, off);
+        const is_readonly = !legacy_codegen and g.is_const;
+        const image = if (is_readonly) &readonly_data else &data;
+        const off = alignUp(@intCast(image.items.len), want_align);
+        while (image.items.len < off) try image.append(0);
         var i: u32 = 0;
-        while (i < sa.size) : (i += 1) try data.append(0);
-        try specs.append(.{ .global = g, .offset = off, .sa = sa });
+        while (i < sa.size) : (i += 1) try image.append(0);
+        try specs.append(.{ .global = g, .offset = off, .sa = sa, .readonly = is_readonly });
+    }
+
+    // CIPC's data blob starts after the mutable image. Align it for the
+    // widest read-only objects (f80/f128 and vector-ish aggregates).
+    const pad_to: usize = if (legacy_codegen) 8 else 16;
+    while (data.items.len % pad_to != 0) try data.append(0);
+    const data_base: u32 = @intCast(data.items.len);
+
+    for (specs.items) |spec| {
+        const abs = if (spec.readonly) data_base + spec.offset else spec.offset;
+        try map.put(spec.global.name, abs);
     }
 
     var writer = GlobalWriter{ .allocator = allocator, .layout = layout, .ptr_size = ptr_size, .mode = mode };
     for (specs.items) |spec| {
         const init = spec.global.init.?;
+        const image = if (spec.readonly) readonly_data.items else data.items;
         const start = spec.offset;
         const end = start + spec.sa.size;
-        try writer.writeConstant(spec.global.ty, init, data.items[start..end]);
+        try writer.writeConstant(spec.global.ty, init, image[start..end]);
     }
 
     var relocs = std.ArrayList(Reloc).init(allocator);
     for (specs.items) |spec| {
-        try writer.collectRelocs(spec.global.ty, spec.global.init.?, spec.offset, &relocs);
+        const abs = if (spec.readonly) data_base + spec.offset else spec.offset;
+        try writer.collectRelocs(spec.global.ty, spec.global.init.?, abs, &relocs);
     }
-
-    while (data.items.len % 8 != 0) try data.append(0);
 
     return .{
         .map = map,
         .external = external,
         .external_names = try external_names.toOwnedSlice(),
         .data = try data.toOwnedSlice(),
+        .readonly = try readonly_data.toOwnedSlice(),
         .relocs = try relocs.toOwnedSlice(),
     };
 }
@@ -739,9 +757,12 @@ const Context = struct {
     abi: u8,
     ptr_size: u32,
     opts: Options,
-    /// Static globals image followed by interned scalar and wide-float constants.
+    /// Read-only globals followed by interned scalar and wide-float constants.
     const_data: std.ArrayList(u8),
     const_map: std.AutoHashMap(u128, u32),
+    /// VM memory offset where CIPC data is installed; equals the mutable
+    /// global image length.
+    data_base: u32,
 
     fn init(allocator: Allocator, module: *const ast.Module, abi_id: u8, ptr_size: u32, opts: Options) !Context {
         // CIVM holds function indices/plan indices/parameter counts in u16.
@@ -750,7 +771,7 @@ const Context = struct {
         // 64 args/plan, ...).
         if (module.functions.len > std.math.maxInt(u16)) return error.TooManyFunctions;
         const layout = try Layout.init(allocator, module, ptr_size);
-        var globals = try buildGlobals(allocator, module, &layout, ptr_size, opts.gep_const);
+        var globals = try buildGlobals(allocator, module, &layout, ptr_size, opts.gep_const, opts.legacy_codegen);
 
         var decls = std.StringHashMap(*const ast.Decl).init(allocator);
         for (module.declares) |*d| try decls.put(d.name, d);
@@ -805,7 +826,8 @@ const Context = struct {
         globals.external_names = try external_names.toOwnedSlice();
 
         var const_data = std.ArrayList(u8).init(allocator);
-        try const_data.appendSlice(globals.data);
+        try const_data.appendSlice(globals.readonly);
+        if (globals.data.len > std.math.maxInt(u32)) return error.PackageTooLarge;
 
         return .{
             .allocator = allocator,
@@ -823,6 +845,7 @@ const Context = struct {
             .opts = opts,
             .const_data = const_data,
             .const_map = std.AutoHashMap(u128, u32).init(allocator),
+            .data_base = @intCast(globals.data.len),
         };
     }
 
@@ -860,6 +883,7 @@ pub fn compileWithOptions(allocator: Allocator, module: *const ast.Module, abi_i
         .plans = try ctx.plans.toOwnedSlice(),
         .external_data = ctx.globals.external_names,
         .const_data = try ctx.const_data.toOwnedSlice(),
+        .data_base = ctx.data_base,
     };
 }
 
@@ -1001,8 +1025,9 @@ const Lowerer = struct {
             return;
         }
         const offset = try self.internBlob(&buf, 16);
+        const abs = std.math.add(u32, self.ctx.data_base, offset) catch return error.ConstPoolTooLarge;
         try self.emitU8(op.OP_ADDR_CONST);
-        try self.emitU32(offset);
+        try self.emitU32(abs);
     }
     fn emitF128Const(self: *Lowerer, lit: ast.FloatLiteral) !void {
         var buf = [_]u8{0} ** 16;
@@ -1013,8 +1038,9 @@ const Lowerer = struct {
             return;
         }
         const offset = try self.internBlob(&buf, 16);
+        const abs = std.math.add(u32, self.ctx.data_base, offset) catch return error.ConstPoolTooLarge;
         try self.emitU8(op.OP_ADDR_CONST);
-        try self.emitU32(offset);
+        try self.emitU32(abs);
     }
 
     fn internBlob(self: *Lowerer, bytes: []const u8, alignment: usize) !u32 {
@@ -1452,11 +1478,14 @@ const Lowerer = struct {
     /// emitted as instructions.
     fn emitGlobalsInstall(self: *Lowerer) anyerror!void {
         if (!eql(self.func.name, "main")) return;
+        const data = self.ctx.globals.data;
         if (self.ctx.opts.legacy_codegen) {
-            const data = self.ctx.globals.data;
-            if (data.len == 0) return;
-            try self.emitU8(op.OP_SET_MEM_TOP);
-            try self.emitU32(@intCast(data.len));
+            if (data.len != 0) {
+                try self.emitU8(op.OP_SET_MEM_TOP);
+                try self.emitU32(@intCast(data.len));
+            }
+        }
+        if (data.len != 0) {
             var off: usize = 0;
             while (off < data.len) : (off += 8) {
                 var chunk: u64 = 0;
@@ -1464,6 +1493,9 @@ const Lowerer = struct {
                 while (i < 8 and off + i < data.len) : (i += 1) {
                     chunk |= @as(u64, data[off + i]) << @intCast(i * 8);
                 }
+                // Mutable globals are zero by default. Skip zero chunks in
+                // production; CIPC data is copied at data_base by the runtime.
+                if (!self.ctx.opts.legacy_codegen and chunk == 0) continue;
                 try self.emitConst(@bitCast(chunk));
                 try self.emitU8(op.OP_ADDR_CONST);
                 try self.emitU32(@intCast(off));
@@ -2548,14 +2580,14 @@ pub const TestHook = struct {
     /// Static data image bytes produced for `module`.
     pub fn globalData(allocator: Allocator, module: *const ast.Module, ptr_size: u32) ![]u8 {
         const layout = try Layout.init(allocator, module, ptr_size);
-        const globals = try buildGlobals(allocator, module, &layout, ptr_size, .legacy);
+        const globals = try buildGlobals(allocator, module, &layout, ptr_size, .legacy, true);
         return globals.data;
     }
 
     /// Relocation entries produced for `module` under `mode`.
     pub fn globalRelocs(allocator: Allocator, module: *const ast.Module, ptr_size: u32, mode: GepConstMode) ![]RelocInfo {
         const layout = try Layout.init(allocator, module, ptr_size);
-        const globals = try buildGlobals(allocator, module, &layout, ptr_size, mode);
+        const globals = try buildGlobals(allocator, module, &layout, ptr_size, mode, true);
         var out = try allocator.alloc(RelocInfo, globals.relocs.len);
         for (globals.relocs, 0..) |reloc, i| {
             out[i] = .{ .offset = reloc.offset, .target = reloc.target, .addend = reloc.addend };

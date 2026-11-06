@@ -1245,9 +1245,10 @@ pub const VM = struct {
         // run that fails must leave the previous value in place.
         self.resetRunImage();
         if (self.const_pool) |pool| {
-            if (pool.data.len > self.mem.len) return error.OutOfMemory;
-            @memcpy(self.mem[0..pool.data.len], pool.data);
-            self.mem_top = pool.data.len;
+            const base: usize = pool.data_base;
+            if (base + pool.data.len > self.mem.len) return error.OutOfMemory;
+            @memcpy(self.mem[base .. base + pool.data.len], pool.data);
+            self.mem_top = base + pool.data.len;
         }
 
         const entry_fn = self.functions[fi];
@@ -1431,13 +1432,14 @@ pub const VM = struct {
                     const signed = (ref & (1 << 30)) != 0;
                     if ((ref & (1 << 31)) != 0) return error.BadOpcode;
                     const o: usize = ref & 0x0FFFFFFF;
-                    if (o + width > pool.data.len or o + width > self.mem.len)
-                        return error.BadAddress;
+                    if (o + width > pool.data.len) return error.BadAddress;
+                    const mem_off = @as(usize, pool.data_base) + o;
+                    if (mem_off + width > self.mem.len) return error.BadAddress;
                     var bits: u64 = switch (width) {
-                        1 => self.mem[o],
-                        2 => std.mem.readInt(u16, self.mem[o..][0..2], .little),
-                        4 => std.mem.readInt(u32, self.mem[o..][0..4], .little),
-                        8 => std.mem.readInt(u64, self.mem[o..][0..8], .little),
+                        1 => self.mem[mem_off],
+                        2 => std.mem.readInt(u16, self.mem[mem_off..][0..2], .little),
+                        4 => std.mem.readInt(u32, self.mem[mem_off..][0..4], .little),
+                        8 => std.mem.readInt(u64, self.mem[mem_off..][0..8], .little),
                         else => unreachable,
                     };
                     if (signed and width < 8) {

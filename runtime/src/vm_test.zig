@@ -90,9 +90,10 @@ fn buildEmptyPlans(buf: []u8) []const u8 {
     return a.code();
 }
 
-/// A minimal CIPC header with no names/data.
-fn buildCipc() [16]u8 {
-    var cipc: [16]u8 = [_]u8{0} ** 16;
+/// A minimal CIPC header with no names/data. The 20-byte header is padded to
+/// the 16-byte data alignment (32 bytes total).
+fn buildCipc() [32]u8 {
+    var cipc: [32]u8 = [_]u8{0} ** 32;
     @memcpy(cipc[0..4], "CIPC");
     cipc[4] = 1;
     return cipc;
