@@ -15,7 +15,8 @@
 ## 2. 特性
 
 1. **不需要动态申请可执行内存**：VM 和固定汇编 ABI 引擎不生成 JIT/stub 代码，callback
-   使用进程级静态 trampoline 池。
+   使用进程级固定 256 槽的静态 trampoline 池。自动 callback 槽在 VM 销毁/计划重载时永久退休，
+   显式 `ci_callback_acquire`/`ci_callback_release` 槽可复用；这是进程级硬上限。
 2. **支持 FFI 和 callback**：编译期生成调用计划，支持结构体、varargs，以及
    cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback。
 3. **运行时紧凑，约 100 KiB**（ReleaseSmall）：
