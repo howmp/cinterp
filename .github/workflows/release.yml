@@ -32,7 +32,7 @@ jobs:
         run: make test
 
       - name: version consistency (VERSION, build.zig.zon, Cargo.toml.in, tag)
-        run: python3 scripts/check_version.py
+        run: python3 scripts/tools/check_version.py
 
       - name: lint bytecode packages
         run: make lint
@@ -45,7 +45,7 @@ jobs:
 
       - name: fetch smoke suites
         run: |
-          python3 scripts/fetch_suites.py \
+          python3 scripts/test/fetch_suites.py \
             --suite c-testsuite --suite tcc --suite CompCert --suite gcc-torture
 
       - name: smoke test suites
@@ -63,7 +63,7 @@ jobs:
       - name: verify release artifacts
         run: |
           set -euo pipefail
-          python3 scripts/check_version.py --sbom 'build/release/*.spdx.json'
+          python3 scripts/tools/check_version.py --sbom 'build/release/*.spdx.json'
           test -s build/release/SHA256SUMS
           (cd build/release && sha256sum -c SHA256SUMS)
 

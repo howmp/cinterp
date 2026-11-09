@@ -127,7 +127,7 @@ lowering 会拒绝少数已被接受的形式（`frem`、`asm` 调用）。确�
   stdcall 修饰名）会解析到 `kernel32.dll`/`user32.dll`/`api-ms-win-*`，并优先
   选择具体 DLL 而不是 API set。`make test-winapi` 会为 Win64/Win32 编译
   `examples/windows/*.c` 并在 Wine 下运行它们；当没有任何目标能够实际执行时，它以
-  非零码退出（本地只想空跑时可用 `python3 scripts/test_winapi.py --allow-skip`）。
+  非零码退出（本地只想空跑时可用 `python3 scripts/test/test_winapi.py --allow-skip`）。
 - Linux（`compiler/src/libc_defs.zig`）：`<zig lib>/libc/glibc/abilists`，
   限定为 `x86_64-linux-gnu` 和 `aarch64-linux-gnu`，从中得到作为导出方的
   soname（`libc.so.6`、`libm.so.6`、`libpthread.so.0`、……）。
@@ -160,7 +160,7 @@ make compiler                                     # builds compiler/zig-out/bin/
 Python 只供测试、fuzz 和基准测试框架使用。编译器本身不依赖 Python，它的
 外部符号表由 `zig build`（或 `zig build gen-link-index`）从 Zig 工具链生成。
 
-- `make test` 构建编译器并运行 `scripts/test.sh`：运行时单元测试、
+- `make test` 构建编译器并运行 `scripts/test/test.sh`：运行时单元测试、
   `cd compiler && zig build test`，以及端到端集成用例。
 - `make compiler-test` 只运行 `cd compiler && zig build test`（main、abi、
   ir、lower_ast、imports、link_index、link_wrappers、win_defs、libc_defs）。

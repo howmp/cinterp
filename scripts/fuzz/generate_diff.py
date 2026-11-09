@@ -26,9 +26,9 @@ from pathlib import Path
 try:
     from minimize_failure import minimize_file
 except ImportError:  # module execution from another cwd
-    from scripts.minimize_failure import minimize_file
+    from scripts.fuzz.minimize_failure import minimize_file
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 DEFAULT_YARPGEN = ROOT / "build/suites/yarpgen/build/yarpgen"
 DEFAULT_CSMITH = ROOT / "build/suites/csmith/build/src/csmith"

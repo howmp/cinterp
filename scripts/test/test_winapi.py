@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 COMPILER_CANDIDATES = (ROOT / "build/cinterp-cc.exe", ROOT / "build/cinterp-cc")
 WINE = os.environ.get("WINE", "wine")
 RUNTIME = {
@@ -71,7 +71,7 @@ def main() -> int:
         if not runner.is_file():
             print(
                 f"SKIP {target}: missing {runner} "
-                "(build it with './scripts/test_cross.sh --targets win64,win32' or "
+                "(build it with './scripts/test/test_cross.sh --targets win64,win32' or "
                 "'make test-suites-cross')"
             )
             continue
@@ -112,7 +112,7 @@ def main() -> int:
             return 0
         print(
             "winapi: refusing to report success; install Wine and run "
-            "'./scripts/test_cross.sh --targets win64,win32' first, "
+            "'./scripts/test/test_cross.sh --targets win64,win32' first, "
             "or pass --allow-skip for a local run",
             file=sys.stderr,
         )

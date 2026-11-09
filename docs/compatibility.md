@@ -10,8 +10,8 @@
   输出 `cinterp-cc <VERSION>`。
 - 运行时在构建时读取仓库根目录 `VERSION`，写入 `ci_version()`
   和共享库版本号；共享库 SONAME 主版本取 `VERSION` 主版本（见下）。
-- `scripts/package_release.sh` 只从 `VERSION` 取版本，不再接受硬编码副本。
-- `scripts/check_version.py`（`make check-version`）校验根 `VERSION`、
+- `scripts/release/package_release.sh` 只从 `VERSION` 取版本，不再接受硬编码副本。
+- `scripts/tools/check_version.py`（`make check-version`）校验根 `VERSION`、
   `runtime/build.zig.zon`、`packaging/rust/cinterp-sys/Cargo.toml.in`、SBOM 文档以及
   release tag；不一致时以非零退出。
 

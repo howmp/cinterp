@@ -17,9 +17,9 @@ jobs:
       - name: Build compiler
         run: make compiler
       - name: ARM64 AAPCS64 cross suite
-        run: ./scripts/test_cross.sh --targets arm64
+        run: ./scripts/test/test_cross.sh --targets arm64
       - name: ARM64 load-only fuzz
-        run: python3 scripts/fuzz_cross.py --targets aarch64-linux --iterations 100
+        run: python3 scripts/fuzz/fuzz_cross.py --targets aarch64-linux --iterations 100
 
   windows:
     runs-on: windows-latest
@@ -43,8 +43,8 @@ jobs:
         shell: bash
         run: |
           export PATH="/c/Program Files/LLVM/bin:$PATH"
-          ./scripts/test_cross.sh --targets win64,win32
-          python scripts/fuzz_cross.py --targets win64,win32 --iterations 100
+          ./scripts/test/test_cross.sh --targets win64,win32
+          python scripts/fuzz/fuzz_cross.py --targets win64,win32 --iterations 100
 
   windows-wine:
     runs-on: ubuntu-latest
@@ -65,18 +65,18 @@ jobs:
       - name: Build compiler
         run: make compiler
       - name: Win64 + Win32 FFI cross suite under Wine
-        run: ./scripts/test_cross.sh --targets win64,win32
+        run: ./scripts/test/test_cross.sh --targets win64,win32
       - name: Win32 API imports under Wine
         run: make test-winapi
       - name: Fetch cross suites
         run: >-
-          python3 scripts/fetch_suites.py
+          python3 scripts/test/fetch_suites.py
           --suite c-testsuite --suite tcc --suite gcc-torture --suite CompCert
           --support
       - name: Win64 + Win32 smoke suites under Wine
         run: make test-suites-cross CROSS_SUITE_TARGETS=win64,win32
       - name: Win64 + Win32 load-only fuzz under Wine
-        run: python3 scripts/fuzz_cross.py --targets win64,win32 --iterations 100
+        run: python3 scripts/fuzz/fuzz_cross.py --targets win64,win32 --iterations 100
       - uses: actions/upload-artifact@v4
         if: always()
         with:

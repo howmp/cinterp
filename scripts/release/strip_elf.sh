@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BIN="$ROOT/runtime/zig-out/bin/cinterp-run"
 if ! file "$BIN" | grep -q 'ELF'; then
     echo "strip_elf: not an ELF artifact: $BIN" >&2

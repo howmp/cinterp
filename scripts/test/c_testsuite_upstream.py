@@ -4,7 +4,7 @@ import argparse, os, re, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_COMPILER = ROOT / "build/cinterp-cc"
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)

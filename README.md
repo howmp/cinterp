@@ -20,11 +20,11 @@
 2. **支持 FFI 和 callback**：编译期生成调用计划，支持结构体、varargs，以及
    cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback。
 3. **运行时紧凑，约 100 KiB**（ReleaseSmall）：
-   1. Linux x86-64（native）：97,760 B ≈ 95 KiB
+   1. Linux x86-64（native）：97,776 B ≈ 95 KiB
    2. Linux x86-64（static SysV）：81,968 B ≈ 80 KiB
    3. Windows x86-64：75,264 B ≈ 74 KiB
    4. Windows x86：81,408 B ≈ 80 KiB
-   5. Linux AArch64：98,160 B ≈ 96 KiB
+   5. Linux AArch64：98,176 B ≈ 96 KiB
 
 4. **可用于替代 BOF 场景**：直接编译普通 C 源文件（包括直接 `#include <windows.h>`），
    不再需要手动声明 WinAPI 函数原型。参见 [`examples/bof`](examples/bof/) 和
@@ -60,7 +60,7 @@ CIPKG
   损坏包、未知符号、目标不匹配等负向路径。
 - 完整上游 manifest 基线：**4316/4522 通过，206 跳过**；标准层级为 395/495。通过用例中
   约 55% 是仅编译检查，详细统计见 [`dev.md` §12](./dev.md#12-构建测试与发布)。
-- 本地 c-testsuite 17/17；上游 c-testsuite manifest 为 218 通过 / 2 跳过。
+- 本地 c-testsuite 18/18；上游 c-testsuite manifest 为 218 通过 / 2 跳过。
 - 交叉测试覆盖 Win64、Win32 和 ARM64，共 62 个示例；Windows 目标通过 Wine 运行。
   `make test-winapi` 会运行全部 Windows `<windows.h>` 示例。
 - 另有 `make differential`、fuzz（loader/执行/字节码/FFI/sanitizer）和结构化报告校验
@@ -132,7 +132,7 @@ make test-winapi   # 通过 Wine 运行 Windows 示例
 
 ```bash
 make test               # 单元测试、示例、C API、负向路径
-make c-testsuite        # 本地 17 个 C 子集用例
+make c-testsuite        # 本地 18 个 C 子集用例
 make test-suites-smoke  # 快速上游套件
 make test-suites-full   # 完整上游套件
 make test-winapi        # Windows 示例（Wine）
@@ -152,6 +152,6 @@ C 嵌入 API、错误码和链接方式见 [`docs/embedding.md`](docs/embedding.
 - [`docs/ir-subset.md`](docs/ir-subset.md) — 支持的 LLVM IR 子集
 - [`docs/zig-frontend.md`](docs/zig-frontend.md) — `zig cc` 前端和编译器 CLI 契约
 - [`docs/ir-parser-differences.md`](docs/ir-parser-differences.md) — IR 前端回归和历史差异
-- [`scripts/cib_dump.py`](scripts/cib_dump.py) — CIB 头信息与 CIVM 反汇编工具
+- [`scripts/tools/cib_dump.py`](scripts/tools/cib_dump.py) — CIB 头信息与 CIVM 反汇编工具
 - [`examples/README.md`](examples/README.md) — 分类示例索引
 - [`tests/manifests/README.md`](tests/manifests/README.md) — 测试套件 manifest 和跳过策略

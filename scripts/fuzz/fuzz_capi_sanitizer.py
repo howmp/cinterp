@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 COMPILER = ROOT / "build/cinterp-cc"
 SEEDS = ["hello", "arrays", "structs", "math", "bitfields", "ptrstruct"]
 HARNESS = ROOT / "build/fuzz-capi-asan/capi_fuzz"

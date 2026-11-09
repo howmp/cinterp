@@ -422,7 +422,7 @@ size  field
 运行 `./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib` 后，`CIPKG v4` 的 section 顺序和大小可以直接查看：
 
 ```text
-$ ./scripts/cib_dump.py --headers build/hello.cib
+$ ./scripts/tools/cib_dump.py --headers build/hello.cib
 CIPKG: v4
   module: off=22 len=58
   plans:  off=80 len=0 (omitted)
@@ -436,7 +436,7 @@ CIPC: names=0 data=32 bytes base=0
 这个包没有计划和外部调用，所以 CIPL/CIPI 为空；CIPC 仍必须存在，并保存 32 字节的只读/标量常量数据（section 共 64 字节，含 20 字节头和 16 字节对齐 padding）。`--asm` 可以看到常量已经变成 `LOAD_CONST_POOL`：
 
 ```text
-$ ./scripts/cib_dump.py --asm build/hello.cib
+$ ./scripts/tools/cib_dump.py --asm build/hello.cib
 fn0 entry: params=0 locals=1 code=40
   0000: 600400                   ALLOCA 4
   0003: 210000                   STORE_LOCAL 0
@@ -457,11 +457,11 @@ xxd -g1 build/hello.cib
 ./build/cinterp-cc compile examples/ffi/ffi_printf.c -o build/printf.cib --dump --dump-imports
 
 # 解析 CIB：头信息 + CIVM 反汇编
-./scripts/cib_dump.py build/hello.cib
+./scripts/tools/cib_dump.py build/hello.cib
 
 # 只打印头信息 / 只反汇编
-./scripts/cib_dump.py --headers build/ffi_callback.cib
-./scripts/cib_dump.py --asm build/ffi_callback.cib
+./scripts/tools/cib_dump.py --headers build/ffi_callback.cib
+./scripts/tools/cib_dump.py --asm build/ffi_callback.cib
 ```
 
 `cib_dump.py` 支持 CIPKG v4、CIVM v2、CIPC、紧凑 CIPL/CIPI；会打印 section

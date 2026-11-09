@@ -5,7 +5,7 @@ The old checker grepped ``build/evidence-*.txt`` logs that nothing produced, so
 it either crashed or verified nothing. This version reads the reports the build
 actually writes:
 
-  * ``build/test-suites-smoke.json``     (17 ok)
+  * ``build/test-suites-smoke.json``     (18 ok)
   * ``build/test-suites.json``           (395 ok / 100 skip)
   * ``build/test-suites-full.json``      (counts are derived from the report)
   * ``build/test-suites-nightly.json``   (consistency only)
@@ -27,7 +27,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 B = ROOT / "build"
 
 PASS = "pass"
@@ -36,7 +36,7 @@ MISSING = "missing"
 
 # (label, path, expected ok, expected skip, --require-* key)
 SUITE_REPORTS = (
-    ("test-suites-smoke", B / "test-suites-smoke.json", 17, 0, "smoke"),
+    ("test-suites-smoke", B / "test-suites-smoke.json", 18, 0, "smoke"),
     ("test-suites", B / "test-suites.json", 395, 100, "standard"),
     ("test-suites-full", B / "test-suites-full.json", None, None, "full"),
 )
@@ -214,7 +214,7 @@ def check_cross(c: Checker) -> None:
     present = [p for p in CROSS_RUNTIMES if p.is_file()]
     if not present:
         c.missing("cross runtimes", CROSS_DIR,
-                  "./scripts/test_cross.sh --targets win64,win32,arm64 (needs Wine/qemu)",
+                  "./scripts/test/test_cross.sh --targets win64,win32,arm64 (needs Wine/qemu)",
                   required)
         return
     missing = [p.name for p in CROSS_RUNTIMES if not p.is_file() or p.stat().st_size == 0]
@@ -245,18 +245,18 @@ def check_cross(c: Checker) -> None:
 
 def check_repo_invariants(c: Checker) -> None:
     makefile = (ROOT / "Makefile").read_text()
-    test_sh = (ROOT / "scripts/test.sh").read_text()
+    test_sh = (ROOT / "scripts/test/test.sh").read_text()
     c.check("Makefile default compiler",
             "build/cinterp-cc" in makefile and "test: compiler" in makefile,
             "test target builds and uses build/cinterp-cc")
     c.check("test.sh default compiler",
             "build/cinterp-cc" in test_sh and "compiler" in test_sh,
-            "scripts/test.sh runs the Zig compiler")
+            "scripts/test/test.sh runs the Zig compiler")
     c.check("Makefile evidence target", "\nevidence:" in makefile,
             "make evidence runs the checker")
     c.check("Makefile check-version target",
-            "\ncheck-version:" in makefile and "scripts/check_version.py" in makefile,
-            "make check-version calls scripts/check_version.py")
+            "\ncheck-version:" in makefile and "scripts/tools/check_version.py" in makefile,
+            "make check-version calls scripts/tools/check_version.py")
 
 
 def main() -> int:

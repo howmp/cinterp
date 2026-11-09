@@ -1,7 +1,7 @@
 # 测试套件清单
 
 每个 `*.json` 文件描述一个上游或本地 C 测试套件。运行器是
-`scripts/test_suites.py`；源码由 `scripts/fetch_suites.py` 拉取到 `build/suites/`，
+`scripts/test/test_suites.py`；源码由 `scripts/test/fetch_suites.py` 拉取到 `build/suites/`，
 不内置在仓库中。
 
 ## 清单字段
@@ -37,13 +37,13 @@
 ## 命令
 
 ```bash
-python3 scripts/fetch_suites.py --all --support
-make test-suites-smoke      # smoke tier: csuite only (17 cases)
+python3 scripts/test/fetch_suites.py --all --support
+make test-suites-smoke      # smoke tier: csuite only (18 cases)
 make test-suites            # standard: csuite, c-testsuite, TCC, chibicc, libc-test
 make test-suites-full       # adds gcc-torture(+compile), gcc-ieee, CompCert(+c/compile),
                             # LLVM UnitTests/regression-c, libc-test-regression
 make test-suites-nightly    # all fixed suites (full + the four cross-target smoke suites)
-                            # plus scripts/generate_diff.py (YARPGen, 100 iterations)
+                            # plus scripts/fuzz/generate_diff.py (YARPGen, 100 iterations)
 make test-suites-cross      # csuite + the four smoke suites on Win64/Win32/ARM64 (145 cases each)
 make generate-diff          # YARPGen differential smoke
 ```
@@ -60,12 +60,12 @@ make generate-diff          # YARPGen differential smoke
 在不修改基线的情况下重新分诊被排除的候选用例：
 
 ```bash
-python3 scripts/test_suites.py --suite gcc-torture --include-excluded \
+python3 scripts/test/test_suites.py --suite gcc-torture --include-excluded \
   --include-skipped --only va-arg-1,stdarg-1 \
   --emit-reasons build/triage-varargs.txt --report build/triage-varargs.json
 
 # faster local reruns (content-addressed CIB cache)
-python3 scripts/test_suites.py --tier full --jobs 8 --cib-cache build/cib-cache
+python3 scripts/test/test_suites.py --tier full --jobs 8 --cib-cache build/cib-cache
 ```
 
 `--include-excluded` 会绕过 `.excluded`，`--only` 接受以逗号分隔的 ID，
@@ -79,7 +79,7 @@ python3 scripts/test_suites.py --tier full --jobs 8 --cib-cache build/cib-cache
 - 报告中的每个 skip 还会带有 `skip_class`：
   - `unsupported`：明确不支持的平台/语言/诊断特性；
   - `known-failure`：已观察到的 mismatch、崩溃、超时或错误返回，属于待修缺陷。
-- `scripts/check_plan_evidence.py` 会汇总 `skip_classes["known-failure"]`，不再把
+- `scripts/tools/check_plan_evidence.py` 会汇总 `skip_classes["known-failure"]`，不再把
   已知失败藏在单一 skip 数字里。
 - `compile:` 表示编译器不支持的特性，或需要 GNU/扩展的上游测试；`runtime:` 是已知的
   运行时/ABI 失败；`mismatch:` 是已知的输出差异；`timeout:` 是资源/时间上限。
@@ -109,7 +109,7 @@ python3 scripts/test_suites.py --tier full --jobs 8 --cib-cache build/cib-cache
 ## 清单卫生：重复 ID
 
 重复的用例 ID 会静默地让用例运行两次并破坏报告，因此
-`scripts/test_suites.py` 现在会直接拒绝它们
+`scripts/test/test_suites.py` 现在会直接拒绝它们
 （`reject_duplicate_ids`）：包含重复 ID 的清单会使运行失败，并给出
 重复 ID 列表。`--allow-duplicate-ids` 会将其降级为警告并
 保留第一次出现的条目，仅用于对未修改清单的本地分诊。
@@ -130,7 +130,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 
 | 套件 | 用例数 | 通过 | 跳过 | 备注 |
 | --- | ---: | ---: | ---: | --- |
-| csuite | 17 | 17 | 0 | 本地子集，`// expect:` 标记 |
+| csuite | 18 | 18 | 0 | 本地子集，`// expect:` 标记 |
 | c-testsuite | 220 | 218 | 2 | 内联跳过（`00204`、`00216`） |
 | tcc-tests2 | 142 | 99 | 43 | |
 | chibicc | 41 | 15 | 26 | |
@@ -176,12 +176,12 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | gcc-smoke | 40 | 无 |
 | compcert-smoke | 24 | `x86_64-windows`、`i686-windows`：`binops` → 23 + 1 |
 
-`make test-suites-smoke`（smoke 层级）只运行 `csuite`（在宿主上为 17/17）。
+`make test-suites-smoke`（smoke 层级）只运行 `csuite`（在宿主上为 18/18）。
 生成的 YARPGen/Csmith 已知失败种子单独记录在
 `tests/generator-known-failures.json` 中。YARPGen 白名单目前
 为空；超出已记录运行时上限的生成程序会被报告为
 `cinterp engine limit:` 跳过，而白名单中的种子一旦开始通过，就会让
-`scripts/generate_diff.py` 因 stale 而失败。Csmith 映射仍有三个
+`scripts/fuzz/generate_diff.py` 因 stale 而失败。Csmith 映射仍有三个
 条目。
 
 ## 上游 c-testsuite：两个不同的数字
@@ -190,7 +190,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 （`00204` 向量类型，`00216` 复杂聚合全局初始化器），因此
 清单运行的结果是 **218 通过 / 2 跳过**，与基线表一致。
 
-独立的 `scripts/c_testsuite_upstream.py` 仍然默认使用较旧的
+独立的 `scripts/test/c_testsuite_upstream.py` 仍然默认使用较旧的
 `tests/csuite/cinterp.skip` 列表，该列表额外列出了 `00189`（需要
 外部数据符号）。因此它的默认运行在同 220 个用例中是 **217 通过 / 3 跳过**。
 这两个跳过列表并未统一：清单运行请引用 **218/2**，

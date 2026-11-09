@@ -147,6 +147,6 @@ cd compiler && zig build test   # parser, verifier, ABI and lowering tests
 make test                       # runtime + compiler unit tests + integration
 make test-suites-full           # full C suite through the AST frontend
 make test-suites-cross          # csuite + upstream smoke on Win64/Win32/ARM64
-make c-testsuite                # 17 local cases in tests/csuite (scripts/c_testsuite.sh), host target only
+make c-testsuite                # 17 local cases in tests/csuite (scripts/test/c_testsuite.sh), host target only
 make test-winapi                # Windows API imports under Wine (fails when nothing can run)
 ```

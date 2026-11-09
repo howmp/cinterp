@@ -1,5 +1,5 @@
 # Package version file for cinterp, rendered from
-# packaging/cmake/cinterpConfigVersion.cmake.in by scripts/package_release.sh.
+# packaging/cmake/cinterpConfigVersion.cmake.in by scripts/release/package_release.sh.
 #
 # Same-major compatibility, which is what CMake's SameMajorVersion generator
 # produces: a request up to @VERSION@ in the @VERSION_MAJOR@ series matches,

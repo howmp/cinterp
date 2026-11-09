@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT/runtime"
 OUT="$ROOT/build/size"
 BUDGET="${SIZE_BUDGET:-135168}"
@@ -12,7 +12,7 @@ check() {
         *windows*) cp zig-out/bin/cinterp-run.exe "$OUT/$name" ;;
         *) cp zig-out/bin/cinterp-run "$OUT/$name" ;;
     esac
-    "$ROOT/scripts/strip_runtime.sh" "$OUT/$name" >/dev/null
+    "$ROOT/scripts/release/strip_runtime.sh" "$OUT/$name" >/dev/null
     local size
     size=$(stat -c%s "$OUT/$name")
     echo "$name: $size bytes"

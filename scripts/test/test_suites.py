@@ -2,7 +2,7 @@
 """Unified C test-suite runner for cinterp.
 
 A suite is described by a JSON manifest under tests/manifests. The runner only
-executes already-fetched sources; use scripts/fetch_suites.py to populate the
+executes already-fetched sources; use scripts/test/fetch_suites.py to populate the
 pinned upstream checkouts under build/suites.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_COMPILER = ROOT / "build/cinterp-cc"
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)

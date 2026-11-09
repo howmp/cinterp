@@ -2,7 +2,7 @@
 """Dump cinterp CIPKG v4 headers and disassemble CIVM bytecode.
 
 Usage:
-  scripts/cib_dump.py [--headers|--asm] package.cib [...]
+  scripts/tools/cib_dump.py [--headers|--asm] package.cib [...]
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import struct
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class Bad(Exception):

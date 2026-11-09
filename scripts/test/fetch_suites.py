@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 DEST = ROOT / "build/suites"
 
 SPECS = {

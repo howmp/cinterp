@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 COMPILER = Path(os.environ.get("CINTERP_COMPILER", str(ROOT / "build/cinterp-cc")))
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)

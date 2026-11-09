@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
@@ -9,7 +9,7 @@ OUT="$ROOT/build/release"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-if ! python3 scripts/check_version.py --quiet; then
+if ! python3 scripts/tools/check_version.py --quiet; then
     echo "error: version sources disagree; refusing to package a release" >&2
     exit 1
 fi
@@ -162,7 +162,7 @@ build_one() {
 
     # gen_sbom.py writes THIRD_PARTY_NOTICES.md into compiler tarballs before
     # hashing, so the notice is part of the SBOM file list and the tarball.
-    python3 scripts/gen_sbom.py \
+    python3 scripts/tools/gen_sbom.py \
         --root "$dest" \
         --output "$dest/SBOM.spdx.json" \
         --version "$VERSION" \

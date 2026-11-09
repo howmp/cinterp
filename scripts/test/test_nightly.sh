@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 SUITE_JOBS="${SUITE_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
@@ -13,7 +13,7 @@ mkdir -p build
 suite_log="build/nightly-suite.log"
 diff_log="build/nightly-diff.log"
 
-python3 scripts/test_suites.py \
+python3 scripts/test/test_suites.py \
     --compiler-path build/cinterp-cc \
     --tier nightly \
     --jobs "$SUITE_JOBS" \
@@ -30,7 +30,7 @@ gen_args=(
 if [ "$NIGHTLY_MINIMIZE" != "0" ]; then
     gen_args+=(--minimize --minimize-jobs "$MINIMIZE_JOBS")
 fi
-python3 scripts/generate_diff.py "${gen_args[@]}" >"$diff_log" 2>&1 &
+python3 scripts/fuzz/generate_diff.py "${gen_args[@]}" >"$diff_log" 2>&1 &
 diff_pid=$!
 
 rc=0

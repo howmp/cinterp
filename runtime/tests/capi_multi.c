@@ -12,7 +12,7 @@
  * fast the interpreter happens to be on the build machine; without it only the
  * idle halves of those checks run.
  *
- * Build and run (see scripts/test.sh):
+ * Build and run (see scripts/test/test.sh):
  *   capi_multi hello.cib math.cib ffi_qsort.cib [busy.cib]
  */
 #define _POSIX_C_SOURCE 200809L

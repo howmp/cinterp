@@ -306,7 +306,7 @@ examples/                      # 按类别：basics/、ffi/、linux/、windows/�
                                # windows 示例直接 include <windows.h>
 docs/                          # 格式、嵌入、多 CIB/线程、兼容性、IR 子集、Zig 前端
 packaging/                     # pkg-config、CMake、Rust binding、release README
-scripts/                       # test/fuzz/differential/release harness
+scripts/                       # tools/、test/、fuzz/、release/；索引见 scripts/README.md
 tests/                         # csuite、manifests、known failures
 ```
 
@@ -315,10 +315,10 @@ tests/                         # csuite、manifests、known failures
 ```bash
 make compiler runtime
 make test                 # runtime + compiler 单测、端到端、错误路径、C API
-make c-testsuite          # 本地 17 例
+make c-testsuite          # 本地 18 例
 make lint                 # civm_lint.py 校验包结构
 make differential         # native vs cinterp 返回值
-make test-suites-smoke    # csuite 17/17
+make test-suites-smoke    # csuite 18/18
 make test-suites          # standard
 make test-suites-full     # full
 make test-suites-nightly  # nightly + 100-seed 生成式差分
@@ -376,7 +376,7 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 `ReleaseSmall`（`make runtime` 的默认值）剥离 unwind 表、帧指针、panic 跟踪和符号，
 ELF 发布产物还会去掉 `.eh_frame`/`.eh_frame_hdr`。错误名表仅 Debug 构建保留；
 ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当前 Linux x64
-体积约为 Debug 8.8 MiB、ReleaseSmall 97,760 B。详细体积和 post-link 处理见下文。
+体积约为 Debug 8.8 MiB、ReleaseSmall 97,776 B。详细体积和 post-link 处理见下文。
 
 ### 12.2 当前基线
 
@@ -384,11 +384,11 @@ ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当
 - 通过用例中约 55% 是仅编译（gcc-torture-compile 1408 + llvm-regression-c 934 + compcert-compile 30 = 2372）；它们只验证编译器接受源码并产出包，不验证程序输出。可执行基线是其余 1862 个通过用例。
 - `make test-suites`：395/495（100 skip）。
 - `make test-suites-nightly`：4446/4649（203 skip）；YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure。
-- 并发：`test_suites.py --jobs` 默认 CPU 核数，且所有选中 suite 共用一个全局 worker 池；`SUITE_JOBS` 可覆盖。nightly 由 `scripts/test_nightly.sh` 并行执行 suite 与 `generate_diff`，`GEN_JOBS`/`MINIMIZE_JOBS` 控制差分并发，日志为 `build/nightly-suite.log` 和 `build/nightly-diff.log`；顺序模式为 `make test-suites-nightly-serial`，`NIGHTLY_MINIMIZE=0` 跳过最小化。
-- `scripts/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
-- 多 CIB/线程：`scripts/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）；重复 callback 运行由 C API 测试承担。
-- 本地 c-testsuite 17/17；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
-- ReleaseSmall：native Linux x64 97,760 B；size-cross static sysv 81,968 B、Win64 75,264 B、Win32 81,408 B、ARM64 98,160 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
+- 并发：`test_suites.py --jobs` 默认 CPU 核数，且所有选中 suite 共用一个全局 worker 池；`SUITE_JOBS` 可覆盖。nightly 由 `scripts/test/test_nightly.sh` 并行执行 suite 与 `generate_diff`，`GEN_JOBS`/`MINIMIZE_JOBS` 控制差分并发，日志为 `build/nightly-suite.log` 和 `build/nightly-diff.log`；顺序模式为 `make test-suites-nightly-serial`，`NIGHTLY_MINIMIZE=0` 跳过最小化。
+- `scripts/test/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
+- 多 CIB/线程：`scripts/test/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）；重复 callback 运行由 C API 测试承担。
+- 本地 c-testsuite 18/18；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
+- ReleaseSmall：native Linux x64 97,776 B；size-cross static sysv 81,968 B、Win64 75,264 B、Win32 81,408 B、ARM64 98,176 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/release/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
 
 ### 12.3 发布压缩包
 
@@ -415,7 +415,7 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 做变异/截断并检查崩溃。自动 provider 只接受库名，不接受路径；指向原生分配内存的 C 指针
 属于受信任边界，不可信包应由宿主隔离。
 
-`scripts/check_plan_evidence.py` 读取结构化产物（`build/test-suites*.json`、
+`scripts/tools/check_plan_evidence.py` 读取结构化产物（`build/test-suites*.json`、
 `build/generate-diff-nightly.json`、`build/release/*.tar.gz`、`SHA256SUMS` 和各交叉运行时），
 不依赖文本日志。`make evidence` 会生成本地子集并运行 checker；完整、交叉和 nightly 报告在
 本地报告为 "not provided"，由 CI 产物补齐。

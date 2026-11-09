@@ -18,7 +18,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y clang python3 make cmake m4
       - name: fetch standard suites
         run: |
-          python3 scripts/fetch_suites.py \
+          python3 scripts/test/fetch_suites.py \
             --suite c-testsuite --suite tcc --suite chibicc --suite libc-test \
             --suite yarpgen --support
       - run: make test-suites
@@ -40,10 +40,10 @@ jobs:
         with:
           version: 0.13.0
       - run: sudo apt-get update && sudo apt-get install -y clang python3 make cmake m4
-      - run: python3 scripts/fetch_suites.py --all --support
+      - run: python3 scripts/test/fetch_suites.py --all --support
       - run: make test-suites-nightly
       - name: verify plan evidence
-        run: python3 scripts/check_plan_evidence.py --require-nightly
+        run: python3 scripts/tools/check_plan_evidence.py --require-nightly
       - uses: actions/upload-artifact@v4
         if: always()
         with:

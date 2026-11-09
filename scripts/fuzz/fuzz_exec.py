@@ -15,7 +15,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 COMPILER = ROOT / "build/cinterp-cc"
 BASE_SEEDS = ["hello", "arrays", "structs", "math", "bitfields", "ptrstruct", "longdouble"]

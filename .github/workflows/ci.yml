@@ -17,7 +17,7 @@ jobs:
       - run: make differential
       - run: make size-cross
       - run: git clone --depth 1 https://github.com/c-testsuite/c-testsuite.git /tmp/c-testsuite
-      - run: python3 scripts/c_testsuite_upstream.py --dir /tmp/c-testsuite/tests/single-exec --jobs 4
+      - run: python3 scripts/test/c_testsuite_upstream.py --dir /tmp/c-testsuite/tests/single-exec --jobs 4
       - name: cross-compile runtime
         run: |
           cd runtime
