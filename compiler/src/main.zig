@@ -444,7 +444,14 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8, callbacks_
     try argv.append(opts.source);
     try argv.append("-o");
     try argv.append(ll_path);
-    const result = try std.process.Child.run(.{ .allocator = allocator, .argv = argv.items });
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = argv.items,
+        // Large warning batches (e.g. the chibicc initializer corpus) exceed
+        // Child.run's default output ceiling; keep a bounded but realistic
+        // diagnostic budget.
+        .max_output_bytes = 4 * 1024 * 1024,
+    });
     switch (result.term) {
         .Exited => |code| {
             if (code != 0) {
