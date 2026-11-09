@@ -2143,15 +2143,18 @@ const Lowerer = struct {
         if (direct_name) |raw_name| {
             // `llvm.dbg.*` / `llvm.lifetime.*` are no-ops (debug info dropped).
             if (call.ret.isVoid() and (startsWith(raw_name, "llvm.dbg") or startsWith(raw_name, "llvm.lifetime"))) return;
-            // `llvm.memcpy` / `llvm.memset` become dedicated opcodes.
+            // `llvm.memcpy` / `llvm.memmove` / `llvm.memset` become dedicated
+            // opcodes. OP_MEMCPY already copies backwards when ranges overlap,
+            // so it implements memmove semantics as well.
             const is_memcpy = startsWith(raw_name, "llvm.memcpy.");
+            const is_memmove = startsWith(raw_name, "llvm.memmove.");
             const is_memset = startsWith(raw_name, "llvm.memset.");
-            if (is_memcpy or is_memset) {
+            if (is_memcpy or is_memmove or is_memset) {
                 if (call.args.len < 3) return error.BadCall;
                 try self.emitValue(call.args[0]);
                 try self.emitValue(call.args[1]);
                 try self.emitValue(call.args[2]);
-                try self.emitU8(if (is_memcpy) op.OP_MEMCPY else op.OP_MEMSET);
+                try self.emitU8(if (is_memset) op.OP_MEMSET else op.OP_MEMCPY);
                 return;
             }
             if (isCallbackBuiltin(raw_name)) {

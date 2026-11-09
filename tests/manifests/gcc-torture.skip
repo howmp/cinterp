@@ -5,5 +5,4 @@ eeprof-1	unsupported: -finstrument-functions profiling hooks
 nestfunc-4	non-goal: nested function/frame limit: exit 1 != 0
 pr32244-1	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
 pr34971	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
-string-opt-18	bug: unresolved external symbol: exit 1 != 0
 pr117095	unsupported: i128 global initializer
