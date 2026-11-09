@@ -2210,6 +2210,21 @@ const Lowerer = struct {
             try self.emitU8(op.OP_STACKRESTORE);
             return;
         }
+        if (startsWith(name, "llvm.abs.")) {
+            const mapped = if (std.mem.endsWith(u8, name, ".i32"))
+                "abs"
+            else if (std.mem.endsWith(u8, name, ".i64"))
+                "llabs"
+            else
+                return error.UnsupportedInstruction;
+            if (call.args.len < 1 or result == null) return error.BadCall;
+            // The second operand is LLVM's is_int_min_poison flag, not a
+            // native argument.
+            var trimmed = call;
+            trimmed.args = call.args[0..1];
+            try self.lowerNativeCall(trimmed, result, mapped);
+            return;
+        }
 
         if (self.ctx.func_indices.get(name)) |idx| {
             try self.lowerVmCall(call, result, idx);
@@ -3378,6 +3393,38 @@ test "setjmp/longjmp and runtime intrinsics lower to the golden CIVM/CIPL" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     try expectGolden(arena.allocator(), goldenCase("intrinsics"));
+}
+
+test "llvm.abs maps to abs/llabs and drops the poison flag" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\declare i32 @llvm.abs.i32(i32, i1)
+        \\declare i64 @llvm.abs.i64(i64, i1)
+        \\
+        \\define i32 @f(i32 %x) {
+        \\entry:
+        \\  %r = call i32 @llvm.abs.i32(i32 %x, i1 true)
+        \\  ret i32 %r
+        \\}
+        \\
+        \\define i64 @g(i64 %x) {
+        \\entry:
+        \\  %r = call i64 @llvm.abs.i64(i64 %x, i1 true)
+        \\  ret i64 %r
+        \\}
+    );
+
+    const result = try compile(allocator, &module, 1, 8);
+    const abs_plan = planIndexByName(result, "abs").?;
+    const llabs_plan = planIndexByName(result, "llabs").?;
+    try testing.expectEqual(@as(usize, 1), result.plans[abs_plan].args.len);
+    try testing.expectEqual(@as(usize, 1), result.plans[llabs_plan].args.len);
 }
 
 test "null callee calls lower to no instructions" {

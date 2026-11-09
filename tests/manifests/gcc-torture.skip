@@ -1,7 +1,5 @@
 # refreshed after P1/P2 bug fixes
 20001121-1	bug: unresolved external symbol: exit 1 != 0
-20021127-1	bug: unresolved external symbol: exit 1 != 0
-20041126-1	bug: unresolved external symbol: exit 1 != 0
 20101011-1	bug: division-by-zero: exit 1 != 0
 930526-1	bug: unresolved external symbol: exit 1 != 0
 961223-1	bug: unresolved external symbol: exit 1 != 0
@@ -11,11 +9,8 @@ loop-2c	bug: unresolved external symbol: exit 1 != 0
 nestfunc-4	non-goal: nested function/frame limit: exit 1 != 0
 p18298	bug: unresolved external symbol: exit 1 != 0
 pr32244-1	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
-pr33142	bug: unresolved external symbol: exit 1 != 0
 pr34971	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
 restrict-1	bug: unresolved external symbol: exit 1 != 0
-ssad-run	bug: unresolved external symbol: exit 1 != 0
 string-opt-18	bug: unresolved external symbol: exit 1 != 0
 unroll-1	bug: unresolved external symbol: exit 1 != 0
-usad-run	bug: unresolved external symbol: exit 1 != 0
 pr117095	unsupported: i128 global initializer
