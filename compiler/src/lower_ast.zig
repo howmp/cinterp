@@ -203,6 +203,20 @@ const Layout = struct {
         return .{ .allocator = allocator, .ptr_size = ptr_size, .named = named };
     }
 
+    /// Resolve `.named` aliases down to their underlying type. Unknown names
+    /// keep the original type so callers retain the previous fallback behavior.
+    fn resolveNamed(self: *const Layout, ty: *const ast.Type) *const ast.Type {
+        var current = ty;
+        var depth: u32 = 0;
+        while (depth < 32) : (depth += 1) {
+            switch (current.*) {
+                .named => |n| current = self.named.get(n.name) orelse return ty,
+                else => return current,
+            }
+        }
+        return ty;
+    }
+
     /// Resolve `%name` chains and aliases down to a struct body.
     fn asStruct(self: *const Layout, ty: *const ast.Type) ?ast.StructType {
         var current = ty;
@@ -405,11 +419,12 @@ const GlobalWriter = struct {
     /// like the legacy `parseConstant`.
     fn writeConstant(self: *GlobalWriter, ty: *const ast.Type, value: ast.Value, out: []u8) anyerror!void {
         if (out.len == 0) return;
+        const resolved = self.layout.resolveNamed(ty);
         switch (value) {
             .zeroinitializer, .undef, .poison, .null_ => return,
             .aggregate => |agg| {
-                if (self.layout.asStruct(ty)) |st| {
-                    const layout = try self.layout.structLayout(ty);
+                if (self.layout.asStruct(resolved)) |st| {
+                    const layout = try self.layout.structLayout(resolved);
                     for (agg.elems, 0..) |elem, idx| {
                         if (idx >= st.fields.len or idx >= layout.offsets.len) break;
                         const base = layout.offsets[idx];
@@ -418,7 +433,7 @@ const GlobalWriter = struct {
                     }
                     return;
                 }
-                switch (ty.*) {
+                switch (resolved.*) {
                     .array => |a| {
                         const elem_sa = try self.layout.sizeAlign(a.elem);
                         for (agg.elems, 0..) |elem, idx| {
@@ -437,14 +452,14 @@ const GlobalWriter = struct {
             },
             .string => |s| {
                 // Only arrays of i8 carry C strings in this subset.
-                switch (ty.*) {
+                switch (resolved.*) {
                     .array => decodeCString(s.raw, out),
                     else => {},
                 }
                 return;
             },
             .int => |lit| {
-                const bits = intBitsOf(ty) orelse return;
+                const bits = intBitsOf(resolved) orelse return;
                 const size: u32 = @max(1, (bits + 7) / 8);
                 // compat: legacy writeIntLE caps the value at 8 bytes, so i128
                 // initialisers only fill their low 8 bytes.
@@ -458,7 +473,7 @@ const GlobalWriter = struct {
                 return;
             },
             .float => |lit| {
-                const kind = floatKindOf(ty) orelse return;
+                const kind = floatKindOf(resolved) orelse return;
                 switch (kind) {
                     .float, .double, .x86_fp80, .fp128 => _ = lit.writeLeBytes(out),
                     // The runtime has no half/bfloat/ppc_fp128 value path;
@@ -472,7 +487,7 @@ const GlobalWriter = struct {
                     .cast => |c| {
                         // `ptr inttoptr (i64 N to ptr)` is the only pointer
                         // constant expression the legacy writer materialises.
-                        if (c.op == .inttoptr and intBitsOf(c.src) != null) {
+                        if (c.op == .inttoptr and intBitsOf(self.layout.resolveNamed(c.src)) != null) {
                             const lit = switch (c.value) {
                                 .int => |l| l,
                                 else => return,
@@ -494,7 +509,8 @@ const GlobalWriter = struct {
     /// Record pointer relocations for `value`. Mirrors the legacy
     /// `collectRelocs`.
     fn collectRelocs(self: *GlobalWriter, ty: *const ast.Type, value: ast.Value, base: u32, out: *std.ArrayList(Reloc)) anyerror!void {
-        switch (ty.*) {
+        const resolved = self.layout.resolveNamed(ty);
+        switch (resolved.*) {
             .ptr => {
                 switch (value) {
                     .const_expr => |expr| switch (expr.*) {
@@ -532,10 +548,10 @@ const GlobalWriter = struct {
             else => {},
         }
 
-        if (self.layout.asStruct(ty)) |st| {
+        if (self.layout.asStruct(resolved)) |st| {
             switch (value) {
                 .aggregate => |agg| {
-                    const layout = try self.layout.structLayout(ty);
+                    const layout = try self.layout.structLayout(resolved);
                     for (agg.elems, 0..) |elem, idx| {
                         if (idx >= st.fields.len or idx >= layout.offsets.len) break;
                         try self.collectRelocs(elem.ty, elem.val, base + layout.offsets[idx], out);
@@ -545,7 +561,7 @@ const GlobalWriter = struct {
             }
             return;
         }
-        switch (ty.*) {
+        switch (resolved.*) {
             .array => |a| {
                 switch (value) {
                     .aggregate => |agg| {
@@ -584,7 +600,8 @@ const GlobalWriter = struct {
                 if (self.mode == .legacy) break;
                 continue;
             }
-            switch (current.*) {
+            const resolved = self.layout.resolveNamed(current);
+            switch (resolved.*) {
                 .array => |a| {
                     const elem = self.layout.sizeAlign(a.elem) catch break;
                     offset +%= idx *% @as(i64, elem.size);
@@ -596,10 +613,10 @@ const GlobalWriter = struct {
                     current = v.elem;
                 },
                 .struct_, .named => {
-                    const layout = self.layout.structLayout(current) catch break;
+                    const layout = self.layout.structLayout(resolved) catch break;
                     if (idx < 0 or idx >= layout.offsets.len) break;
                     offset +%= @as(i64, layout.offsets[@intCast(idx)]);
-                    const st = self.layout.asStruct(current) orelse break;
+                    const st = self.layout.asStruct(resolved) orelse break;
                     current = st.fields[@intCast(idx)];
                 },
                 else => break,
@@ -3423,6 +3440,46 @@ test "readonly global data_base honors explicit alignment" {
     try testing.expect(result.const_data.len >= 68);
     try testing.expectEqualSlices(u8, &.{ 7, 0, 0, 0 }, result.const_data[0..4]);
     try testing.expectEqualSlices(u8, &.{ 9, 0, 0, 0 }, result.const_data[64..68]);
+}
+
+test "named array types initialize and relocate nested globals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128"
+        \\target triple = "aarch64-unknown-linux-gnu"
+        \\
+        \\%ints = type [2 x i32]
+        \\%ptrs = type [2 x ptr]
+        \\%outer = type { %ptrs, i32 }
+        \\
+        \\@vals = global %ints [i32 11, i32 22], align 8
+        \\@a = global i32 7, align 4
+        \\@g = global %ptrs [ptr @a, ptr null], align 8
+        \\@o = global %outer { %ptrs [ptr @a, ptr null], i32 9 }, align 8
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  ret i32 0
+        \\}
+    );
+
+    const data = try TestHook.globalData(allocator, &module, 8);
+    try testing.expectEqual(@as(usize, 56), data.len);
+    try testing.expectEqualSlices(u8, &.{ 11, 0, 0, 0, 22, 0, 0, 0 }, data[0..8]);
+    try testing.expectEqualSlices(u8, &[_]u8{0} ** 8, data[16..24]);
+    try testing.expectEqualSlices(u8, &[_]u8{0} ** 8, data[32..40]);
+    try testing.expectEqualSlices(u8, &[_]u8{0} ** 8, data[40..48]);
+    try testing.expectEqualSlices(u8, &.{ 9, 0, 0, 0 }, data[48..52]);
+
+    const relocs = try TestHook.globalRelocs(allocator, &module, 8, .legacy);
+    try testing.expectEqual(@as(usize, 2), relocs.len);
+    try testing.expectEqual(@as(u32, 16), relocs[0].offset);
+    try testing.expectEqualStrings("@a", relocs[0].target);
+    try testing.expectEqual(@as(u32, 32), relocs[1].offset);
+    try testing.expectEqualStrings("@a", relocs[1].target);
 }
 
 test "ast lowering consumes the parsed AST, not the source text" {
