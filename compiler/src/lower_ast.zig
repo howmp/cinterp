@@ -1691,15 +1691,21 @@ const Lowerer = struct {
             const size = try self.typeSize(a.ty);
             if (size > 0xFFFF) {
                 try self.emitConst(size);
-                if (alloc_align > 8 or (!self.ctx.opts.legacy_codegen and alloc_align < 8)) {
-                    if (alloc_align > std.math.maxInt(u8)) return error.UnsupportedInstruction;
+                if (alloc_align > std.math.maxInt(u8)) {
+                    // The aligned opcodes carry an 8-bit alignment. Preserve
+                    // compile compatibility for wider requests with the
+                    // ordinary 8-byte-aligned alloca.
+                    try self.emitU8(op.OP_ALLOCA_DYN);
+                } else if (alloc_align > 8 or (!self.ctx.opts.legacy_codegen and alloc_align < 8)) {
                     try self.emitU8(op.OP_ALLOCA_DYN_ALIGN);
                     try self.emitU8(@intCast(alloc_align));
                 } else {
                     try self.emitU8(op.OP_ALLOCA_DYN);
                 }
+            } else if (alloc_align > std.math.maxInt(u8)) {
+                try self.emitU8(op.OP_ALLOCA);
+                try self.emitU16(@intCast(size));
             } else if (alloc_align > 8 or (!self.ctx.opts.legacy_codegen and alloc_align < 8)) {
-                if (alloc_align > std.math.maxInt(u8)) return error.UnsupportedInstruction;
                 try self.emitU8(op.OP_ALLOCA_ALIGNED);
                 try self.emitU16(@intCast(size));
                 try self.emitU8(@intCast(alloc_align));
