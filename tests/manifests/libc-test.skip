@@ -1,30 +1,30 @@
 # refreshed after VLA/C11/external-data work
 clocale_mbfuncs	unsupported: host libc reference difference (musl locale/wide-char)
 crypt	unsupported: libcrypt provider unavailable on host
-dlopen	stdout mismatch
-dlopen_dso	stdout mismatch
+dlopen	unsupported: dlsym returns host pointers outside VM memory/native target model
+dlopen_dso	unsupported: dlsym returns host pointers outside VM memory/native target model
 fnmatch	unsupported: host libc reference difference (musl fnmatch)
 fscanf	unsupported: host libc reference difference (musl scanf)
 fwscanf	unsupported: host libc reference difference (musl wide scanf)
 mbc	unsupported: host libc reference difference (musl multibyte/locale)
-pthread_cancel	stdout mismatch
+pthread_cancel	unsupported: host pthread/TLS runtime model
 pthread_tsd	foreign-thread callback while the VM is executing (fail-fast thread policy; use idle-VM or same-thread callbacks)
-pthread_cancel-points	exit -11 != 0
-pthread_cond	exit -11 != 0
-pthread_mutex	exit -11 != 0
-pthread_mutex_pi	stdout mismatch
+pthread_cancel-points	unsupported: host pthread/TLS runtime model
+pthread_cond	unsupported: host pthread/TLS runtime model
+pthread_mutex	unsupported: host pthread/TLS runtime model
+pthread_mutex_pi	unsupported: host pthread/TLS runtime model
 sscanf	unsupported: host libc reference difference (musl scanf)
 sscanf_long	exit -11 != 0
 strftime	unsupported: host libc reference difference (musl strftime)
-tls_align	stdout mismatch
-tls_align_dlopen	stdout mismatch
-tls_align_dso	stdout mismatch
-tls_init	stdout mismatch
-tls_init_dlopen	stdout mismatch
-tls_init_dso	stdout mismatch
-tls_local_exec	stdout mismatch
+tls_align	unsupported: host pthread/TLS runtime model
+tls_align_dlopen	unsupported: host pthread/TLS runtime model
+tls_align_dso	unsupported: host pthread/TLS runtime model
+tls_init	unsupported: host pthread/TLS runtime model
+tls_init_dlopen	unsupported: host pthread/TLS runtime model
+tls_init_dso	unsupported: host pthread/TLS runtime model
+tls_local_exec	unsupported: host pthread/TLS runtime model
 vfork	unsupported: host vfork/expected difference
-sem_init	mismatch: pthread quarantine (out of scope)
-pthread_robust	mismatch: pthread quarantine (out of scope)
+sem_init	unsupported: host pthread/TLS runtime model
+pthread_robust	unsupported: host pthread/TLS runtime model
 strtol	unsupported: host libc reference difference (musl strtol)
 wcstol	unsupported: host libc reference difference (musl wcstol)
