@@ -20,8 +20,8 @@
 //! * Compatibility quirks are preserved on purpose (see `compat:` comments) to
 //!   keep emitted CIBs stable: single-index global GEP addends in the default
 //!   `GepConstMode.legacy`, integer initialisers capped at 8 bytes,
-//!   `fp128`/vector initialisers left zeroed, unresolved `@symbol` operands
-//!   lowering to 0.
+//!   vector initialisers left zeroed, unresolved `@symbol` operands lowering
+//!   to 0.
 
 const std = @import("std");
 const op = @import("opcodes.zig");
@@ -460,10 +460,10 @@ const GlobalWriter = struct {
             .float => |lit| {
                 const kind = floatKindOf(ty) orelse return;
                 switch (kind) {
-                    .float, .double, .x86_fp80 => _ = lit.writeLeBytes(out),
-                    // compat: fp128 initialisers are left zeroed by the legacy
-                    // writer (it has no fp128 case). Preserved.
-                    .fp128, .ppc_fp128, .half, .bfloat => {},
+                    .float, .double, .x86_fp80, .fp128 => _ = lit.writeLeBytes(out),
+                    // The runtime has no half/bfloat/ppc_fp128 value path;
+                    // keep those initialisers zeroed.
+                    .ppc_fp128, .half, .bfloat => {},
                 }
                 return;
             },
@@ -3365,6 +3365,33 @@ test "decimal and hex f32 literals in stores, globals and call args" {
     try testing.expectEqual(@as(usize, 1), countConstI64(func.code.items, @bitCast(@as(u64, 0x405147AE147AE148))));
 
     try expectGolden(allocator, goldenCase("f32_literals"));
+}
+
+test "fp128 global initializers are written to the data image" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128"
+        \\target triple = "aarch64-unknown-linux-gnu"
+        \\
+        \\@ld = global fp128 0xLE147AE147AE147AE40028AE147AE147A, align 16
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  ret i32 0
+        \\}
+    );
+
+    const ld = module.findGlobal("ld").?.init.?.float;
+    var expected: [16]u8 = undefined;
+    _ = ld.writeLeBytes(&expected);
+
+    const data = try TestHook.globalData(allocator, &module, 8);
+    try testing.expectEqual(@as(usize, 16), data.len);
+    try testing.expectEqualSlices(u8, &expected, data);
+    try testing.expect(!std.mem.eql(u8, &expected, &([_]u8{0} ** 16)));
 }
 
 test "ast lowering consumes the parsed AST, not the source text" {
