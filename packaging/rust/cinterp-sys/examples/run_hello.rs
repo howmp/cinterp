@@ -11,20 +11,18 @@
 use cinterp_sys::Vm;
 
 fn usage(program: &str) -> ! {
-    eprintln!("usage: {program} <package.cib> [--entry NAME] [--expect N]");
+    eprintln!("usage: {program} <package.cib> [--expect N]");
     std::process::exit(2);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program = std::env::args().next().unwrap_or_else(|| "run_hello".into());
     let mut package: Option<String> = None;
-    let mut entry = String::from("main");
     let mut expect: Option<i64> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--entry" => entry = args.next().unwrap_or_else(|| usage(&program)),
             "--expect" => {
                 let value = args.next().unwrap_or_else(|| usage(&program));
                 expect = Some(value.parse().map_err(|_| {
@@ -48,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read(&package)?;
     let mut vm = Vm::new(0).ok_or("ci_vm_create returned NULL")?;
     vm.load_package(&bytes)?;
-    vm.run(&entry)?;
+    vm.run("main")?;
 
     let result = vm.result();
     println!("result = {result}");

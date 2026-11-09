@@ -33,7 +33,7 @@ python3 examples/bof/compile.py --target i686-windows --jobs 4
 ## 结果
 
 - 普通符号版本：x64 `72/72`、x86 `72/72` 编译成功。
-- 生成的 CIB 在 Wine 下 `--load-only`：x64 `72/72`、x86 `72/72`。
+- 生成的 CIB 在 Wine 下加载校验：x64 `72/72`、x86 `72/72`。
 - `hostname` 在 Wine 下实际运行并输出：
 
 ```text

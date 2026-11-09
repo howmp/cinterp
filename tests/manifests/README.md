@@ -25,7 +25,7 @@
 | `prelude` | 可选文件，会被前置到生成的包装器中 |
 | `cpath` | 编译期间添加到 `CPATH` 的目录 |
 | `case_args` | 每个用例额外的宿主 argv（`id` → 列表） |
-| `support_lib` | 作为 `--lib` 传入的共享库（chibicc/libc 脚手架） |
+| `support_lib` | 测试运行器预加载的共享库（chibicc/libc 脚手架） |
 | `rewrite` | 仅供测试脚手架使用的字面源码重写（必须显式声明） |
 | `tiers` | `smoke`、`standard`、`full`、`nightly` |
 | `repo_skip_file` | 已提交到仓库的 `ID<TAB>reason` 跳过列表 |

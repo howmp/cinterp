@@ -8,7 +8,7 @@ libffi，没有 JIT，也没有可执行内存。本 tarball 是 **@TARGET@** �
 
 | 路径 | 内容 |
 | --- | --- |
-| `@RUNNER@` | 运行时可执行文件：`@RUNNER@ [options] package.cib [entry]`；`--repeat`/`--entry`/`--jobs`/`--run-all` 见下文 |
+| `@RUNNER@` | 运行时可执行文件：`@RUNNER@ package.cib [-- args...]` |
 | `include/cinterp.h` | C 嵌入 API（ABI 2） |
 | `lib/` | @TARGET@ 的共享库以及静态/导入库 |
 | `pkgconfig/cinterp.pc` | 可重定位的 pkg-config 元数据 |
@@ -40,7 +40,7 @@ libffi，没有 JIT，也没有可执行内存。本 tarball 是 **@TARGET@** �
 `cinterp-cc compile app.c -o app.cib --target <target>` 选择包的
 ABI：`x86_64-linux`（本 tarball）、`x86_64-windows`、`i686-windows` 或
 `aarch64-linux`。要往哪个目标的运行时里加载包，就针对该目标编译。
-`--dump-target` / `--dump-imports` 用于检查结果，`--cc-path` 让前端指向
+`cinterp-cc --dump-imports` 用于检查结果，`--cc-path` 让前端指向
 特定的 `zig` 二进制文件。
 
 `cinterp-cc` 会在每次编译时把内置的 `cinterp_callbacks.h` 写入临时目录并通过
@@ -77,28 +77,12 @@ cd cinterp/compiler && zig build
 ## 运行包
 
 ```sh
-./@RUNNER@ hello.cib                    # run entry point "main"
-./@RUNNER@ hello.cib main -- a b c      # explicit entry, C argv (argv[0] = "a")
-./@RUNNER@ --repeat 3 hello.cib         # same VM, 3 fresh-image runs
-./@RUNNER@ --run-all hello.cib math.cib # one VM per package
-./@RUNNER@ --run-all --repeat 2 --jobs 2 hello.cib math.cib
-./@RUNNER@ --lib ./libfoo.@LIB_EXT@ app.cib   # add an explicit native library handle
-./@RUNNER@ --dump-target --dump-imports --load-only app.cib
-./@RUNNER@ --version
+./@RUNNER@ hello.cib
+./@RUNNER@ app.cib -- a b c   # C argv: argv[0]=app.cib, argv[1]=a, ...
 ```
 
-`--lib PATH` 在执行前注册一个显式的 `dlopen`（Unix）或 `LoadLibraryA`（Windows）
-句柄。包通常会在 CIB 链接元数据（`CIPI`）中指明其原生提供者，由运行时
-自行加载这些库；对于元数据未提及的库，或者要强制改用元数据提到的某个库的
-其他构建，可以使用 `--lib`。库从不会被卸载 —— 句柄在进程退出前一直有效。
-
-`--repeat N` 在同一个 VM 上重复运行 N 次，每次都是全新镜像（线性内存、值栈、帧和
-`setjmp` 目标重置，`main` 重新安装 globals）。`--run-all` 为每个位置参数创建一个
-独立 VM；`--entry NAME` 指定所有运行的入口；`--jobs N` 使用 N 个 worker 线程，
-不同 VM 可以并行（默认 1，并行时输出可能交错）。多包或重复模式下每次运行前打印
-`package: <path> run: <i>/<N>`，随后打印 `result: <i32>`。`--run-all` 必须显式
-给出，因此旧的 `package.cib [entry]` 语法不受影响。所有 VM 保持存活到进程退出，
-以便 CIB 的 `atexit` 处理函数仍能运行；`atexit`/`signal` 是进程全局状态。
+`cinterp-run` 只接受一个包和可选的 `--` 参数；多 VM、重复运行、显式加载用户库和
+仅加载校验通过 `libcinterp` 的 C API 完成，不提供 CLI 参数。
 
 CIB 内的 callback 有两种生命周期：自动 `@cb`/`CREATE_CALLBACK` 槽绑定到其 VM，
 跨重复运行保留，VM 销毁或计划重载后退休；`ci_callback_acquire(fn)`/
