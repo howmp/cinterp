@@ -830,6 +830,21 @@ const fresh_image_main = [_]u8{
     vm.OP_RET,
 };
 
+test "ADDR_CONST rejects an offset at the end of linear memory" {
+    var code_buf: [8]u8 = undefined;
+    var a = Asm{ .buf = &code_buf };
+    a.u8v(vm.OP_ADDR_CONST);
+    a.u32v(@intCast(vm.DEFAULT_MEMORY));
+    a.u8v(vm.OP_RET);
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 0, .code = a.code() },
+    };
+    var module_buf: [128]u8 = undefined;
+    var machine = vm.VM{};
+    try machine.loadModuleBytes(buildModule(&module_buf, &funcs));
+    try std.testing.expectError(error.BadAddress, machine.runEntry("main"));
+}
+
 test "repeated runs start from a fresh image" {
     const funcs = [_]FunctionSpec{
         .{ .name = "main", .params = 0, .locals = 2, .code = &fresh_image_main },

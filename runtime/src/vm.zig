@@ -2118,7 +2118,7 @@ pub const VM = struct {
                 OP_ADDR_CONST => {
                     const off = try readU32(code, &ip);
                     const o: usize = off;
-                    if (o > self.mem.len) return error.BadAddress;
+                    if (o >= self.mem.len) return error.BadAddress;
                     const addr: u64 = @intFromPtr(&self.mem[o]);
                     try self.push(.{ .i = @bitCast(addr) });
                 },
