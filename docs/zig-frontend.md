@@ -131,7 +131,7 @@ lowering 会拒绝少数已被接受的形式（`frem`、`asm` 调用）。确�
 - Linux（`compiler/src/libc_defs.zig`）：`<zig lib>/libc/glibc/abilists`，
   限定为 `x86_64-linux-gnu` 和 `aarch64-linux-gnu`，从中得到作为导出方的
   soname（`libc.so.6`、`libm.so.6`、`libpthread.so.0`、……）。
-- 索引未描述的符号不进入 CIPI，而由运行时回退机制解析（进程符号、`--lib`、
+- 索引未描述的符号不进入 CIPI，而由运行时回退机制解析（进程符号、宿主 `ci_vm_load_library`、
   默认 CRT 库）。`compiler/src/data/link_wrappers.json` 是仅存的签入链接
   元数据，且只保存同签名别名（`snprintf -> _snprintf`）。
 

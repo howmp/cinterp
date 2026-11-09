@@ -22,7 +22,7 @@
 - `ci_vm_load_package` 和 `ci_process_load_package` 都会复制包字节，调用方可以在
   成功后释放自己的缓冲区。
 - 不支持 CIB-to-CIB 链接、包间导出或跨包函数调用；跨包复用请合并源码后重新编译，
-  或通过 `--lib` 使用普通共享库。
+  或由宿主通过 `ci_vm_load_library` 加载普通共享库。
 
 ## 2. 进程 API
 
@@ -135,7 +135,7 @@ int main(void) {
 
 ### 3.1 pthread 风格的并行示例
 
-每个 VM 只在自己的线程上运行；`--jobs` 的 CLI 实现采用同样的约束。
+每个 VM 只在自己的线程上运行；C API 宿主负责把同一 VM 固定到单一线程。
 
 ```c
 #define _POSIX_C_SOURCE 200809L
@@ -214,70 +214,19 @@ for (int i = 0; i < 300; i++) {
 }
 ```
 
-## 5. CLI：多 CIB、重复与并行
+## 5. CLI
 
-旧的单包语法保持不变：
-
-```text
-cinterp-run [--lib PATH]... [--load-only] [--dump-target] [--dump-imports]
-            <package.cib> [entry] [-- ARG...]
-```
-
-新增显式模式：
+`cinterp-run` 只保留一个命令形态：
 
 ```text
-cinterp-run [--lib PATH]... [--load-only] [--dump-target] [--dump-imports]
-            [--repeat N] [--entry NAME] [--jobs N] <package.cib> [entry] [-- ARG...]
-
-cinterp-run [--lib PATH]... [--load-only] [--dump-target] [--dump-imports]
-            [--repeat N] [--entry NAME] [--jobs N]
-            --run-all <package.cib>... [-- ARG...]
+cinterp-run <package.cib> [-- ARG...]
 ```
 
-- `--run-all`：`--` 之前的每个位置参数都是包。必须显式给出；`cinterp-run a.cib b.cib`
-  仍解释为“包 a.cib、入口 b”，不会破坏旧脚本。
-- `--repeat N`：同一个 VM 运行 N 次（N ≥ 1），不重新加载包，每次全新镜像。
-- `--entry NAME`：所有包、所有运行的入口；与位置入口互斥。CIVM v2 不保存函数名，因此只有 `main` 别名可用；其他名称返回 `CI_E_ENTRY`。
-- `--jobs N`：N 个 worker 线程（N ≥ 1，默认 1）。每个包/VM 只属于一个 worker，
-  因此同一 VM 不会被两个线程运行。N 大于包数时按包数封顶。
-- `--` 之后的参数应用到每次运行；`argv[0]` 仍是包路径。
-- `--load-only` 对每个包加载/校验但不执行；`--dump-target`/`--dump-imports` 按包
-  打印。多包或重复模式下 dump 前会先打印 `package: <path>`。
-
-示例：
-
-```bash
-# 同一个 VM 重复运行 3 次
-./runtime/zig-out/bin/cinterp-run --repeat 3 build/hello.cib
-
-# 每个包一个 VM，按命令行顺序运行
-./runtime/zig-out/bin/cinterp-run --run-all build/hello.cib build/math.cib build/ffi_qsort.cib
-
-# 两个 worker 并行运行两个包，各重复 2 次
-./runtime/zig-out/bin/cinterp-run --run-all --repeat 2 --jobs 2 build/hello.cib build/math.cib
-
-# 只加载/校验多个包
-./runtime/zig-out/bin/cinterp-run --run-all --load-only build/hello.cib build/math.cib
-
-# 统一入口和参数
-./runtime/zig-out/bin/cinterp-run --run-all --entry main --repeat 2 \
-    build/hello.cib build/math.cib -- x 7
-```
-
-输出规则：
-
-- 单包、单次运行保持旧输出：恰好一行 `result: <i32>`。
-- 多包（`--run-all`）或重复（`--repeat N`，N > 1）时，每次运行前打印
-  `package: <path> run: <i>/<N>`，随后仍打印 `result: <i32>`。
-- `--jobs N > 1` 时 `package:`/`result:` 行的顺序不确定，各 CIB 自己的 stdout/stderr
-  也可能交错；需要确定性输出时使用默认 `--jobs 1`。
-- 退出码：0 全部成功；1 任一加载/运行失败；2 用法或 I/O 错误。C `main` 的返回值
-  只通过 `result:` 报告，不决定进程退出码。`--run-all` 没有包、`--repeat 0`、
-  `--jobs 0` 都属于用法错误（退出码 2）。
-
-CLI 不调用 `ci_process_destroy`：所有 VM 保持存活直到 libc `exit`，这样 CIB 注册的
-`atexit` 处理函数仍能访问自己的 VM。`atexit`/`signal` 是进程全局状态，重复运行和
-多 VM 会共享/累积它们，详见第 7 节。
+- 单包、单次运行；`--` 后的参数作为 C `argv[1..]`，包路径是 `argv[0]`。
+- 没有多包、重复、并行、入口选择、仅加载、dump 或显式库参数。
+- 多 VM、并行、重复运行和 `ci_vm_load_library` 通过 C API 使用，见第 2-4 节。
+- 成功退出码 0，加载/运行失败 1，用法或 I/O 错误 2；C `main` 的返回值只通过
+  `result:` 输出。
 
 ## 6. CIB 内显式 callback acquire/release
 
@@ -380,7 +329,7 @@ ci_callback_pool_stats(&total, &live, &free_slots, &retired);
 
 - **宿主堆跨 run 累积**：CIB 调用 `malloc` 等分配的是宿主进程堆；重复运行不会回收
   上一次运行的宿主分配。VM 线性内存本身每次清零。
-- **原生库句柄不卸载**：`--lib`/CIPI provider 的 `dlopen`/`LoadLibrary` 句柄没有
+- **原生库句柄不卸载**：`ci_vm_load_library`/CIPI provider 的 `dlopen`/`LoadLibrary` 句柄没有
   `dlclose`/`FreeLibrary`，会一直保持映射到进程退出。
 - **`atexit`/`signal` 是进程全局**：多个 VM/重复运行共享这些处理函数；重复运行会
   累积/覆盖注册，且 CLI 为让 `atexit` 执行会保持 VM 到 libc 退出。
@@ -399,17 +348,14 @@ ci_callback_pool_stats(&total, &live, &free_slots, &retired);
 ## 8. 快速验证
 
 ```bash
-# 同一 VM 重复运行，自动 callback 槽不耗尽
-./runtime/zig-out/bin/cinterp-run --repeat 300 build/ffi_qsort.cib
-
-# 显式 acquire/release：300 次运行不应耗尽 256 槽
-./build/cinterp-cc compile examples/ffi/ffi_callback_scope.c -o build/ffi_callback_scope.cib
-./runtime/zig-out/bin/cinterp-run --repeat 300 build/ffi_callback_scope.cib
-
-# 多包 + 并行
-./runtime/zig-out/bin/cinterp-run --run-all --repeat 2 --jobs 2 \
-    build/hello.cib build/math.cib
+# 单包 + C argv
+./runtime/zig-out/bin/cinterp-run build/hello.cib
+./runtime/zig-out/bin/cinterp-run build/capi_argv.cib -- x 7
 ```
+
+多 VM、重复运行和 support library 由 `runtime/tests/capi_multi.c` 及
+`ci_vm_load_library` 覆盖。
+
 
 `runtime/tests/capi_multi.c` 是覆盖进程注册表、每 VM 线程、busy 语义和
 `ci_process_destroy` 重试的 C API 回归测试。

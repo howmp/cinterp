@@ -159,7 +159,7 @@ def main() -> int:
                 runs += 1
                 try:
                     proc = subprocess.run(
-                        command + ["--load-only", str(candidate)],
+                        command + [str(candidate)],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         timeout=args.timeout,

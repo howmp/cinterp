@@ -120,13 +120,17 @@ assert_conv() {
 }
 
 win_run() {
-    local exe="$1" package="$2" lib="${3:-}" expected="$4" repeat="${5:-1}" out
+    local exe="$1" package="$2" lib="${3:-}" expected="$4" repeat="${5:-1}" out=""
+    local harness="capi_runner64.exe"
+    [[ "$exe" == *32.exe ]] && harness="capi_runner32.exe"
     if is_windows_shell; then
-        if [[ -n "$lib" ]]; then
-            out="$(cd "$OUT" && "./$exe" --lib "$lib" --repeat "$repeat" "$package" 2>&1)"
-        else
-            out="$(cd "$OUT" && "./$exe" --repeat "$repeat" "$package" 2>&1)"
-        fi
+        local -a prog
+        if [[ -n "$lib" ]]; then prog=("./$harness" "$package" "$lib"); else prog=("./$exe" "$package"); fi
+        local part
+        for ((r=0; r<repeat; r++)); do
+            part="$(cd "$OUT" && "${prog[@]}" 2>&1)"
+            out+="$part"$'\n'
+        done
     else
         local runner
         runner="$(win_runner "$exe")"
@@ -147,21 +151,19 @@ win_run() {
             WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" WINEDEBUG=-all \
                 WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u >/dev/null 2>&1 || true
         fi
-        # A crashing test must return an exit status, not open Wine's modal
-        # crash dialog and hang the suite.
         WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" WINEDEBUG=-all \
             WINEDLLOVERRIDES="mscoree,mshtml=" "$runner" reg add \
             'HKCU\Software\Wine\WineDbg' /v ShowCrashDialog /t REG_DWORD /d 0 /f \
             >/dev/null 2>&1 || true
-        if [[ -n "$lib" ]]; then
-            out="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
+        local -a prog
+        if [[ -n "$lib" ]]; then prog=("$harness" "$package" "$lib"); else prog=("$exe" "$package"); fi
+        local part
+        for ((r=0; r<repeat; r++)); do
+            part="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
                 WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
-                "$runner" "$exe" --lib "$lib" --repeat "$repeat" "$package" 2>&1)"
-        else
-            out="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
-                WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
-                "$runner" "$exe" --repeat "$repeat" "$package" 2>&1)"
-        fi
+                "$runner" "${prog[@]}" 2>&1)"
+            out+="$part"$'\n'
+        done
     fi
     local got
     got="$(printf '%s\n' "$out" | grep -cF "result: $expected" || true)"
@@ -180,6 +182,9 @@ if want win64; then
     echo "== Win64"
     (cd runtime && zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSmall)
     cp runtime/zig-out/bin/cinterp-run.exe "$OUT/cinterp-run64.exe"
+    zig cc -target x86_64-windows-gnu -I runtime/zig-out/include \
+        runtime/tests/capi_runner.c runtime/zig-out/lib/cinterp_static.lib \
+        -o "$OUT/capi_runner64.exe"
     for name in "${USUAL[@]}"; do compile x86_64-windows "$name"; done
     compile x86_64-windows winapi
     compile_source x86_64-windows tests/csuite/external_data.c external_data
@@ -218,6 +223,9 @@ if want win32; then
     echo "== Win32"
     (cd runtime && zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSmall)
     cp runtime/zig-out/bin/cinterp-run.exe "$OUT/cinterp-run32.exe"
+    zig cc -target x86-windows-gnu -I runtime/zig-out/include \
+        runtime/tests/capi_runner.c runtime/zig-out/lib/cinterp_static.lib \
+        -o "$OUT/capi_runner32.exe"
     for name in "${USUAL[@]}"; do compile i686-windows "$name"; done
     compile i686-windows winapi
     compile_source i686-windows tests/csuite/external_data.c external_data
@@ -303,18 +311,26 @@ if want arm64; then
     echo "== ARM64"
     (cd runtime && zig build -Dtarget=aarch64-linux-gnu -Doptimize=ReleaseSmall)
     cp runtime/zig-out/bin/cinterp-run "$OUT/cinterp-run-arm64"
+    zig cc -target aarch64-linux-gnu -I runtime/zig-out/include \
+        runtime/tests/capi_runner.c runtime/zig-out/lib/libcinterp.a \
+        -ldl -lpthread -lm -o "$OUT/capi_runner-arm64"
     for name in "${USUAL[@]}"; do compile aarch64-linux "$name"; done
     for h in "${HELPERS[@]}"; do
         aarch64-linux-gnu-gcc -shared -fPIC -O0 -o "$OUT/lib${h}-arm64.so" "$(example "$h")"
     done
     arm_run() {
         local name="$1" expected="$2" lib="${3:-}" repeat="${4:-1}"
-        local out got
+        local out="" got part
+        local -a prog
         if [[ -n "$lib" ]]; then
-            out="$("$QEMU" -L "$SYSROOT" "$OUT/cinterp-run-arm64" --lib "$OUT/$lib" --repeat "$repeat" "$OUT/$name-aarch64-linux.cib" 2>&1)"
+            prog=("$OUT/capi_runner-arm64" "$OUT/$name-aarch64-linux.cib" "$OUT/$lib")
         else
-            out="$("$QEMU" -L "$SYSROOT" "$OUT/cinterp-run-arm64" --repeat "$repeat" "$OUT/$name-aarch64-linux.cib" 2>&1)"
+            prog=("$OUT/cinterp-run-arm64" "$OUT/$name-aarch64-linux.cib")
         fi
+        for ((r=0; r<repeat; r++)); do
+            part="$("$QEMU" -L "$SYSROOT" "${prog[@]}" 2>&1)"
+            out+="$part"$'\n'
+        done
         got="$(printf '%s\n' "$out" | grep -cF "result: $expected" || true)"
         if [ "$got" != "$repeat" ]; then
             echo "FAIL $name-arm64 (expected $expected x$repeat, got $got)" >&2
@@ -323,6 +339,7 @@ if want arm64; then
         fi
         echo "OK $name-arm64 -> $expected x$repeat"
     }
+
     arm_run hello 42
     arm_run arrays 10
     arm_run structs 34

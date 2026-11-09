@@ -281,20 +281,22 @@ def run_on_target(
     timeout: float,
     runner: dict,
 ):
-    args = []
-    if extra_lib:
-        args += ["--lib", str(extra_lib)]
-    args.append(str(cib))
-    if case.get("entry"):
-        args.append(str(case["entry"]))
+    args = [str(cib)]
     if case.get("args"):
         args.append("--")
         args.extend(str(a) for a in case["args"])
+    run_env = None
+    if extra_lib:
+        # The simplified runtime CLI has no --lib; expose support libraries
+        # through the host loader for native suites.
+        run_env = os.environ.copy()
+        old = run_env.get("LD_PRELOAD", "")
+        run_env["LD_PRELOAD"] = str(extra_lib) + ((":" + old) if old else "")
     if target == "x86_64-linux":
         runtime = Path(runner.get("native_runtime") or RUNTIME)
         if not runtime.is_file():
             raise FileNotFoundError(runtime)
-        return subprocess.run([str(runtime), *args], cwd=ROOT, capture_output=True, timeout=timeout)
+        return subprocess.run([str(runtime), *args], cwd=ROOT, env=run_env, capture_output=True, timeout=timeout)
     if target == "aarch64-linux":
         runtime = Path(runner["runtime_dir"]) / "cinterp-run-arm64"
         qemu = runner.get("qemu") or "qemu-aarch64"
@@ -308,7 +310,7 @@ def run_on_target(
         if not runtime.is_file():
             raise FileNotFoundError(runtime)
         if sys.platform == "win32":
-            return subprocess.run([str(runtime), *args], cwd=ROOT, capture_output=True, timeout=timeout)
+            return subprocess.run([str(runtime), *args], cwd=ROOT, env=run_env, capture_output=True, timeout=timeout)
         return subprocess.run(
             [*wine_runner(target), str(runtime), *args],
             cwd=ROOT,

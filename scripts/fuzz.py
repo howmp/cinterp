@@ -73,7 +73,7 @@ def main() -> int:
             runs += 1
             try:
                 proc = subprocess.run(
-                    [str(runtime), "--load-only", str(candidate)],
+                    [str(runtime), str(candidate)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=3,

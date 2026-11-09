@@ -107,21 +107,21 @@ provider[]:
 
 - `plan_index` 绑定 CIPL；`0xffff` 表示 data entry，`ADDR_EXTERN` 使用 entry 索引解析地址。同一符号多次调用可以有多条 entry。
 - provider 按顺序尝试；成功后缓存库 handle 和符号地址。
-- 自动生成的 provider 只能是系统库名/allowlist；运行时会拒绝包含 `/`、`\` 或 `:` 的自动 provider 名，避免 CIB 指定任意路径。显式 `--lib` 仍允许用户路径。
+- 自动生成的 provider 只能是系统库名/allowlist；运行时会拒绝包含 `/`、`\` 或 `:` 的自动 provider 名，避免 CIB 指定任意路径。宿主通过 `ci_vm_load_library` 加载的库仍允许用户路径。
 - 一个 VM 实例同一时间只持有一个包（再次 `load_package` 会整体替换）；一个进程可以用 `ci_process_*` 持有多个各自独立的 VM。CIPI 不提供 CIB-to-CIB 链接/包间导出表，跨包请合并源码后重新生成。
-- `kind=data` 支持 `stdout`/`errno` 类 external data：编译器为未知外部全局生成 data entry，运行时按 provider/`--lib` 解析地址；`ordinal` 解析在 Windows 已支持。
+- `kind=data` 支持 `stdout`/`errno` 类 external data：编译器为未知外部全局生成 data entry，运行时按 provider/宿主显式库解析地址；`ordinal` 解析在 Windows 已支持。
 - CIPI v2 不保存 callconv、arch_mask、min_os 或 provider version；包与运行时目标必须匹配。
 
 ### 2.4 运行时符号解析顺序
 
 对有 CIPI entry 的函数计划：
 
-1. 若 entry 允许 override（flags bit3），先搜索用户 `--lib` 加载的库（逆序）。
+1. 若 entry 允许 override（flags bit3），先搜索宿主通过 `ci_vm_load_library` 加载的库（逆序）。
 2. 按 CIPI provider 顺序 `dlopen`/`LoadLibraryA` 并 `dlsym`/`GetProcAddress`；缓存成功结果；`symbol_ref=0xffff` 时使用 CIPL plan name。
-3. 若 entry 允许 fallback（flags bit2），再走进程默认 → `--lib` → CRT 搜索。
+3. 若 entry 允许 fallback（flags bit2），再走进程默认 → 宿主显式库 → CRT 搜索。
 4. 否则返回 `SymbolNotFound`。
 
-对 data entry（`CIPI.kind=data`，`ADDR_EXTERN`）：总是先搜索 `--lib`，再按 provider 顺序解析；仍失败则回退到进程/CRT 搜索。没有 CIPI entry 的计划走进程/`--lib`/CRT 搜索。
+对 data entry（`CIPI.kind=data`，`ADDR_EXTERN`）：总是先搜索宿主显式库，再按 provider 顺序解析；仍失败则回退到进程/CRT 搜索。没有 CIPI entry 的计划走进程/宿主显式库/CRT 搜索。
 
 ### 2.5 外部符号索引（构建期生成）
 
@@ -130,8 +130,8 @@ provider[]:
 - **Linux**（`compiler/src/libc_defs.zig`）：解析 `<zig lib>/libc/glibc/abilists`，只保留 `x86_64-linux-gnu` 与 `aarch64-linux-gnu`；库名映射 `c → libc.so.6`、`m → libm.so.6`、`pthread → libpthread.so.0`、`dl → libdl.so.2`、`rt → librt.so.1`、`util → libutil.so.1`、`resolv → libresolv.so.2`。
 - **Windows**（`compiler/src/win_defs.zig`）：解析 `<zig lib>/libc/mingw/{lib32,lib64,lib-common}/*.def` 与 `lib-common/*.def.in`（用 `zig cc -E` 预处理），得到 DLL 和实际导出符号。具体 DLL（`kernel32.dll`/`user32.dll`）优先于 `api-ms-win-*`；`ucrtbase` 优先于 `msvcrt`；PE 可执行文件（`*.exe`）永不作为 provider。
 - **别名**：`compiler/src/data/link_wrappers.json` 是唯一保留的签入链接元数据，提供同签名 target 别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）；`atexit -> __cxa_atexit` 仍由 `lower_ast.zig` 处理。
-- **运行期 fallback**：索引未收录的符号不写 plan entry，运行期从进程符号、`--lib` 库、默认 CRT 库（Linux `libc.so.6`/`libm.so.6`/`libdl.so.2`/`libpthread.so.0`/`librt.so.1`/`libutil.so.1`/`libresolv.so.2`，Windows `msvcrt.dll`/`ucrtbase.dll`/`ntdll.dll`）继续解析。
-- `--no-auto-link` 关闭自动 provider 生成；自定义符号继续使用 `--lib`/运行期 fallback。
+- **运行期 fallback**：索引未收录的符号不写 plan entry，运行期从进程符号、宿主显式库、默认 CRT 库（Linux `libc.so.6`/`libm.so.6`/`libdl.so.2`/`libpthread.so.0`/`librt.so.1`/`libutil.so.1`/`libresolv.so.2`，Windows `msvcrt.dll`/`ucrtbase.dll`/`ntdll.dll`）继续解析。
+- `--no-auto-link` 关闭自动 provider 生成；自定义符号继续使用 `ci_vm_load_library`/运行期 fallback。
 
 ## 3. CIVM 模块（v2）
 
@@ -444,7 +444,7 @@ fn0 entry: params=0 locals=1 code=40
   ...
 ```
 
-带自动链接的包会在 CIPI 中保存 provider；`--dump-imports` 或 `cib_dump.py --headers` 会显示 CIPC 解析后的库名/符号名。
+带自动链接的包会在 CIPI 中保存 provider；`cinterp-cc --dump-imports` 或 `cib_dump.py --headers` 会显示 CIPC 解析后的库名/符号名。
 
 
 ## 7. 检查与验证
@@ -455,12 +455,6 @@ xxd -g1 build/hello.cib
 
 # 查看编译器生成函数/计划/import 摘要
 ./build/cinterp-cc compile examples/ffi/ffi_printf.c -o build/printf.cib --dump --dump-imports
-
-# 只加载/校验，不执行；查看 import 元数据
-./runtime/zig-out/bin/cinterp-run --dump-target --dump-imports --load-only build/printf.cib
-
-# 指定入口
-./runtime/zig-out/bin/cinterp-run build/hello.cib main
 
 # 解析 CIB：头信息 + CIVM 反汇编
 ./scripts/cib_dump.py build/hello.cib

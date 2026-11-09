@@ -774,7 +774,7 @@ pub const VM = struct {
         const handle = native.load(cpath) orelse return error.LibraryNotFound;
         self.libraries[self.library_count] = handle;
         self.library_count += 1;
-        // A new `--lib` handle takes precedence over resolved targets.
+        // A new `ci_vm_load_library` handle takes precedence over resolved targets.
         self.clearNativeCache();
     }
 
@@ -803,6 +803,7 @@ pub const VM = struct {
         try self.loadModuleBytesInPlace(bytes[22 .. 22 + m]);
         if (p != 0) try self.loadPlans(bytes[22 + m .. 22 + m + p], pool.names);
         try self.validateImports(&imports);
+        self.preloadImportLibraries(&imports);
         if (self.const_pool) |*old| old.deinit(std.heap.page_allocator);
         self.const_pool = pool;
         self.imports = imports;
@@ -835,10 +836,13 @@ pub const VM = struct {
         self.plan_store = scratch.plan_store;
         scratch.plan_store = null;
         self.imports = scratch.imports;
-        // Explicit `--lib` handles outlive a package swap; per-plan provider
+        // Explicit library handles outlive a package swap; per-plan provider
         // handles and resolved native targets do not, because they are keyed by
-        // the replaced plan indexes.
+        // the replaced plan indexes. Provider handles were opened during the
+        // scratch load, before the CIB can exhaust RLIMIT_DATA.
         self.resetResolverCaches();
+        self.import_handles = scratch.import_handles;
+        self.data_import_handles = scratch.data_import_handles;
 
         scratch.module_buf = &.{};
         scratch.module_len = 0;
@@ -846,6 +850,25 @@ pub const VM = struct {
         scratch.entry_func_index = 0xffff;
         std.heap.page_allocator.destroy(scratch);
         if (old_module.len > 0) std.heap.page_allocator.free(old_module);
+    }
+
+    /// Resolve provider library handles during package load, before C code can
+    /// exhaust RLIMIT_DATA. This keeps OOM regression tests able to resolve
+    /// libc/pthread providers after `t_memfill()`.
+    fn preloadImportLibraries(self: *VM, imports: *const link_loader.Table) void {
+        var i: usize = 0;
+        while (i < imports.count) : (i += 1) {
+            const entry = &imports.entries[i];
+            var pi: usize = 0;
+            while (pi < entry.provider_count) : (pi += 1) {
+                const provider = &entry.providers[pi];
+                const lib_name = provider.name[0..provider.name_len];
+                if (lib_name.len == 0 or std.mem.indexOfAny(u8, lib_name, "/\\:") != null) continue;
+                const cache = if (entry.kind == 0) &self.import_handles else &self.data_import_handles;
+                const base = if (entry.kind == 0) @as(usize, entry.plan_index) else i;
+                _ = self.cachedProvider(cache, base * link_loader.MAX_PROVIDERS + pi, lib_name) catch null;
+            }
+        }
     }
 
     fn validateImports(self: *VM, imports: *const link_loader.Table) !void {
@@ -873,7 +896,7 @@ pub const VM = struct {
     }
 
     /// Lazily load the platform's default C/CRT libraries once per VM. These
-    /// are the last search tier after the process namespace and `--lib`
+    /// are the last search tier after the process namespace and `ci_vm_load_library`
     /// handles: they keep `--no-auto-link` packages and symbols
     /// missing from the build-time indexes working.
     fn defaultHandles(self: *VM) []?*anyopaque {
@@ -888,9 +911,9 @@ pub const VM = struct {
         return self.default_handles[0..self.default_count];
     }
 
-    /// Search tiers in order: process namespace, explicit `--lib` handles,
-    /// platform default libraries. `.libraries` stops after the `--lib`
-    /// handles, for callers where they are the user's override.
+    /// Search tiers in order: process namespace, explicit `ci_vm_load_library` handles,
+    /// platform default libraries. `.libraries` stops after the `ci_vm_load_library`
+    /// handles, for callers where they are the host's override.
     const SearchTier = enum { libraries, all };
 
     fn searchSymbolAt(self: *VM, cname: [*:0]const u8, tier: SearchTier) ?*const anyopaque {
@@ -917,7 +940,7 @@ pub const VM = struct {
     /// Resolve `name` against the requested tiers, retrying the spellings
     /// `symbolCandidates` derives (Win32 stdcall/fastcall exports, the stdcall
     /// leading underscore). Keeping one entry point makes the fallback apply to
-    /// `--lib` handles, the process namespace and the default libraries alike.
+    /// `ci_vm_load_library` handles, the process namespace and the default libraries alike.
     /// `name` must not point into `symbol_buf`, which holds the candidates.
     fn searchSymbol(self: *VM, name: []const u8, tier: SearchTier) ?*const anyopaque {
         var candidates: [MAX_SYMBOL_CANDIDATES][]const u8 = undefined;
@@ -985,7 +1008,7 @@ pub const VM = struct {
 
     fn loadImportedData(self: *VM, entry_index: usize, entry: *const link_loader.ImportEntry) !?*const anyopaque {
         const name = entry.name[0..entry.name_len];
-        // Explicit --lib libraries first, including the decorated spellings.
+        // Explicit `ci_vm_load_library` libraries first, including the decorated spellings.
         if (self.searchSymbol(name, .libraries)) |sym| return sym;
         var pi: usize = 0;
         while (pi < entry.provider_count) : (pi += 1) {
@@ -1040,7 +1063,7 @@ pub const VM = struct {
 
         if (self.imports.indexOfPlan(plan_index)) |entry_index| {
             const entry = &self.imports.entries[entry_index];
-            // Explicit --lib libraries are the user's override and win over CIB providers.
+            // Explicit `ci_vm_load_library` libraries are the host's override and win over CIB providers.
             if ((entry.flags & 0x8) != 0) {
                 if (self.searchSymbol(name, .libraries)) |sym| return sym;
             }
@@ -1054,7 +1077,7 @@ pub const VM = struct {
 
     /// Resolve a plan's native symbol, remembering the target per plan index so
     /// repeated `CALL_NATIVE` in a loop skips symbol lookup. The cache is
-    /// dropped whenever the plans or the `--lib` handles change.
+    /// dropped whenever the plans or the `ci_vm_load_library` handles change.
     fn resolvedNative(self: *VM, plan_index: u16, name: []const u8) !*const anyopaque {
         const slot: usize = plan_index;
         if (slot >= self.native_plan_cache.len) return self.resolveNative(plan_index, name);

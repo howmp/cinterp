@@ -210,7 +210,7 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 - 索引以二进制形式内嵌到 `cinterp-cc`；没有签入的 cstdapi/winmd 数据库，也没有 `--link-db`。
 - 唯一保留的签入链接元数据是 [`compiler/src/data/link_wrappers.json`](./compiler/src/data/link_wrappers.json)，只描述同签名别名（Windows `snprintf -> _snprintf`、`vsnprintf -> _vsnprintf`）。`atexit -> __cxa_atexit` 的参数适配在 `lower_ast.zig` 中处理；`signal` 按普通 callback 使用。
 - 编译器把命中的 provider 写入 CIPI；未命中的符号不写 entry，留给运行期 fallback。
-- 运行期解析顺序：显式 `--lib` → CIPI provider（缓存 handle）→ 进程符号/默认 CRT。自动 provider 只接受库名，拒绝路径分隔符；绝对路径只允许显式 `--lib`。直接原生调用目标按 plan index 在首次调用后缓存；包/plan 重载会清空 provider/target 缓存。
+- 运行期解析顺序：宿主 `ci_vm_load_library` → CIPI provider（缓存 handle）→ 进程符号/默认 CRT。自动 provider 只接受库名，拒绝路径分隔符；绝对路径只允许宿主显式加载。直接原生调用目标按 plan index 在首次调用后缓存；包/plan 重载会清空 provider/target 缓存。
 - MinGW defs 不含 `min_os`，新包统一写 0，旧包仍按原字段校验；glibc abilists 的 `ld` 库、objects/TLS 段不进入 Linux provider 索引。构建需要 Zig 0.13 自带的 `libc/mingw` 与 `libc/glibc/abilists`，缺失时 `zig build` 直接失败。
 
 ## 10. 包格式、C ABI 与上限
@@ -356,33 +356,30 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 运行时：
 
 ```bash
-./runtime/zig-out/bin/cinterp-run <package.cib> [entry] [-- arg...]
-./runtime/zig-out/bin/cinterp-run --repeat N [--entry NAME] [--jobs N] <package.cib> [entry] [-- arg...]
-./runtime/zig-out/bin/cinterp-run --repeat N [--entry NAME] [--jobs N] --run-all <package.cib>... [-- arg...]
+./runtime/zig-out/bin/cinterp-run <package.cib> [-- arg...]
 ```
 
-单包单次运行输出一行 `result: <i32>`；`--repeat N` 在同一个 VM 上使用全新镜像重复运行；
-`--run-all` 为每个包创建 VM；`--jobs N` 并行运行不同 VM；`--load-only`、
-`--dump-target`、`--dump-imports` 对每个包生效。成功退出码 0，加载/运行失败 1，
-用法或 I/O 错误 2；C `main` 的返回值只通过 `result:` 输出。
+单包、单次运行输出一行 `result: <i32>`；`--` 后的参数进入 C `argv[1..]`，包路径是
+`argv[0]`。用户库、重复运行、多 VM 和仅加载校验只通过 C API 使用。成功退出码 0，
+加载/运行失败 1，用法或 I/O 错误 2；C `main` 的返回值只通过 `result:` 输出。
 
 构建配置：`Debug`/`ReleaseSafe` 保留完整诊断、unwind 表、帧指针和 panic 栈回溯；
 `ReleaseSmall`（`make runtime` 的默认值）剥离 unwind 表、帧指针、panic 跟踪和符号，
 ELF 发布产物还会去掉 `.eh_frame`/`.eh_frame_hdr`。错误名表仅 Debug 构建保留；
 ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当前 Linux x64
-体积约为 Debug 8.8 MiB、ReleaseSmall 110,968 B。详细体积和 post-link 处理见下文。
+体积约为 Debug 8.8 MiB、ReleaseSmall 97,760 B。详细体积和 post-link 处理见下文。
 
 ### 12.2 当前基线
 
-- `make test-suites-full`：**4318/4521 通过，203 skip**；其中 4 个 compile-only 压力用例因超过运行时上限显式 skip（512 imports / 64 args / 2 MiB module），另有 1 个 libc-test 用例因异步外部线程 callback 的 fail-fast 策略显式 skip。
+- `make test-suites-full`：**4319/4522 通过，203 skip**；其中 4 个 compile-only 压力用例因超过运行时上限显式 skip（512 imports / 64 args / 2 MiB module），另有 1 个 libc-test 用例因异步外部线程 callback 的 fail-fast 策略显式 skip。
 - 通过用例中约 55% 是仅编译（gcc-torture-compile 1408 + llvm-regression-c 934 + compcert-compile 30 = 2372）；它们只验证编译器接受源码并产出包，不验证程序输出。可执行基线是其余 1861 个通过用例。
 - `make test-suites`：395/495（100 skip）。
 - `make test-suites-nightly`：4446/4649（203 skip）；YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure。
 - 并发：`test_suites.py --jobs` 默认 CPU 核数，且所有选中 suite 共用一个全局 worker 池；`SUITE_JOBS` 可覆盖。nightly 由 `scripts/test_nightly.sh` 并行执行 suite 与 `generate_diff`，`GEN_JOBS`/`MINIMIZE_JOBS` 控制差分并发，日志为 `build/nightly-suite.log` 和 `build/nightly-diff.log`；顺序模式为 `make test-suites-nightly-serial`，`NIGHTLY_MINIMIZE=0` 跳过最小化。
 - `scripts/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
-- 多 CIB/线程：`scripts/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）以及 CLI `--repeat 300` 的自动/显式 callback 用例。
+- 多 CIB/线程：`scripts/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）；重复 callback 运行由 C API 测试承担。
 - 本地 c-testsuite 17/17；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
-- ReleaseSmall：native Linux x64 110,968 B；size-cross static sysv 94,224 B、Win64 83,968 B、Win32 89,600 B、ARM64 105,696 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
+- ReleaseSmall：native Linux x64 97,760 B；size-cross static sysv 81,968 B、Win64 75,264 B、Win32 81,408 B、ARM64 98,160 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
 
 ### 12.3 发布压缩包
 
@@ -405,7 +402,7 @@ pkg-config/CMake 元数据和 Rust 绑定。每个压缩包的 `README.md` 由
 
 运行时在调用原生代码前校验包长度、目标元数据（arch/OS/ABI/指针宽度/特性）、CIPI 的
 plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引以及 marshal 偏移/大小；
-格式错误的包会干净地失败。`cinterp-run --load-only` 不执行即可校验包，`make fuzz` 对种子包
+格式错误的包会干净地失败。C API `ci_vm_load_package` 可在不执行包的情况下校验包，`make fuzz` 对种子包
 做变异/截断并检查崩溃。自动 provider 只接受库名，不接受路径；指向原生分配内存的 C 指针
 属于受信任边界，不可信包应由宿主隔离。
 
@@ -418,7 +415,7 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 
 - **平台**：仅 Linux x86-64/AArch64（glibc）与 Windows x64/x86；不提供 macOS、musl、Windows ARM64、Linux i386/ARM32。
 - **C/ABI**：`_Complex`、GCC builtins、外部 inline/weak 语义、Win64 `__vectorcall`/COM、SysV `i128`/向量参数、向量类型、内联汇编、`_Atomic`/`_Thread_local` 不支持。
-- **链接**：不支持 CIB-to-CIB 链接、包间导出/依赖；跨包复用需合并源码后重新生成 CIB，或通过 `--lib` 使用普通共享库。
+- **链接**：不支持 CIB-to-CIB 链接、包间导出/依赖；跨包复用需合并源码后重新生成 CIB，或由宿主通过 `ci_vm_load_library` 加载普通共享库。
 - **执行模型**：一个 VM 单执行上下文、单 CIB；进程可通过 `ci_process_*` 持有最多 64 个 VM，不同 VM 可并行。无进程内沙箱、无 Safe 模式；不可信输入由宿主隔离。
 - **Windows CRT**：`%Lf` 行为与原生 MinGW 一致，不额外提供格式化 shim；`examples/ffi/ffi_printf_longdouble.c` 只锁定 smoke 行为。
 - **外部数据符号**：基础 provider（`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*`、Windows `_environ`/`_fmode`/`_tzname` 等）已支持；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 是函数计划。更冷门的数据符号走 provider/fallback。
@@ -427,7 +424,7 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 
 - **FFI 返回块生命周期**：宽值/多 loc 返回值现在按调用从调用方 VM 线性内存分配，存活到当前帧返回；不再共享 `ret_buf`。长循环中大量宽返回会按 `ret_size` 增长，最终受线性内存上限约束（与 f80/f128 临时值一致）。VM→VM 寄存器返回聚合仍依赖 callee 内存未被改写，属于后续独立 ownership 工作。
 - **Win32 `thiscall` 支持范围**：原生/间接调用和 callback 均支持；第一个 4 字节标量（`this`）走 ECX，其余走 callee 清理的栈。Win64 的 `__vectorcall`/COM 仍不支持。
-- **原生库句柄不卸载**：`--lib` 与 CIPI provider 的 `dlopen`/`LoadLibrary` 句柄随进程保留，没有 `dlclose`/`FreeLibrary`；长期多包宿主应自建进程边界。
+- **原生库句柄不卸载**：`ci_vm_load_library` 与 CIPI provider 的 `dlopen`/`LoadLibrary` 句柄随进程保留，没有 `dlclose`/`FreeLibrary`；长期多包宿主应自建进程边界。
 - **宿主堆、atexit/signal 与全局初始化**：`malloc` 等宿主堆分配跨 run 累积，不随 VM 线性内存重置；`atexit`/`signal` 是进程全局状态，多 VM/重复运行共享；非 `main` 入口不会执行编译器生成的 globals 安装代码。这些均已文档化，不在本次改变语义。
 - **callback 槽位**：固定 256 个进程级静态槽。自动 `CREATE_CALLBACK` 槽在 VM 销毁/plan 重载前一直占用（跨 run 复用）；显式 `ci_callback_acquire` 槽在 release 后回到可复用集合，未 release 的显式槽随 VM 销毁/重载退休。自动槽耗尽后返回 `TooManyCallbacks`。
 - **外部线程异步 callback**：VM 正在运行时，另一线程调用的 callback 默认 fail-fast（非 sret 返回值置零、sret 缓冲区不变，并记录 `CI_E_BUSY`），不排队、不阻塞；`libc-test/pthread_tsd` 因此显式 skip。需要异步回调的库应在 VM 空闲时调用，或改成同步 callback 设计。

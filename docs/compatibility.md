@@ -8,7 +8,7 @@
 - 仓库根目录 `VERSION` 是唯一版本源，格式为语义化版本（当前 `0.1.0`）。
 - 编译器 `compiler/build.zig` 在构建时读取仓库根目录 `VERSION`；`cinterp-cc --version`
   输出 `cinterp-cc <VERSION>`。
-- 运行时在构建时读取仓库根目录 `VERSION`，写入 `cinterp-run --version`、`ci_version()`
+- 运行时在构建时读取仓库根目录 `VERSION`，写入 `ci_version()`
   和共享库版本号；共享库 SONAME 主版本取 `VERSION` 主版本（见下）。
 - `scripts/package_release.sh` 只从 `VERSION` 取版本，不再接受硬编码副本。
 - `scripts/check_version.py`（`make check-version`）校验根 `VERSION`、

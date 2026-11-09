@@ -18,11 +18,11 @@
 2. **支持 FFI 和 callback**：编译期生成调用计划，支持结构体、varargs，以及
    cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback。
 3. **运行时紧凑，约 100 KiB**（ReleaseSmall）：
-   1. Linux x86-64（native）：110,968 B ≈ 108 KiB
-   2. Linux x86-64（static SysV）：94,224 B ≈ 92 KiB
-   3. Windows x86-64：83,968 B ≈ 82 KiB
-   4. Windows x86：89,600 B ≈ 87 KiB
-   5. Linux AArch64：105,696 B ≈ 103 KiB
+   1. Linux x86-64（native）：97,760 B ≈ 95 KiB
+   2. Linux x86-64（static SysV）：81,968 B ≈ 80 KiB
+   3. Windows x86-64：75,264 B ≈ 74 KiB
+   4. Windows x86：81,408 B ≈ 80 KiB
+   5. Linux AArch64：98,160 B ≈ 96 KiB
 
 4. **可用于替代 BOF 场景**：直接编译普通 C 源文件（包括直接 `#include <windows.h>`），
    不再需要手动声明 WinAPI 函数原型。参见 [`examples/bof`](examples/bof/) 和
@@ -46,7 +46,7 @@ CIPKG
 ```
 
 - 编译期知道完整的 C 函数签名，提前生成寄存器、栈和 sret 布局；运行时只按计划搬运参数。
-- 原生符号通过 CIPI provider、显式 `--lib` 或进程/CRT 回退解析。
+- 原生符号通过 CIPI provider、宿主 C API `ci_vm_load_library` 或进程/CRT 回退解析。
 - callback 使用进程级静态 trampoline 池，不生成可执行内存。
 - 一个 VM 一次持有一个 CIB；同一进程可通过 `ci_process_*` 持有多个 VM 并行运行。
 
@@ -56,7 +56,7 @@ CIPKG
 
 - `make test` 覆盖运行时/编译器单元测试、全部示例、C 嵌入 API（静态库和共享库）以及
   损坏包、未知符号、目标不匹配等负向路径。
-- 完整上游 manifest 基线：**4318/4521 通过，203 跳过**；标准层级为 395/495。通过用例中
+- 完整上游 manifest 基线：**4319/4522 通过，203 跳过**；标准层级为 395/495。通过用例中
   约 55% 是仅编译检查，详细统计见 [`dev.md` §12](./dev.md#12-构建测试与发布)。
 - 本地 c-testsuite 17/17；上游 c-testsuite manifest 为 218 通过 / 2 跳过。
 - 交叉测试覆盖 Win64、Win32 和 ARM64，共 62 个示例；Windows 目标通过 Wine 运行。
@@ -70,7 +70,7 @@ CIPKG
 - **C/ABI**：向量类型和向量参数、`_Complex`、Win64 `__vectorcall`/COM、SysV `i128`、
   内联汇编、`_Atomic`/`_Thread_local`，以及 GCC builtin 和外部 inline/weak 语义。
 - **链接**：不支持 CIB 到 CIB 的链接或包间导出/依赖；跨包复用需合并源码重新生成 CIB，
-  或通过 `--lib` 调用普通共享库。
+  或由宿主通过 `ci_vm_load_library` 加载普通共享库。
 - **执行模型**：一个 VM 一次执行一个 CIB，不提供进程内沙箱；不可信包应由宿主隔离运行。
 - **Windows CRT**：`long double` 的 `%Lf` 输出沿用本机 MinGW/CRT 行为，不提供精确格式化 shim。
 
@@ -95,29 +95,17 @@ make compiler runtime
 ./runtime/zig-out/bin/cinterp-run build/hello.cib
 # result: 42
 
-# FFI：加载一个用户共享库
-cc -shared -fPIC -O0 examples/ffi/ffi_structs_helper.c -o build/libstruct_helpers.so
-./build/cinterp-cc compile examples/ffi/ffi_structs.c -o build/ffi_structs.cib
-./runtime/zig-out/bin/cinterp-run --lib build/libstruct_helpers.so build/ffi_structs.cib
-# result: 28
+# 传递 C argv：包路径是 argv[0]，-- 后是 argv[1..]
+./runtime/zig-out/bin/cinterp-run build/capi_argv.cib -- x 7
+# result: 7
 ```
 
-常用运行选项：
+`cinterp-run` 只接受 `<package.cib> [-- arg...]`：单包、单次运行，参数必须放在 `--`
+之后。用户共享库、重复运行、多 VM/并行和仅加载校验由 C API
+（`ci_vm_load_library`/`ci_vm_run*`/`ci_vm_load_package`）承担。
 
-```bash
-# 同一 VM 重复运行，每次使用全新镜像
-./runtime/zig-out/bin/cinterp-run --repeat 3 build/hello.cib
-
-# 每个包一个 VM；--jobs 并行运行不同 VM
-./runtime/zig-out/bin/cinterp-run --run-all --jobs 2 build/hello.cib build/hello.cib
-
-# 只加载校验，不执行
-./runtime/zig-out/bin/cinterp-run --load-only build/hello.cib
-```
-
-`cinterp-run` 成功退出码为 0，加载/运行失败为 1，用法或 I/O 错误为 2；C `main` 的返回值
-以 `result: N` 输出，不充当进程退出码。完整 CLI 参数见 `cinterp-cc --help` /
-`cinterp-run --help`。
+成功退出码为 0，加载/运行失败为 1，用法或 I/O 错误为 2；C `main` 的返回值以
+`result: N` 输出，不充当进程退出码。
 
 ### 交叉编译
 

@@ -145,7 +145,6 @@ def main() -> int:
     parser.add_argument("--runtime", type=Path, default=RUNTIME)
     parser.add_argument("--artifacts", type=Path, default=DEFAULT_ARTIFACTS,
                         help="directory for crash candidates (default: build/fuzz-artifacts)")
-    parser.add_argument("--exec", action="store_true", help="execute mutated packages")
     args = parser.parse_args()
     if not args.runtime.exists():
         print(f"missing runtime: {args.runtime}", file=sys.stderr)
@@ -166,10 +165,7 @@ def main() -> int:
                 continue
             candidate = tmp / "candidate.cib"
             candidate.write_bytes(mutated)
-            command = [str(runtime)]
-            if not args.exec:
-                command.append("--load-only")
-            command.append(str(candidate))
+            command = [str(runtime), str(candidate)]
             executed += 1
             try:
                 proc = subprocess.run(
@@ -194,9 +190,8 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 crashes += 1
-    mode = "exec" if args.exec else "load-only"
     print(
-        f"fuzz-bytecode ({mode}): {runs} mutations, {skipped} skipped, "
+        f"fuzz-bytecode: {runs} mutations, {skipped} skipped, "
         f"{executed} executed, {crashes} crashes, {timeouts} timeouts"
     )
     if skipped and skipped == runs:

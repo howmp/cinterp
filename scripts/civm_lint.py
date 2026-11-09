@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import argparse
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 
 
 class Bad(Exception):
@@ -168,7 +166,7 @@ def parse_imports(imports: bytes, name_count: int) -> int:
     return count
 
 
-def lint(path: Path, load: bool = True) -> list[str]:
+def lint(path: Path) -> list[str]:
     findings: list[str] = []
     try:
         data = path.read_bytes()
@@ -190,15 +188,6 @@ def lint(path: Path, load: bool = True) -> list[str]:
         name_count = parse_cipc(pool)
         parse_cipl(plans, name_count)
         parse_imports(imports, name_count)
-        if load and RUNTIME.exists() and imports:
-            r = subprocess.run(
-                [str(RUNTIME), "--load-only", str(path)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if r.returncode != 0:
-                raise Bad("runtime load-only: " + (r.stderr.strip() or r.stdout.strip()))
     except Bad as e:
         findings.append(f"{path}: {e}")
     except Exception as e:  # malformed files must not crash the linter
@@ -209,13 +198,12 @@ def lint(path: Path, load: bool = True) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("packages", nargs="+", type=Path)
-    ap.add_argument("--no-load", action="store_true")
     args = ap.parse_args()
     findings: list[str] = []
     for p in args.packages:
         files = sorted(p.rglob("*.cib")) if p.is_dir() else [p]
         for f in files:
-            findings.extend(lint(f, load=not args.no_load))
+            findings.extend(lint(f))
     for f in findings:
         print(f, file=sys.stderr)
     if findings:
