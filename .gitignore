@@ -1,4 +1,5 @@
 .commandcode/
+plan.md
 spike/
 build/
 runtime/.zig-cache/
