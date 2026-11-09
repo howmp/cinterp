@@ -478,6 +478,9 @@ fn lowerModule(allocator: Allocator, ir_text: []const u8, opts: Options) !abi.Co
         return error.IrTargetMismatch;
     };
     return lower_ast.compileWithOptions(allocator, &module, opts.target.abi, opts.target.ptr_bits / 8, .{
+        // The legacy mode exists only to keep lowering goldens comparable;
+        // real C input needs every GEP index folded into the relocation addend.
+        .gep_const = .correct,
         .legacy_codegen = false,
     });
 }

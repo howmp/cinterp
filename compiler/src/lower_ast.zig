@@ -630,6 +630,7 @@ fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const 
     var readonly_data = std.ArrayList(u8).init(allocator);
 
     var specs = std.ArrayList(Spec).init(allocator);
+    var max_readonly_align: u32 = 1;
     for (module.globals) |*g| {
         // LLVM linker metadata (`@llvm.compiler.used`, `@llvm.used`,
         // `@llvm.global_ctors`, ...) has no VM storage. The legacy parser
@@ -656,12 +657,16 @@ fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const 
         while (image.items.len < off) try image.append(0);
         var i: u32 = 0;
         while (i < sa.size) : (i += 1) try image.append(0);
+        if (is_readonly and want_align > max_readonly_align) max_readonly_align = want_align;
         try specs.append(.{ .global = g, .offset = off, .sa = sa, .readonly = is_readonly });
     }
 
-    // CIPC's data blob starts after the mutable image. Align it for the
-    // widest read-only objects (f80/f128 and vector-ish aggregates).
-    const pad_to: usize = if (legacy_codegen) 8 else 16;
+    // CIPC's data blob starts after the mutable image. The blob base must
+    // satisfy every read-only object's alignment, not just the 16-byte
+    // alignment of f80/f128 values; otherwise `_Alignas(32/64)` const globals
+    // land at a misaligned VM address.
+    var pad_to: usize = if (legacy_codegen) 8 else 16;
+    if (!legacy_codegen and max_readonly_align > pad_to) pad_to = max_readonly_align;
     while (data.items.len % pad_to != 0) try data.append(0);
     const data_base: u32 = @intCast(data.items.len);
 
@@ -3392,6 +3397,32 @@ test "fp128 global initializers are written to the data image" {
     try testing.expectEqual(@as(usize, 16), data.len);
     try testing.expectEqualSlices(u8, &expected, data);
     try testing.expect(!std.mem.eql(u8, &expected, &([_]u8{0} ** 16)));
+}
+
+test "readonly global data_base honors explicit alignment" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128"
+        \\target triple = "aarch64-unknown-linux-gnu"
+        \\
+        \\@m = global i32 1, align 4
+        \\@cg = constant i32 7, align 32
+        \\@ct = constant i32 9, align 64
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  ret i32 0
+        \\}
+    );
+
+    const result = try compileWithOptions(allocator, &module, 4, 8, .{ .legacy_codegen = false });
+    try testing.expectEqual(@as(u32, 64), result.data_base);
+    try testing.expect(result.const_data.len >= 68);
+    try testing.expectEqualSlices(u8, &.{ 7, 0, 0, 0 }, result.const_data[0..4]);
+    try testing.expectEqualSlices(u8, &.{ 9, 0, 0, 0 }, result.const_data[64..68]);
 }
 
 test "ast lowering consumes the parsed AST, not the source text" {
