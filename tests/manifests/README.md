@@ -76,6 +76,11 @@ python3 scripts/test_suites.py --tier full --jobs 8 --cib-cache build/cib-cache
 
 - 生成的 `.skip` 文件中每个非 `ok` 条目都曾被观察到一次，并且带有原因。它是
   已知支持子集的跳过，而不是静默通过。
+- 报告中的每个 skip 还会带有 `skip_class`：
+  - `unsupported`：明确不支持的平台/语言/诊断特性；
+  - `known-failure`：已观察到的 mismatch、崩溃、超时或错误返回，属于待修缺陷。
+- `scripts/check_plan_evidence.py` 会汇总 `skip_classes["known-failure"]`，不再把
+  已知失败藏在单一 skip 数字里。
 - `compile:` 表示编译器不支持的特性，或需要 GNU/扩展的上游测试；`runtime:` 是已知的
   运行时/ABI 失败；`mismatch:` 是已知的输出差异；`timeout:` 是资源/时间上限。
 - 用修复替换跳过需要重新运行套件，并从跳过文件中删除该条目。CI 从不更新期望输出
@@ -118,8 +123,8 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 ## 当前原生基线（2026-11-03）
 
 在 `x86_64-linux` 上运行 `make test-suites-full`；这些数字直接读取自
-`build/test-suites-full.json`（`tier=full`，`counts = {ok: 4318, skip: 203}`，
-共 4521 条结果）。TCC 的参考输出会针对绝对的 `__FILE__`
+`build/test-suites-full.json`（`tier=full`，`counts = {ok: 4319, skip: 203}`，
+共 4522 条结果）。TCC 的参考输出会针对绝对的 `__FILE__`
 路径、行尾空格和 TCC 编译器警告做归一化处理；这样在不削弱语义比较的前提下
 多恢复了 4 个用例。
 
@@ -139,7 +144,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | compcert-compile | 34 | 30 | 4 | 仅编译（`mode: compile`） |
 | llvm-singlesource | 93 | 85 | 8 | 仅编译（`mode: compile`） |
 | llvm-regression-c | 935 | 934 | 1 | 仅编译（`mode: compile`），已去重 ID；1 条运行时上限跳过 |
-| **总计** | **4521** | **4318** | **203** | |
+| **总计** | **4522** | **4319** | **203** | |
 
 ### 仅编译部分
 
@@ -155,10 +160,10 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | llvm-singlesource（同样是 `mode: compile`） | 85 |
 | **所有编译模式的通过数** | **2457** |
 
-其余 4318 − 2457 = **1861** 次通过是可执行用例，其 stdout /
+其余 4319 − 2457 = **1862** 次通过是可执行用例，其 stdout /
 退出状态 / `// expect:` 结果会与参考结果进行比较。
 
-### 每日/交叉冒烟套件（不属于 4318 的一部分）
+### 每日/交叉冒烟套件（不属于 4319 的一部分）
 
 这四个冒烟套件只属于 `nightly` 层级；它们由
 `make test-suites-cross` 和 `cross-abi` 工作流按目标分别执行，结果落在

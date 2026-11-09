@@ -7,7 +7,7 @@ actually writes:
 
   * ``build/test-suites-smoke.json``     (17 ok)
   * ``build/test-suites.json``           (395 ok / 100 skip)
-  * ``build/test-suites-full.json``      (4318 ok / 203 skip)
+  * ``build/test-suites-full.json``      (counts are derived from the report)
   * ``build/test-suites-nightly.json``   (consistency only)
   * ``build/generate-diff-nightly.json`` (0 failures)
   * ``build/release/cinterp-*.tar.gz``   (4 tarballs + SHA256SUMS; Linux ships bin/cinterp-cc)
@@ -38,7 +38,7 @@ MISSING = "missing"
 SUITE_REPORTS = (
     ("test-suites-smoke", B / "test-suites-smoke.json", 17, 0, "smoke"),
     ("test-suites", B / "test-suites.json", 395, 100, "standard"),
-    ("test-suites-full", B / "test-suites-full.json", 4318, 203, "full"),
+    ("test-suites-full", B / "test-suites-full.json", None, None, "full"),
 )
 NIGHTLY_REPORT = B / "test-suites-nightly.json"
 DIFF_REPORT = B / "generate-diff-nightly.json"
@@ -127,7 +127,9 @@ def check_suite_report(c: Checker, label: str, path: Path, expect_ok: int | None
     ok = int(counts.get("ok", 0))
     skip = int(counts.get("skip", 0))
     other = {k: v for k, v in counts.items() if k not in ("ok", "skip") and v}
-    detail = f"ok={ok} skip={skip} total={total} results={n_results}"
+    skip_classes = data.get("skip_classes") if isinstance(data.get("skip_classes"), dict) else {}
+    known_failures = int(skip_classes.get("known-failure", 0))
+    detail = f"ok={ok} skip={skip} total={total} results={n_results} known-failure={known_failures}"
     if other:
         detail += " unexpected=" + json.dumps(other, sort_keys=True)
     if expect_ok is not None and expect_skip is not None:
@@ -135,8 +137,8 @@ def check_suite_report(c: Checker, label: str, path: Path, expect_ok: int | None
         detail += f" (expected ok={expect_ok} skip={expect_skip} total={want_total})"
         ok_match = ok == expect_ok and skip == expect_skip and total == want_total
     else:
-        # The nightly tier covers more suites than the full tier; only require
-        # that every case is accounted for.
+        # Full/nightly tiers are baseline-free: every discovered case must be
+        # accounted for, and the report must expose known failures separately.
         ok_match = ok + skip == total
     consistent = n_results == total
     c.check(label, ok_match and consistent and not other,

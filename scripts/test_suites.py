@@ -220,6 +220,50 @@ def case_skip(case: dict, target: str) -> str | None:
     return None
 
 
+def classify_skip(reason: str) -> str:
+    """Separate unsupported feature exclusions from observed failures.
+
+    The manifests predate this distinction. Keep the existing status for
+    compatibility, but make known crashes/mismatches/timeouts visible in the
+    structured report instead of hiding them as an undifferentiated skip.
+    """
+    text = reason.lower()
+    unsupported = (
+        "non-goal",
+        "unsupported",
+        "dialect",
+        "frontend",
+        "harness/test-entry",
+        "platform header",
+        "platform/diagnostic",
+        "threads:",
+        "inline asm",
+        "atomic",
+        "external inline",
+        "gcc builtin",
+        ">64-bit",
+        "compiler limit",
+    )
+    if any(token in text for token in unsupported):
+        return "unsupported"
+    known = (
+        "mismatch",
+        "timeout",
+        "exit -",
+        "run:",
+        "bug",
+        "crash",
+        "sigsegv",
+        "sigabrt",
+        "abort/divergence",
+        "unresolved external symbol",
+        "failed",
+    )
+    if any(token in text for token in known):
+        return "known-failure"
+    return "unsupported"
+
+
 def build_env(manifest: dict, root: Path) -> dict:
     env = dict(os.environ)
     cpath = []
@@ -449,7 +493,7 @@ def run_case(
     }
     skip = None if runner.get("include_skipped") else case_skip(case, target)
     if skip:
-        result.update(status="skip", reason=skip)
+        result.update(status="skip", reason=skip, skip_class=classify_skip(skip))
         return result
     work = outdir / suite / target / cid
     work.mkdir(parents=True, exist_ok=True)
@@ -693,12 +737,18 @@ def main() -> int:
         reasons_path.parent.mkdir(parents=True, exist_ok=True)
         reasons_path.write_text("\n".join(lines) + ("\n" if lines else ""))
 
+    skip_classes: dict[str, int] = {}
+    for item in results:
+        if item["status"] == "skip":
+            klass = item.get("skip_class", "unsupported")
+            skip_classes[klass] = skip_classes.get(klass, 0) + 1
     report = {
         "target": args.target,
         "excluded": {name: len([1 for line in (ROOT / str(manifest.get("repo_exclude_file", ""))).read_text().splitlines() if line.strip() and not line.startswith("#")]) if manifest.get("repo_exclude_file") and (ROOT / manifest["repo_exclude_file"]).is_file() else 0 for name, manifest in selected.items()},
         "tier": args.tier,
         "counts": counts,
         "error_classes": classes,
+        "skip_classes": skip_classes,
         "results": results,
     }
     report_path = Path(args.report)
