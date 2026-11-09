@@ -137,14 +137,14 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | libc-test | 75 | 46 | 29 | `pthread_tsd` 因外部线程 callback 的 fail-fast 策略跳过 |
 | libc-test-regression | 69 | 48 | 21 | |
 | gcc-torture | 1306 | 1287 | 19 | 执行类用例 |
-| gcc-torture-compile | 1411 | 1408 | 3 | 仅编译（`mode: compile`）；3 条运行时上限跳过 |
+| gcc-torture-compile | 1411 | 1405 | 6 | 仅编译（`mode: compile`）；6 条运行时/资源上限跳过 |
 | gcc-ieee | 79 | 64 | 15 | |
 | compcert | 75 | 55 | 20 | |
 | compcert-c | 24 | 12 | 12 | |
 | compcert-compile | 34 | 30 | 4 | 仅编译（`mode: compile`） |
 | llvm-singlesource | 93 | 85 | 8 | 仅编译（`mode: compile`） |
 | llvm-regression-c | 935 | 934 | 1 | 仅编译（`mode: compile`），已去重 ID；1 条运行时上限跳过 |
-| **总计** | **4522** | **4319** | **203** | |
+| **总计** | **4522** | **4316** | **206** | |
 
 ### 仅编译部分
 
@@ -153,17 +153,17 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 
 | 套件 | 通过 |
 | --- | ---: |
-| gcc-torture-compile | 1408 |
+| gcc-torture-compile | 1405 |
 | llvm-regression-c | 934 |
 | compcert-compile | 30 |
-| **按仅编译统计的小计** | **2372** |
+| **按仅编译统计的小计** | **2369** |
 | llvm-singlesource（同样是 `mode: compile`） | 85 |
-| **所有编译模式的通过数** | **2457** |
+| **所有编译模式的通过数** | **2454** |
 
-其余 4319 − 2457 = **1862** 次通过是可执行用例，其 stdout /
+其余 4316 − 2454 = **1862** 次通过是可执行用例，其 stdout /
 退出状态 / `// expect:` 结果会与参考结果进行比较。
 
-### 每日/交叉冒烟套件（不属于 4319 的一部分）
+### 每日/交叉冒烟套件（不属于 4316 的一部分）
 
 这四个冒烟套件只属于 `nightly` 层级；它们由
 `make test-suites-cross` 和 `cross-abi` 工作流按目标分别执行，结果落在

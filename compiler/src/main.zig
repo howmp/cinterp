@@ -66,6 +66,8 @@ pub const Limits = struct {
     pub const provider_symbol: usize = 64;
     pub const provider_version: usize = 32;
     pub const module_bytes: usize = 2 * 1024 * 1024;
+    pub const vm_stack_slots: usize = 8192;
+    pub const vm_memory: usize = 16 * 1024 * 1024;
 };
 
 pub const LimitError = error{
@@ -83,6 +85,8 @@ pub const LimitError = error{
     ProviderNameTooLong,
     ProviderSymbolTooLong,
     ProviderVersionTooLong,
+    StackTooDeep,
+    VmMemoryTooLarge,
 };
 
 fn limitMessage(err: LimitError) []const u8 {
@@ -101,6 +105,8 @@ fn limitMessage(err: LimitError) []const u8 {
         error.ProviderNameTooLong => "provider library name longer than 64 bytes",
         error.ProviderSymbolTooLong => "provider symbol longer than 64 bytes",
         error.ProviderVersionTooLong => "provider version string longer than 32 bytes",
+        error.StackTooDeep => "function local_count exceeds the VM stack limit (8192 slots)",
+        error.VmMemoryTooLarge => "static data exceeds the VM maximum linear memory (16 MiB)",
     };
 }
 
@@ -123,9 +129,12 @@ pub fn validateLimits(result: abi.CompileResult, module_bytes: usize, table: *co
 
     for (result.functions) |func| {
         if (func.name.len > Limits.name) return error.FunctionNameTooLong;
+        if (func.local_count > Limits.vm_stack_slots) return error.StackTooDeep;
         // moduleSerialize stores the CIVM code length as u32.
         if (func.code.items.len > std.math.maxInt(u32)) return error.FunctionCodeTooLarge;
     }
+    const data_end = @as(u64, result.data_base) + result.const_data.len;
+    if (data_end > Limits.vm_memory) return error.VmMemoryTooLarge;
 
     for (result.plans) |plan| {
         if (plan.name.len > Limits.name) return error.PlanNameTooLong;
@@ -810,6 +819,26 @@ test "moduleByteLen matches moduleSerialize and a small package validates" {
     try std.testing.expectEqual(expected, bytes.len);
 
     try validateLimits(result, expected, &table);
+}
+
+test "validateLimits rejects oversized VM stack and static data" {
+    var table = imports.Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    var funcs = [_]abi.Function{sampleFunction("main")};
+    defer funcs[0].code.deinit();
+    funcs[0].local_count = Limits.vm_stack_slots + 1;
+    const result = abi.CompileResult{ .functions = &funcs, .plans = &.{}, .external_data = &.{} };
+    try std.testing.expectError(error.StackTooDeep, validateLimits(result, 10, &table));
+
+    var data_result = emptyResult();
+    data_result.data_base = Limits.vm_memory + 1;
+    try std.testing.expectError(error.VmMemoryTooLarge, validateLimits(data_result, 10, &table));
+
+    data_result.data_base = 0;
+    const huge = "x" ** (Limits.vm_memory + 1);
+    data_result.const_data = huge;
+    try std.testing.expectError(error.VmMemoryTooLarge, validateLimits(data_result, 10, &table));
 }
 
 test "validateLimits rejects over-long function and plan names" {
