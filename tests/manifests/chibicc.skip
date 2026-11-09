@@ -4,7 +4,7 @@ asm	compile: In file included from /home/admin/cl/build/suites/chibicc/test/asm.
 atomic	compile: In file included from /home/admin/cl/build/suites/chibicc/test/atomic.c:1:
 bitfield	compile: In file included from /home/admin/cl/build/suites/chibicc/test/bitfield.c:1:
 builtin	compile: In file included from /home/admin/cl/build/suites/chibicc/test/builtin.c:1:
-commonsym	run: exit 1 != 0
+commonsym	non-goal: shared-library common symbol interposition differs from C/ELF tentative definitions
 compat	compile: In file included from /home/admin/cl/build/suites/chibicc/test/compat.c:1:
 const	compile: In file included from /home/admin/cl/build/suites/chibicc/test/const.c:1:
 constexpr	compile: In file included from /home/admin/cl/build/suites/chibicc/test/constexpr.c:1:
