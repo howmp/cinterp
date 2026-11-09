@@ -131,13 +131,22 @@ split_debug() {
 }
 
 build_one() {
-    local target="$1" name="$2" exe ships="no" runner
-    (cd runtime && rm -rf zig-out && \
-        zig build -Dtarget="$target" -Doptimize=ReleaseSmall -Dkeep-debug=true >/dev/null)
+    local target="$1" name="$2" exe ships="no" runner keep_debug="true"
     case "$target" in
-        *windows*) exe="cinterp-run.exe" ;;
+        *windows*)
+            exe="cinterp-run.exe"
+            # PE debug sections make lld-link warn about >8-byte names, and
+            # the Windows package does not ship a debug sidecar anyway.
+            keep_debug="false"
+            ;;
         *) exe="cinterp-run" ;;
     esac
+    (cd runtime && rm -rf zig-out && \
+        zig build -Dtarget="$target" -Doptimize=ReleaseSmall -Dkeep-debug="$keep_debug" >/dev/null)
+    if [ ! -f "runtime/zig-out/bin/$exe" ]; then
+        echo "error: missing runtime artifact runtime/zig-out/bin/$exe for $target" >&2
+        exit 1
+    fi
     runner="$exe"
 
     local dest="$OUT/cinterp-$VERSION-$name"
@@ -150,6 +159,10 @@ build_one() {
         (cd compiler && zig build -Doptimize=ReleaseSmall >/dev/null)
         mkdir -p "$dest/bin"
         cp compiler/zig-out/bin/cinterp-cc "$dest/bin/cinterp-cc"
+        if [ ! -x "$dest/bin/cinterp-cc" ]; then
+            echo "error: missing compiler artifact for $target" >&2
+            exit 1
+        fi
         cp packaging/bin/cinterp.in "$dest/bin/cinterp"
         chmod +x "$dest/bin/cinterp"
         ships="yes"
