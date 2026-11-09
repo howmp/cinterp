@@ -2,7 +2,6 @@
 alias	mismatch: platform/expected difference: stdout mismatch
 alignas	non-goal: C11/dialect: /home/admin/cl/build/suites/CompCert/test/regression/alignas.c:25:10: error: size of array element of type 'int16' (aka 'int') (4 bytes) isn't a multiple of its alignment (16 bytes)
 aligned	mismatch: platform/expected difference: stdout mismatch
-alignglob	mismatch: platform/expected difference: stdout mismatch
 attribs1	mismatch: platform/expected difference: stdout mismatch
 builtins-aarch64	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-aarch64.c:13:31: error: use of unknown builtin '__builtin_cls' [-Wimplicit-function-declaration]
 builtins-arm	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-arm.c:14:33: error: use of unknown builtin '__builtin_fsqrt' [-Wimplicit-function-declaration]

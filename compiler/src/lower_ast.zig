@@ -683,6 +683,16 @@ fn gepBaseName(g: ast.Gep) ?[]const u8 {
     return valueGlobalRef(g.ptr.val);
 }
 
+/// Minimum alignment CompCert/GCC-style global arrays expect: up to 8 bytes,
+/// rounded down to a power of two, while never weakening the type's natural
+/// alignment. Scalar globals normally take their type alignment unchanged.
+fn globalObjectAlignment(sa: SizeAlign) u32 {
+    const cap: u32 = @min(sa.size, 8);
+    var power: u32 = 1;
+    while (power * 2 <= cap) power *= 2;
+    return @max(sa.alignment, power);
+}
+
 fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const Layout, ptr_size: u32, mode: GepConstMode, legacy_codegen: bool) !Globals {
     const Spec = struct {
         global: *const ast.Global,
@@ -719,7 +729,10 @@ fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const 
         }
         const sa = layout.sizeAlign(g.ty) catch continue;
         const explicit: u32 = g.alignment orelse 0;
-        const want_align = @max(@max(sa.alignment, explicit), 1);
+        // Keep legacy/golden layout byte-identical; production C globals get
+        // the array minimum alignment expected by CompCert-style tests.
+        const type_align = if (legacy_codegen) sa.alignment else globalObjectAlignment(sa);
+        const want_align = @max(@max(type_align, explicit), 1);
         const is_readonly = !legacy_codegen and g.is_const;
         const image = if (is_readonly) &readonly_data else &data;
         const off = alignUp(@intCast(image.items.len), want_align);
