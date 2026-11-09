@@ -465,7 +465,9 @@ xxd -g1 build/hello.cib
 ```
 
 `cib_dump.py` 支持 CIPKG v4、CIVM v2、CIPC、紧凑 CIPL/CIPI；会打印 section
-偏移/长度、名称池、函数与计划表、import provider，以及每个函数的 opcode 反汇编。
+偏移/长度、CIPC 名称索引与原始 data hexdump、CIPL/CIPI 的 `name_ref`/`lib_ref`/`symbol_ref`、
+函数与计划表、import provider，以及每个函数的 opcode 反汇编。默认最多显示 256 字节
+CIPC data，`--full-data` 显示全部，`--data-limit N` 可调整上限。
 
 运行时失败始终返回稳定的 `CI_E_*` 类别；Debug 构建把具体错误名（`BadPackage`、`BadPackageMagic`、`BadAbi`、`BadPlan` 等）写入 `ci_vm_last_error`/`ci_process_last_error` 并输出，Release 构建返回空字符串，只保留状态码。CLI 在 Release 下输出 `load failed: error <code>` / `run failed: error <code>`。
 

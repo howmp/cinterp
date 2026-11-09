@@ -2,7 +2,7 @@
 """Dump cinterp CIPKG v4 headers and disassemble CIVM bytecode.
 
 Usage:
-  scripts/tools/cib_dump.py [--headers|--asm] package.cib [...]
+  scripts/tools/cib_dump.py [--headers|--asm] [--data-limit N|--full-data] package.cib [...]
 """
 from __future__ import annotations
 
@@ -264,6 +264,7 @@ def parse_cipl(plans: bytes, names: list[str]) -> dict:
             args.append(
                 {
                     "size": size,
+                    "flags": arg_flags,
                     "is_struct": bool(arg_flags & 0x80),
                     "locs": locs,
                 }
@@ -272,6 +273,8 @@ def parse_cipl(plans: bytes, names: list[str]) -> dict:
         parsed.append(
             {
                 "name": name,
+                "name_ref": name_ref,
+                "flags": flags,
                 "args": args,
                 "ret_locs": ret_locs,
                 "stack_size": stack_size,
@@ -322,6 +325,8 @@ def parse_imports(imports: bytes, names: list[str]) -> dict:
                 symbol = names[symbol_ref]
             providers.append(
                 {
+                    "lib_ref": lib_ref,
+                    "symbol_ref": symbol_ref,
                     "lib": names[lib_ref],
                     "symbol": symbol,
                     "ordinal": ordinal,
@@ -332,6 +337,7 @@ def parse_imports(imports: bytes, names: list[str]) -> dict:
                 "plan_index": plan_index,
                 "kind": kind,
                 "flags": flags,
+                "name_ref": name_ref,
                 "name": name,
                 "providers": providers,
             }
@@ -358,16 +364,19 @@ def parse_cipc(pool: bytes) -> dict:
     if data_start + data_len != len(pool):
         raise Bad("CIPC data length")
     names = []
+    name_offsets = []
     for i in range(count):
         off = read_u16(pool, 20 + i * 2)
         begin = blob_start + off
         end = pool.find(b"\x00", begin, blob_start + blob_len)
         if begin >= blob_start + blob_len or end < 0:
             raise Bad("CIPC name offset")
+        name_offsets.append(off)
         names.append(pool[begin:end].decode("utf-8", "replace"))
     return {
         "name_count": count,
         "names": names,
+        "name_offsets": name_offsets,
         "name_blob_len": blob_len,
         "data_len": data_len,
         "data_base": data_base,
@@ -409,7 +418,28 @@ def loc_text(loc: dict) -> str:
     return f"{kind}{loc['index']}:{loc['size']}@{loc['offset']}"
 
 
-def header_text(cib: dict) -> str:
+IMPORT_FLAGS = (("required", 0x01), ("lazy", 0x02), ("fallback", 0x04), ("override", 0x08))
+
+
+def flag_text(value: int) -> str:
+    names = [name for name, bit in IMPORT_FLAGS if value & bit]
+    return ",".join(names) if names else "-"
+
+
+def hexdump(data: bytes, limit: int | None, base: int = 0) -> list[str]:
+    shown = data if limit is None else data[:limit]
+    lines = []
+    for off in range(0, len(shown), 16):
+        chunk = shown[off : off + 16]
+        hex_part = " ".join(f"{byte:02x}" for byte in chunk)
+        ascii_part = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in chunk)
+        lines.append(f"    {base + off:04x}: {hex_part:<47}  |{ascii_part}|")
+    if limit is not None and len(data) > len(shown):
+        lines.append(f"    ... {len(data) - len(shown)} more byte(s); use --full-data to show all")
+    return lines
+
+
+def header_text(cib: dict, data_limit: int | None = 256) -> str:
     civm = cib["civm"]
     cipl = cib["cipl"]
     cipi = cib["cipi"]
@@ -424,12 +454,20 @@ def header_text(cib: dict) -> str:
         + (" (omitted)" if cipi["omitted"] else ""),
         f"  const:   off={22 + cib['module_len'] + cib['plan_len'] + cib['import_len']} len={cib['const_len']}",
         f"CIVM: v{civm['version']} arch={civm['arch']} entry={civm['entry']} functions={len(civm['functions'])}",
-        f"CIPC: names={len(cib['cipc']['names'])} data={cib['cipc']['data_len']} bytes base={cib['cipc']['data_base']}",
+        f"CIPC: names={len(cib['cipc']['names'])} data={cib['cipc']['data_len']} bytes base=0x{cib['cipc']['data_base']:08x}",
     ]
+    cipc = cib["cipc"]
+    for index, name in enumerate(cipc["names"]):
+        off = cipc["name_offsets"][index]
+        lines.append(f"  name[{index}] off=0x{off:04x} ref=0x{index:04x} {name!r}")
+    if cipc["data_len"]:
+        lines.append(f"  data[{cipc['data_len']} bytes]:")
+        lines.extend(hexdump(cipc["data"], data_limit, cipc["data_base"]))
     for fn in civm["functions"]:
         lines.append(
             f"  [{fn['index']}] params={fn['params']} "
-            f"locals={fn['locals']} code={len(fn['code'])} bytes"
+            f"locals={fn['locals']} code={len(fn['code'])} bytes "
+            f"code_off=0x{fn['code_offset']:04x}"
         )
     if cipl["omitted"]:
         lines.append("CIPL: omitted")
@@ -438,15 +476,19 @@ def header_text(cib: dict) -> str:
         lines.append(f"CIPL: abi={abi} plans={len(cipl['plans'])}")
         for index, plan in enumerate(cipl["plans"]):
             lines.append(
-                f"  [{index}] {plan['name']}: args={len(plan['args'])} "
-                f"rets={len(plan['ret_locs'])} stack={plan['stack_size']} "
+                f"  [{index}] ref=0x{plan['name_ref']:04x} {plan['name']}: "
+                f"args={len(plan['args'])} rets={len(plan['ret_locs'])} "
+                f"stack={plan['stack_size']} flags=0x{plan['flags']:02x} "
                 f"sret={int(plan['sret'])} sse={plan['sse_count']} "
                 f"conv={plan['conv']} ret_size={plan['ret_size']}"
             )
             for ai, arg in enumerate(plan["args"]):
                 locs = ", ".join(loc_text(loc) for loc in arg["locs"])
                 struct = " struct" if arg["is_struct"] else ""
-                lines.append(f"      arg{ai}: size={arg['size']}{struct} locs=[{locs}]")
+                lines.append(
+                    f"      arg{ai}: flags=0x{arg['flags']:02x} "
+                    f"size={arg['size']}{struct} locs=[{locs}]"
+                )
             if plan["ret_locs"]:
                 lines.append(
                     "      ret: "
@@ -469,14 +511,22 @@ def header_text(cib: dict) -> str:
                     if entry["plan_index"] < len(cipl["plans"])
                     else ""
                 )
+            name_ref = "0xffff" if entry["name_ref"] == 0xFFFF else f"0x{entry['name_ref']:04x}"
+            kind = "data" if entry["kind"] == 1 else "function"
             lines.append(
-                f"  [{index}] {plan} kind={entry['kind']} flags=0x{entry['flags']:02x} "
-                f"name={display_name} providers={len(entry['providers'])}"
+                f"  [{index}] {plan} kind={entry['kind']}({kind}) "
+                f"flags=0x{entry['flags']:02x}({flag_text(entry['flags'])}) "
+                f"name_ref={name_ref} name={display_name} "
+                f"providers={len(entry['providers'])}"
             )
             for provider in entry["providers"]:
                 ordinal = f" ordinal={provider['ordinal']}" if provider["ordinal"] else ""
                 symbol = provider["symbol"] or display_name
-                lines.append(f"      {provider['lib']}:{symbol}{ordinal}")
+                lines.append(
+                    f"      lib_ref=0x{provider['lib_ref']:04x} "
+                    f"symbol_ref=0x{provider['symbol_ref']:04x} "
+                    f"{provider['lib']}:{symbol}{ordinal}"
+                )
     return "\n".join(lines)
 
 
@@ -602,11 +652,11 @@ def asm_text(cib: dict) -> str:
     return "\n".join(lines)
 
 
-def dump(path: Path, show_headers: bool, show_asm: bool) -> None:
+def dump(path: Path, show_headers: bool, show_asm: bool, data_limit: int | None) -> None:
     cib = parse_cib(path)
     print(f"==> {path} ==")
     if show_headers:
-        print(header_text(cib))
+        print(header_text(cib, data_limit))
     if show_asm:
         print(asm_text(cib))
 
@@ -616,6 +666,9 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--headers", action="store_true", help="print headers only")
     mode.add_argument("--asm", action="store_true", help="print disassembly only")
+    parser.add_argument("--data-limit", type=int, default=256,
+                        help="CIPC data bytes to hexdump (default: 256)")
+    parser.add_argument("--full-data", action="store_true", help="hexdump all CIPC data")
     parser.add_argument("packages", nargs="+", type=Path)
     args = parser.parse_args()
     show_headers = not args.asm
@@ -623,7 +676,8 @@ def main() -> int:
     failed = False
     for package in args.packages:
         try:
-            dump(package, show_headers, show_asm)
+            data_limit = None if args.full_data else max(0, args.data_limit)
+            dump(package, show_headers, show_asm, data_limit)
         except (OSError, Bad) as exc:
             print(f"{package}: {exc}", file=sys.stderr)
             failed = True
