@@ -320,7 +320,7 @@ const Layout = struct {
 
 // --------------------------------------------------------------------- globals
 
-const Reloc = struct { offset: u32, target: []const u8, addend: i64 };
+const Reloc = struct { offset: u32, target: []const u8, addend: i64, size: u32 = 0 };
 
 const Globals = struct {
     /// `@name` (without the sigil) -> absolute VM memory offset.
@@ -412,6 +412,34 @@ const GlobalWriter = struct {
     layout: *const Layout,
     ptr_size: u32,
     mode: GepConstMode,
+
+    const AddressRef = struct { target: []const u8, addend: i64 };
+
+    /// Resolve an address constant expression to a symbol plus addend.
+    /// Only forms that occur in LLVM global initializers are accepted.
+    fn addressRef(self: *GlobalWriter, value: ast.Value) !?AddressRef {
+        switch (value) {
+            .global => |n| return .{
+                .target = try std.fmt.allocPrint(self.allocator, "@{s}", .{n.name}),
+                .addend = 0,
+            },
+            .const_expr => |expr| switch (expr.*) {
+                .gep => |g| {
+                    const name = gepBaseName(g) orelse return null;
+                    return .{
+                        .target = try std.fmt.allocPrint(self.allocator, "@{s}", .{name}),
+                        .addend = self.gepAddend(g) orelse 0,
+                    };
+                },
+                .cast => |c| switch (c.op) {
+                    .ptrtoint, .bitcast, .addrspacecast => return self.addressRef(c.value),
+                    else => return null,
+                },
+                else => return null,
+            },
+            else => return null,
+        }
+    }
 
     /// Write the constant image of `value` (of type `ty`) into `out`.
     /// `out` is the object's whole storage; nested aggregates recurse with the
@@ -573,6 +601,17 @@ const GlobalWriter = struct {
                         }
                     },
                     else => {},
+                }
+            },
+            .int => {
+                if (try self.addressRef(value)) |ref| {
+                    const store_size = self.layout.storeSize(resolved) catch return error.BadType;
+                    try out.append(.{
+                        .offset = base,
+                        .target = ref.target,
+                        .addend = ref.addend,
+                        .size = @min(store_size, self.ptr_size),
+                    });
                 }
             },
             else => {},
@@ -1554,7 +1593,8 @@ const Lowerer = struct {
             try self.emitU8(op.OP_ADDR_CONST);
             try self.emitU32(reloc.offset);
             try self.emitU8(op.OP_STORE_MEM);
-            try self.emitU8(@intCast(self.ctx.ptr_size));
+            const store_size = if (reloc.size == 0) self.ctx.ptr_size else reloc.size;
+            try self.emitU8(@intCast(store_size));
         }
     }
 
@@ -2597,7 +2637,7 @@ pub fn dumpModule(writer: anytype, module: *const ast.Module) !void {
 
 /// Narrow seam used by the unit tests; not part of the lowering contract.
 pub const TestHook = struct {
-    pub const RelocInfo = struct { offset: u32, target: []const u8, addend: i64 };
+    pub const RelocInfo = struct { offset: u32, target: []const u8, addend: i64, size: u32 };
 
     /// Static data image bytes produced for `module`.
     pub fn globalData(allocator: Allocator, module: *const ast.Module, ptr_size: u32) ![]u8 {
@@ -2612,7 +2652,12 @@ pub const TestHook = struct {
         const globals = try buildGlobals(allocator, module, &layout, ptr_size, mode, true);
         var out = try allocator.alloc(RelocInfo, globals.relocs.len);
         for (globals.relocs, 0..) |reloc, i| {
-            out[i] = .{ .offset = reloc.offset, .target = reloc.target, .addend = reloc.addend };
+            out[i] = .{
+                .offset = reloc.offset,
+                .target = reloc.target,
+                .addend = reloc.addend,
+                .size = reloc.size,
+            };
         }
         return out;
     }
@@ -3480,6 +3525,52 @@ test "named array types initialize and relocate nested globals" {
     try testing.expectEqualStrings("@a", relocs[0].target);
     try testing.expectEqual(@as(u32, 32), relocs[1].offset);
     try testing.expectEqualStrings("@a", relocs[1].target);
+}
+
+test "non-pointer address constants produce sized relocations" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128"
+        \\target triple = "aarch64-unknown-linux-gnu"
+        \\
+        \\@arr = global [4 x i32] [i32 10, i32 20, i32 30, i32 40], align 16
+        \\@addr = global i64 ptrtoint (ptr @arr to i64), align 8
+        \\@addr32 = global i32 ptrtoint (ptr getelementptr (i8, ptr @arr, i64 8) to i32), align 4
+        \\@addr_nested = global i64 ptrtoint (ptr getelementptr inbounds ([4 x i32], ptr @arr, i64 0, i64 2) to i64), align 8
+        \\
+        \\define i32 @main() {
+        \\entry:
+        \\  ret i32 0
+        \\}
+    );
+
+    const data = try TestHook.globalData(allocator, &module, 8);
+    try testing.expectEqual(@as(usize, 40), data.len);
+    try testing.expectEqualSlices(u8, &.{ 10, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 0, 40, 0, 0, 0 }, data[0..16]);
+    try testing.expectEqualSlices(u8, &[_]u8{0} ** 8, data[16..24]);
+    try testing.expectEqualSlices(u8, &[_]u8{0} ** 4, data[24..28]);
+    try testing.expectEqualSlices(u8, &[_]u8{0} ** 8, data[32..40]);
+
+    const relocs = try TestHook.globalRelocs(allocator, &module, 8, .correct);
+    try testing.expectEqual(@as(usize, 3), relocs.len);
+    try testing.expectEqual(@as(u32, 16), relocs[0].offset);
+    try testing.expectEqual(@as(u32, 8), relocs[0].size);
+    try testing.expectEqual(@as(i64, 0), relocs[0].addend);
+    try testing.expectEqualStrings("@arr", relocs[0].target);
+    try testing.expectEqual(@as(u32, 24), relocs[1].offset);
+    try testing.expectEqual(@as(u32, 4), relocs[1].size);
+    try testing.expectEqual(@as(i64, 8), relocs[1].addend);
+    try testing.expectEqual(@as(u32, 32), relocs[2].offset);
+    try testing.expectEqual(@as(u32, 8), relocs[2].size);
+    try testing.expectEqual(@as(i64, 8), relocs[2].addend);
+
+    const result = try compile(allocator, &module, 4, 8);
+    const code = result.functions[0].code.items;
+    try testing.expect(std.mem.indexOf(u8, code, &.{ op.OP_STORE_MEM, 8 }) != null);
+    try testing.expect(std.mem.indexOf(u8, code, &.{ op.OP_STORE_MEM, 4 }) != null);
 }
 
 test "ast lowering consumes the parsed AST, not the source text" {
