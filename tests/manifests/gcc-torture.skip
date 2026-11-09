@@ -18,3 +18,4 @@ ssad-run	bug: unresolved external symbol: exit 1 != 0
 string-opt-18	bug: unresolved external symbol: exit 1 != 0
 unroll-1	bug: unresolved external symbol: exit 1 != 0
 usad-run	bug: unresolved external symbol: exit 1 != 0
+pr117095	unsupported: i128 global initializer

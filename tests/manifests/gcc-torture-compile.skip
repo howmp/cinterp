@@ -5,3 +5,5 @@ stuct	compiler limit: CIVM module larger than 2 MiB
 20010518-2	compiler limit: static data exceeds VM maximum linear memory (16 MiB)
 20080625-1	compiler limit: static data exceeds VM maximum linear memory (16 MiB)
 pr103813	compiler limit: static data exceeds VM maximum linear memory (16 MiB)
+simd-6	unsupported: vector global initializer
+vector-align-1	unsupported: vector global initializer

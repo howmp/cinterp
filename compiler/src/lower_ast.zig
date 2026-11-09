@@ -448,6 +448,15 @@ const GlobalWriter = struct {
     fn writeConstant(self: *GlobalWriter, ty: *const ast.Type, value: ast.Value, out: []u8) anyerror!void {
         if (out.len == 0) return;
         const resolved = self.layout.resolveNamed(ty);
+        if (resolved.* == .vector) return error.UnsupportedGlobalInitializer;
+        switch (resolved.*) {
+            .float => |t| switch (t.kind) {
+                .half, .bfloat, .ppc_fp128 => return error.UnsupportedGlobalInitializer,
+                else => {},
+            },
+            .int => |t| if (t.bits > 64) return error.UnsupportedGlobalInitializer,
+            else => {},
+        }
         switch (value) {
             .zeroinitializer, .undef, .poison, .null_ => return,
             .aggregate => |agg| {
@@ -471,26 +480,22 @@ const GlobalWriter = struct {
                         }
                         return;
                     },
-                    // compat: the legacy constant writer has no vector case and
-                    // leaves vector initialisers zeroed. Preserved so the CIB
-                    // stays comparable; recorded as a gap in the phase report.
-                    .vector => return,
-                    else => return,
+                    else => return error.UnsupportedGlobalInitializer,
                 }
             },
             .string => |s| {
                 // Only arrays of i8 carry C strings in this subset.
                 switch (resolved.*) {
                     .array => decodeCString(s.raw, out),
-                    else => {},
+                    else => return error.UnsupportedGlobalInitializer,
                 }
                 return;
             },
             .int => |lit| {
-                const bits = intBitsOf(resolved) orelse return;
+                const bits = intBitsOf(resolved) orelse return error.UnsupportedGlobalInitializer;
                 const size: u32 = @max(1, (bits + 7) / 8);
-                // compat: legacy writeIntLE caps the value at 8 bytes, so i128
-                // initialisers only fill their low 8 bytes.
+                // compat: legacy writeIntLE caps the value at 8 bytes; the
+                // unsupported i128 case is rejected above.
                 var v: u64 = 0;
                 if (intToI64(lit)) |n| {
                     v = @bitCast(n);
@@ -501,36 +506,43 @@ const GlobalWriter = struct {
                 return;
             },
             .float => |lit| {
-                const kind = floatKindOf(resolved) orelse return;
+                const kind = floatKindOf(resolved) orelse return error.UnsupportedGlobalInitializer;
                 switch (kind) {
                     .float, .double, .x86_fp80, .fp128 => _ = lit.writeLeBytes(out),
-                    // The runtime has no half/bfloat/ppc_fp128 value path;
-                    // keep those initialisers zeroed.
-                    .ppc_fp128, .half, .bfloat => {},
+                    .ppc_fp128, .half, .bfloat => return error.UnsupportedGlobalInitializer,
                 }
                 return;
             },
             .const_expr => |expr| {
-                switch (expr.*) {
-                    .cast => |c| {
-                        // `ptr inttoptr (i64 N to ptr)` is the only pointer
-                        // constant expression the legacy writer materialises.
-                        if (c.op == .inttoptr and intBitsOf(self.layout.resolveNamed(c.src)) != null) {
-                            const lit = switch (c.value) {
-                                .int => |l| l,
-                                else => return,
-                            };
-                            const n = intToI64(lit) orelse return;
-                            writeIntLE(out, @bitCast(n), self.ptr_size);
-                        }
-                        return;
-                    },
-                    else => return,
+                if (resolved.* == .ptr) {
+                    // `ptr inttoptr (i64 N to ptr)` is materialized inline;
+                    // every other pointer expression is filled by a relocation.
+                    switch (expr.*) {
+                        .cast => |c| {
+                            if (c.op == .inttoptr and intBitsOf(self.layout.resolveNamed(c.src)) != null) {
+                                const lit = switch (c.value) {
+                                    .int => |l| l,
+                                    else => return,
+                                };
+                                const n = intToI64(lit) orelse return;
+                                writeIntLE(out, @bitCast(n), self.ptr_size);
+                            }
+                        },
+                        else => {},
+                    }
+                    return;
                 }
+                if (try self.addressRef(value) != null) return;
+                return error.UnsupportedGlobalInitializer;
             },
-            // `local`/`global`/`metadata`/`asm`/`blockaddress` never appear as
-            // global initialiser leaves (globals produce relocations instead).
-            else => return,
+            .global => {
+                if (resolved.* == .ptr) return;
+                if (try self.addressRef(value) != null) return;
+                return error.UnsupportedGlobalInitializer;
+            },
+            // `local`/`metadata`/`asm`/`blockaddress` never appear as global
+            // initialiser leaves.
+            else => return error.UnsupportedGlobalInitializer,
         }
     }
 
@@ -693,6 +705,7 @@ fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const 
         // ignores these via its text heuristics; keep the data image free of
         // them in the AST path too.
         if (std.mem.startsWith(u8, g.name, "llvm.") or std.mem.startsWith(u8, g.name, ".llvm.")) continue;
+        if (g.modifiers.thread_local) return error.UnsupportedGlobalInitializer;
         if (g.init == null) {
             // `@x = external global i32`: an unresolved external symbol, no
             // storage. (Legacy also treats `external thread_local` this way.)
@@ -3571,6 +3584,39 @@ test "non-pointer address constants produce sized relocations" {
     const code = result.functions[0].code.items;
     try testing.expect(std.mem.indexOf(u8, code, &.{ op.OP_STORE_MEM, 8 }) != null);
     try testing.expect(std.mem.indexOf(u8, code, &.{ op.OP_STORE_MEM, 4 }) != null);
+}
+
+test "unsupported global initializers return explicit errors" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const cases = [_][]const u8{
+        \\@v = global <4 x i32> <i32 1, i32 2, i32 3, i32 4>, align 16
+        ,
+        \\@h = global half 0xH3C00, align 2
+        ,
+        \\@big = global i128 1, align 16
+        ,
+        \\@tl = thread_local global i32 1, align 4
+        ,
+        \\@expr = global i64 add (i64 1, i64 2), align 8
+        ,
+    };
+
+    for (cases) |body| {
+        const text = try std.mem.concat(allocator, u8, &.{
+            "target datalayout = \"e-m:e-i64:64-f80:128-n8:16:32:64-S128\"\n" ++
+                "target triple = \"x86_64-unknown-linux-gnu\"\n\n",
+            body,
+            "\ndefine i32 @main() {\nentry:\n  ret i32 0\n}\n",
+        });
+        var module = try parseFixture(allocator, text);
+        try testing.expectError(
+            error.UnsupportedGlobalInitializer,
+            TestHook.globalData(allocator, &module, 8),
+        );
+    }
 }
 
 test "ast lowering consumes the parsed AST, not the source text" {
