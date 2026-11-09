@@ -1,5 +1,4 @@
 # refreshed after P1/P2 bug fixes
-alignof	run: exit 1 != 0
 alloca	compile: In file included from /home/admin/cl/build/suites/chibicc/test/alloca.c:1:
 asm	compile: In file included from /home/admin/cl/build/suites/chibicc/test/asm.c:1:
 atomic	compile: In file included from /home/admin/cl/build/suites/chibicc/test/atomic.c:1:
