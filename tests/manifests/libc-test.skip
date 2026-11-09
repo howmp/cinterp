@@ -1,21 +1,21 @@
 # refreshed after VLA/C11/external-data work
-clocale_mbfuncs	mismatch: libc reference difference (musl locale/wide-char; native glibc reproduces)
-crypt	mismatch: libcrypt provider unavailable on host
+clocale_mbfuncs	unsupported: host libc reference difference (musl locale/wide-char)
+crypt	unsupported: libcrypt provider unavailable on host
 dlopen	stdout mismatch
 dlopen_dso	stdout mismatch
-fnmatch	mismatch: libc reference difference (musl fnmatch semantics; native glibc reproduces)
-fscanf	mismatch: libc reference difference (musl scanf semantics; native glibc reproduces)
-fwscanf	mismatch: libc reference difference (musl wide scanf semantics; native glibc reproduces)
-mbc	mismatch: libc reference difference (musl multibyte/locale; native glibc reproduces)
+fnmatch	unsupported: host libc reference difference (musl fnmatch)
+fscanf	unsupported: host libc reference difference (musl scanf)
+fwscanf	unsupported: host libc reference difference (musl wide scanf)
+mbc	unsupported: host libc reference difference (musl multibyte/locale)
 pthread_cancel	stdout mismatch
 pthread_tsd	foreign-thread callback while the VM is executing (fail-fast thread policy; use idle-VM or same-thread callbacks)
 pthread_cancel-points	exit -11 != 0
 pthread_cond	exit -11 != 0
 pthread_mutex	exit -11 != 0
 pthread_mutex_pi	stdout mismatch
-sscanf	mismatch: libc reference difference (musl scanf semantics; native glibc reproduces)
+sscanf	unsupported: host libc reference difference (musl scanf)
 sscanf_long	exit -11 != 0
-strftime	mismatch: libc reference difference (musl strftime year formats; native glibc reproduces)
+strftime	unsupported: host libc reference difference (musl strftime)
 tls_align	stdout mismatch
 tls_align_dlopen	stdout mismatch
 tls_align_dso	stdout mismatch
@@ -23,8 +23,8 @@ tls_init	stdout mismatch
 tls_init_dlopen	stdout mismatch
 tls_init_dso	stdout mismatch
 tls_local_exec	stdout mismatch
-vfork	mismatch: host vfork/expected difference
+vfork	unsupported: host vfork/expected difference
 sem_init	mismatch: pthread quarantine (out of scope)
 pthread_robust	mismatch: pthread quarantine (out of scope)
-strtol	mismatch: host-libc reference (musl invalid-base endptr; native glibc differs)
-wcstol	mismatch: host-libc reference (musl invalid-base endptr; native glibc differs)
+strtol	unsupported: host libc reference difference (musl strtol)
+wcstol	unsupported: host libc reference difference (musl wcstol)

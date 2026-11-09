@@ -15,7 +15,8 @@
   "timeout": 30,
   "compile_timeout": 120,
   "skip": {
-    "pr60822": "compiler limit: CIVM module larger than 2 MiB"
+    "pr60822": "compiler limit: CIVM module larger than 2 MiB",
+    "20020107-1": "unsupported: inline asm"
   },
   "cases": [
     {

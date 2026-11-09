@@ -11,11 +11,8 @@ builtins-powerpc	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/tes
 builtins-riscV	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-riscV.c:14:47: error: use of unknown builtin '__builtin_fmadd' [-Wimplicit-function-declaration]
 builtins-x86	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/builtins-x86.c:24:33: error: use of unknown builtin '__builtin_read16_reversed' [-Wimplicit-function-declaration]
 charlit	non-goal: char literal diagnostic: /home/admin/cl/build/suites/CompCert/test/regression/charlit.c:20:21: error: hex escape sequence out of range
-dollars	mismatch: platform/expected difference: stdout mismatch
-floats	mismatch: platform/expected difference: stdout mismatch
-initializers2	mismatch: platform/expected difference: stdout mismatch
+floats	unsupported: compiler limit (TooManyFunctions)
 krfun	frontend/dialect: unsupported compile: /home/admin/cl/build/suites/CompCert/test/regression/krfun.c:23:14: error: parameter 'c' was not declared, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
 memcpy	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/memcpy.c:26:3: error: use of unknown builtin '__builtin_memcpy_aligned' [-Wimplicit-function-declaration]
 packedstruct2	non-goal: packed struct frontend: /home/admin/cl/build/suites/CompCert/test/regression/packedstruct2.c:7:19: error: expected identifier or '('
 sections	non-goal: GCC builtin: /home/admin/cl/build/suites/CompCert/test/regression/sections.c:39:3: error: use of unknown builtin '__builtin_membar' [-Wimplicit-function-declaration]
-struct7	mismatch: platform/expected difference: stdout mismatch

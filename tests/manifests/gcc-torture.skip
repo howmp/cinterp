@@ -1,7 +1,7 @@
 # refreshed after P1/P2 bug fixes
-20101011-1	bug: division-by-zero: exit 1 != 0
+20101011-1	unsupported: signal/SIGFPE runtime behavior
 bitfld-3	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
-eeprof-1	bug: abort/divergence: exit -6 != 0
+eeprof-1	unsupported: -finstrument-functions profiling hooks
 nestfunc-4	non-goal: nested function/frame limit: exit 1 != 0
 pr32244-1	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
 pr34971	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
