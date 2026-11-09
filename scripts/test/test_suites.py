@@ -28,6 +28,8 @@ DEFAULT_COMPILER = ROOT / "build/cinterp-cc"
 RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
 RESULT_RE = re.compile(rb"^result: -?\d+\r?\n", re.MULTILINE)
 EXPECT_RE = re.compile(rb"^// expect: *(-?\d+)\s*$", re.MULTILINE)
+DG_OPTIONS_RE = re.compile(r'dg-options\s+"([^"]*)"')
+SUPPORTED_CC_FLAGS = {"-fgnu89-inline"}
 TIERS = ["smoke", "standard", "full", "nightly"]
 TARGET_NAMES = ["aarch64-linux", "i686-windows", "x86_64-linux", "x86_64-windows"]
 WINDOWS_TARGETS = ("x86_64-windows", "i686-windows")
@@ -444,8 +446,22 @@ def compiler_fingerprint(compiler_path: Path) -> str:
     return h.hexdigest()
 
 
+def source_cc_flags(source: Path) -> list[str]:
+    """Return the small subset of dg-options we deliberately forward."""
+    try:
+        text = source.read_text(errors="replace")
+    except OSError:
+        return []
+    out: list[str] = []
+    for match in DG_OPTIONS_RE.findall(text):
+        for flag in shlex.split(match):
+            if flag in SUPPORTED_CC_FLAGS and flag not in out:
+                out.append(flag)
+    return out
+
+
 def cib_cache_key(source: Path, case: dict, target: str, env: dict, manifest: dict,
-                  compiler_path: Path) -> str:
+                  compiler_path: Path, cc_flags: list[str]) -> str:
     h = hashlib.sha256()
     h.update(compiler_fingerprint(compiler_path).encode())
     h.update(target.encode())
@@ -453,6 +469,7 @@ def cib_cache_key(source: Path, case: dict, target: str, env: dict, manifest: di
     h.update(source.read_bytes())
     h.update(env.get("CPATH", "").encode())
     h.update(str(manifest.get("force_target", False)).encode())
+    h.update("\0".join(cc_flags).encode())
     return h.hexdigest()
 
 
@@ -506,7 +523,10 @@ def run_case(
     timeout = float(case.get("timeout", manifest.get("timeout", 30)))
     compile_timeout = float(manifest.get("compile_timeout", 300))
     compiler_path = Path(runner["compiler_path"])
+    cc_flags = source_cc_flags(source)
     cmd = [str(compiler_path), "compile", str(source), "-o", str(cib)]
+    for flag in cc_flags:
+        cmd += ["--cc-flag", flag]
     if target != "x86_64-linux" or manifest.get("force_target"):
         cmd += ["--target", target]
     cached = False
@@ -515,7 +535,7 @@ def run_case(
         cache_dir = runner["cib_cache"]
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = cache_dir / (
-            cib_cache_key(source, case, target, env, manifest, compiler_path) + ".cib"
+            cib_cache_key(source, case, target, env, manifest, compiler_path, cc_flags) + ".cib"
         )
         if cache_path.is_file():
             shutil.copyfile(cache_path, cib)

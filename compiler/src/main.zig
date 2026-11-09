@@ -164,6 +164,9 @@ const Options = struct {
     output: []const u8,
     target: Target,
     cc_path: []const u8 = "zig",
+    /// Extra flags forwarded to the C frontend. Kept explicit so arbitrary
+    /// user input cannot silently alter the compiler invocation.
+    cc_flags: []const []const u8 = &.{},
     keep_ir: bool = false,
     dump: bool = false,
     dump_ast: bool = false,
@@ -432,6 +435,7 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8, callbacks_
         "-S",                "-emit-llvm",           "-O0",                              "-g0", "-fno-discard-value-names",
         "-fno-sanitize=all", "-fno-stack-protector", "-ffine-grained-bitfield-accesses",
     });
+    try argv.appendSlice(opts.cc_flags);
     if (opts.target.os == 2) {
         try argv.appendSlice(&.{ "-fms-extensions", "-fdeclspec" });
     }
@@ -464,7 +468,7 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8, callbacks_
 }
 
 fn usage() void {
-    std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir]\n" ++
+    std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--cc-flag FLAG]... [--keep-ir]\n" ++
         "                      [--dump] [--dump-ast] [--dump-imports] [--no-auto-link]\n", .{});
 }
 
@@ -526,6 +530,7 @@ pub fn main() !void {
     var output: ?[]const u8 = null;
     var target: Target = findTarget("x86_64-linux").?;
     var cc_path: []const u8 = "zig";
+    var cc_flags = std.ArrayList([]const u8).init(allocator);
     var keep_ir = false;
     var dump = false;
     var dump_ast = false;
@@ -569,6 +574,13 @@ pub fn main() !void {
                 std.debug.print("compiler currently supports --cc zig only\n", .{});
                 std.process.exit(2);
             }
+        } else if (std.mem.eql(u8, a, "--cc-flag")) {
+            i += 1;
+            if (i >= argv.len) {
+                usage();
+                std.process.exit(2);
+            }
+            try cc_flags.append(argv[i]);
         } else if (std.mem.eql(u8, a, "--keep-ir")) {
             keep_ir = true;
         } else if (std.mem.eql(u8, a, "--dump")) {
@@ -610,6 +622,7 @@ pub fn main() !void {
         .output = out,
         .target = target,
         .cc_path = cc_path,
+        .cc_flags = cc_flags.items,
         .keep_ir = keep_ir,
     }, ll_path, callbacks_header_path);
     const ir_text = try std.fs.cwd().readFileAlloc(allocator, ll_path, 64 * 1024 * 1024);
