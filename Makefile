@@ -170,7 +170,8 @@ differential: compiler runtime
 	./scripts/differential.sh
 
 bench: compiler runtime
-	python3 scripts/benchmark.py
+	mkdir -p build
+	python3 scripts/benchmark.py --json build/benchmark.json
 
 release-artifacts:
 	./scripts/package_release.sh

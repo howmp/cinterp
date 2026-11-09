@@ -327,6 +327,7 @@ make fuzz-bytecode        # 结构化 CIVM 变异
 make fuzz-ffi-exec
 make fuzz-capi-asan
 make fuzz-sanitizer
+make bench                 # 本机进程级基准，输出 build/benchmark.json
 make size                  # Runtime ReleaseSmall 体积
 make size-cross           # 四个目标体积
 make test-winapi          # Windows <windows.h> 示例（Wine）
@@ -335,6 +336,13 @@ make release-artifacts    # tarball + SBOM + SHA256SUMS
 make evidence             # test/lint/size/smoke/differential + checker
 make check-version        # VERSION 单一来源校验
 ```
+
+### 12.0 性能基准
+
+`make bench` 在当前主机上编译并预热 7 个示例，再为每个示例记录 20 次独立
+`cinterp-run` 进程的耗时，结果写入 `build/benchmark.json`。当前 native Linux x64
+ReleaseSmall 基线约为 **5.5–6.0 ms/run**；这个数字包含进程启动、包加载和一次执行，
+适合做同一机器上的前后回归比较，不是纯 VM 指令吞吐。
 
 ### 12.1 命令行与构建选项
 
