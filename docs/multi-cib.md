@@ -115,7 +115,8 @@ int main(void) {
 | 调用 | 另一线程正在运行该 VM | 当前线程已在该 VM 的运行中（嵌套） |
 | --- | --- | --- |
 | `ci_vm_run` / `ci_vm_run_args` | `CI_E_BUSY` | `CI_E_RUNTIME` |
-| `ci_vm_load_module` / `ci_vm_load_plans` / `ci_vm_load_package` / `ci_vm_load_library` | `CI_E_BUSY` | `CI_E_BUSY` |
+| `ci_vm_load_module` / `ci_vm_load_package` / `ci_vm_load_library` | `CI_E_BUSY` | `CI_E_BUSY` |
+| `ci_vm_load_plans`（v4 不支持裸计划表） | `CI_E_BUSY` | `CI_E_BUSY`；空闲时返回 `CI_E_PLANS`，请使用 `ci_vm_load_package` |
 | `ci_vm_destroy` | 等待运行结束，然后释放 | 延迟到最外层运行返回后释放 |
 | `ci_vm_destroy_ex(vm, CI_DESTROY_TRY)` | `CI_E_BUSY`，VM 不变 | 成功并延迟释放 |
 | `ci_process_unload_package` | `CI_E_BUSY` | `CI_E_BUSY` |

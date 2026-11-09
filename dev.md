@@ -102,7 +102,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量�
 ### 6.1 值与 opcode
 
 - 栈槽固定 8 字节；`Value` 为 `extern union { i: i64, u: u64 }`，浮点按位存放，f32 仅在低 32 位有效，f80/f128 通过线性内存按指针传递。
-- **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xA4）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
+- **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xA5）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
 - 当前实现覆盖常量/局部变量、内存、整数/浮点/位运算/比较/转换、控制流、指针/GEP、varargs、setjmp/longjmp、VLA、f80/f128、`llvm.is.fpclass`、`MEMCPY/MEMSET`、原生调用/callback 等。
 - 操作数使用固定小端 `u8/u16/u32/u64` 编码；跳转目标是加载后的字节码偏移。CIVM/CIPL 的逐字节布局见 [`docs/cib.md`](./docs/cib.md)。
 
@@ -233,6 +233,7 @@ ci_vm *ci_vm_create_ex(const ci_vm_config *config);
 void ci_vm_destroy(ci_vm *vm);
 int ci_vm_destroy_ex(ci_vm *vm, unsigned flags);          /* CI_DESTROY_TRY */
 int ci_vm_load_module(ci_vm *, const uint8_t *, size_t);
+/* deprecated for v4: CIPL names live in CIPC; use load_package */
 int ci_vm_load_plans(ci_vm *, const uint8_t *, size_t);
 int ci_vm_load_package(ci_vm *, const uint8_t *, size_t);
 int ci_vm_load_library(ci_vm *, const char *);
@@ -408,7 +409,7 @@ pkg-config/CMake 元数据和 Rust 绑定。每个压缩包的 `README.md` 由
 
 ### 12.4 验证与证据
 
-运行时在调用原生代码前校验包长度、目标元数据（arch/OS/ABI/指针宽度/特性）、CIPI 的
+运行时在调用原生代码前校验包长度、ABI id、CIPI 的
 plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引以及 marshal 偏移/大小；
 格式错误的包会干净地失败。C API `ci_vm_load_package` 可在不执行包的情况下校验包，`make fuzz` 对种子包
 做变异/截断并检查崩溃。自动 provider 只接受库名，不接受路径；指向原生分配内存的 C 指针

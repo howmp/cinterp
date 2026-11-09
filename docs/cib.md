@@ -471,7 +471,7 @@ xxd -g1 build/hello.cib
 
 ### 7.1 C ABI 错误码
 
-`ci_vm_load_module`/`ci_vm_load_plans`/`ci_vm_load_package`/`ci_vm_load_library`/`ci_vm_run`/`ci_vm_run_args` 返回 `CI_OK`（0）或下列稳定负值。`ci_vm_destroy_ex`、`ci_process_load_package`、`ci_process_unload_package` 和 `ci_process_last_error_code` 也使用同一套 `CI_E_*` 类别。**返回值本身就是类别**：失败时返回对应的 `CI_E_*`；只有 `errorCode` 无法归类的错误才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别；`ci_vm_last_error` 仅在 Debug 构建返回具体错误名（如 `BadPackageMagic`），Release 构建返回空字符串。成功的调用（以及 `ci_vm_clear_error`）清空错误文本与类别；`ci_vm_result` 返回上次成功运行的 `main` 返回值，不是状态码。
+`ci_vm_load_module`/`ci_vm_load_package`/`ci_vm_load_library`/`ci_vm_run`/`ci_vm_run_args` 返回 `CI_OK`（0）或下列稳定负值。`ci_vm_destroy_ex`、`ci_process_load_package`、`ci_process_unload_package` 和 `ci_process_last_error_code` 也使用同一套 `CI_E_*` 类别。**返回值本身就是类别**：失败时返回对应的 `CI_E_*`；只有 `errorCode` 无法归类的错误才返回 `CI_ERROR`（-1）。`ci_vm_last_error_code` 返回同一类别；`ci_vm_last_error` 仅在 Debug 构建返回具体错误名（如 `BadPackageMagic`），Release 构建返回空字符串。成功的调用（以及 `ci_vm_clear_error`）清空错误文本与类别；`ci_vm_result` 返回上次成功运行的 `main` 返回值，不是状态码。
 
 | 值 | 名称 | 覆盖的错误名 |
 | ---: | --- | --- |
@@ -480,7 +480,7 @@ xxd -g1 build/hello.cib
 | -3 | `CI_E_OUT_OF_MEMORY` | `OutOfMemory` |
 | -4 | `CI_E_BAD_PACKAGE` | `BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageSize`、`BadMagic`、`BadVersion`、`BadArch`、`BadModule`、`BadLocals`、`TooManyFunctions`、`NameTooLong`、`ModuleTooLarge`、`Truncated`、`TrailingBytes`、`TooManyImports`、`TooManyProviders`、`BadPool`、`BadPoolVersion`、`BadPoolName`、`BadConstIndex` |
 | -5 | `CI_E_TARGET` | `UnsupportedLibc`（musl 运行时） |
-| -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`TooManyPlans`、`TooManyLocs`、`BadLocKind` |
+| -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`TooManyPlans`、`TooManyLocs`、`BadLocKind`、`PlansRequireCipc` |
 | -7 | `CI_E_LINK` | `SymbolNotFound`、`LibraryNotFound`、`SymbolTooLong`、`PathTooLong`、`TooManyLibraries`、`TooManyNativeTargets` |
 | -8 | `CI_E_ENTRY` | `EntryNotFound` |
 | -9 | `CI_E_RESOURCE` | `StackOverflow`、`FrameOverflow`、`ReturnTooLarge`、`ProcessFull`（超过 64 个进程级 VM） |

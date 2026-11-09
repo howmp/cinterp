@@ -2982,6 +2982,7 @@ pub fn errorCode(err: anyerror) c_int {
         error.TooManyPlans,
         error.TooManyLocs,
         error.BadLocKind,
+        error.PlansRequireCipc,
         => CI_E_PLANS,
         error.SymbolNotFound,
         error.LibraryNotFound,
@@ -3217,9 +3218,10 @@ pub export fn ci_vm_load_plans(machine: ?*VM, data: [*]const u8, size: usize) c_
     if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);
     if (beginVmMutation(m)) |status| return status;
     defer endVmMutation(m);
-    m.loadPlans(data[0..size], &.{}) catch |err| return fail(m, err);
-    m.clearError();
-    return CI_OK;
+    // CIPL v4 names live in CIPC; a bare plan section has no name context.
+    // Keep the ABI symbol for compatibility but direct callers to the package
+    // loader instead of failing later with a misleading BadConstIndex.
+    return fail(m, error.PlansRequireCipc);
 }
 
 pub export fn ci_vm_load_package(machine: ?*VM, data: [*]const u8, size: usize) c_int {

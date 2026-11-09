@@ -145,6 +145,8 @@ int ci_vm_destroy_ex(ci_vm *vm, unsigned flags);
  * that does not need CIPC references.
  */
 int ci_vm_load_module(ci_vm *vm, const uint8_t *data, size_t size);
+/* Deprecated/unsupported for v4 plans: CIPL names live in CIPC. Use
+ * ci_vm_load_package; this entry returns CI_E_PLANS when idle. */
 int ci_vm_load_plans(ci_vm *vm, const uint8_t *data, size_t size);
 int ci_vm_load_package(ci_vm *vm, const uint8_t *data, size_t size);
 

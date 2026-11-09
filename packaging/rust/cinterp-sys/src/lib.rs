@@ -199,6 +199,8 @@ impl Vm {
         self.check(code)
     }
 
+    /// Deprecated: v4 plans reference CIPC names; use `load_package`.
+    #[deprecated(note = "CIPL v4 plans require CIPC names; use load_package")]
     pub fn load_plans(&mut self, bytes: &[u8]) -> Result<(), Error> {
         let code = unsafe { ci_vm_load_plans(self.raw, bytes.as_ptr(), bytes.len()) };
         self.check(code)

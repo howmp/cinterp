@@ -1006,7 +1006,9 @@ test "loaders report CI_E_BUSY while the VM executes" {
     try std.testing.expectEqual(vm.CI_E_BUSY, vm.ci_vm_last_error_code(machine));
     _ = machine.run_state.?.leave();
 
-    // Idle again: the same calls go through.
+    // Idle again: standalone plan loading is unsupported for v4; packages go
+    // through the CIPC-aware loader.
+    try std.testing.expectEqual(vm.CI_E_PLANS, vm.ci_vm_load_plans(machine, plans.ptr, plans.len));
     try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_load_package(machine, package.ptr, package.len));
     try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
     try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
