@@ -1,7 +1,8 @@
 # 单进程多 CIB、重复运行与每 VM 线程
 
-本文描述 cinterp 的多 CIB 进程模型、每 VM 执行权、重复运行的全新镜像语义、CLI
-多包/重复/并行选项，以及 CIB 内显式 callback acquire/release。C 接口的完整声明见
+本文描述 cinterp 的多 CIB 进程模型、每 VM 执行权、重复运行的全新镜像语义，
+以及 CIB 内显式 callback acquire/release。多包/重复/并行通过 C API 使用；CLI
+只支持 `<package.cib> [-- ARG...]` 的单包单次运行。C 接口的完整声明见
 `runtime/include/cinterp.h`；包格式和操作码见 [`cib.md`](cib.md)，单 VM 嵌入基础见
 [`embedding.md`](embedding.md)。
 

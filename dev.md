@@ -544,4 +544,4 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 - LLVM IR 指令语义与 clang `-O0` 输出模式。
 - System V AMD64、Microsoft x64/x86 调用约定、AArch64 AAPCS64。
 - libffi / dyncall：ABI 分类和栈布局参考（不引入依赖）。
-- [`docs/multi-cib.md`](./docs/multi-cib.md)：进程/VM 模型、每 VM 线程、CLI 多包/重复/并行和 callback acquire/release 的完整说明。
+- [`docs/multi-cib.md`](./docs/multi-cib.md)：进程/VM 模型、每 VM 线程和 callback acquire/release 的完整说明；CLI 只运行单包一次。

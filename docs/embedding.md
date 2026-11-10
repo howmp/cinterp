@@ -121,8 +121,9 @@ int main(void) {
 这个单 VM 流程适合一个宿主进程只跑一个 CIB 的场景。需要同时持有多个 CIB 时，使用
 `ci_process_create`/`ci_process_load_package` 为每个包创建一个 VM，并用
 `ci_process_unload_package` 释放借出的 `ci_vm *`；busy VM 上的卸载/`ci_process_destroy`
-返回 `CI_E_BUSY`，宿主 join 运行线程后重试。完整签名、pthread 并行示例、CLI 多包
-命令和 callback acquire/release 见 [`multi-cib.md`](multi-cib.md)。
+返回 `CI_E_BUSY`，宿主 join 运行线程后重试。完整签名、pthread 并行示例和
+callback acquire/release 见 [`multi-cib.md`](multi-cib.md)；CLI 只保留单包
+`<package.cib> [-- ARG...]` 形态。
 
 `ci_vm_create_ex` 接受一个 `ci_vm_config` 以支持前向兼容的选项：`struct_size` 至少
 必须覆盖到 `stack_size`（若要传入 `memory_size`，请将其设为 `sizeof(ci_vm_config)`），
