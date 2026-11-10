@@ -74,7 +74,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量�
 
 `compiler/src/ir/` 解析并校验支持的 LLVM IR 子集：标量/指针/数组/结构体、alloca/load/store/GEP、整数/浮点/位运算/比较/转换、br/switch/select/phi、直接/间接/tail call、常用 `llvm.*` intrinsic、byval/sret、f80/fp128、varargs、VLA 和 setjmp/longjmp。完整契约见 [`docs/ir-subset.md`](./docs/ir-subset.md)。
 
-明确拒绝：向量可执行值、`insertvalue`、extract/insert/shuffle vector、`freeze`、atomic/fence、invoke/resume/landingpad、indirectbr/callbr、未知 intrinsic、内联汇编。
+明确拒绝：`insertvalue`、extractelement/insertelement/shufflevector、atomicrmw/cmpxchg/fence、invoke/resume/landingpad、indirectbr，以及作为指令的 `va_arg`。`freeze` 按恒等操作降低；`callbr` 可以解析并按普通 call 降低（标签列表忽略）；未知 `llvm.*` intrinsic 作为外部调用计划在运行期失败；内联汇编调用由 lowering 拒绝。
 
 ### 5.2 Lowering
 
