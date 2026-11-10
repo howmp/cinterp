@@ -20,7 +20,7 @@
 2. **支持 FFI 和 callback**：编译期生成调用计划，支持结构体、varargs，以及
    cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback；
    `CI_NATIVE_PLAN(T)` 可为 dlsym 等动态函数指针声明可调用的 native 计划；
-   用法见 [`dev.md`](dev.md#732-ci_native_plandlsym-动态调用-native-函数)。
+   用法见 [`dev.md`](dev.md#ci-native-plan)。
 3. **运行时紧凑，约 100 KiB**（ReleaseSmall）：
    1. Linux x86-64（native）：97,872 B ≈ 95 KiB
    2. Linux x86-64（static SysV）：82,032 B ≈ 80 KiB

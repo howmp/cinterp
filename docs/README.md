@@ -14,7 +14,8 @@
 | [`ir-parser-differences.md`](ir-parser-differences.md) | IR 前端回归覆盖（解析器测试、降低 golden 用例），以及对已退役字符串解析器缺陷的明确标注为历史记录的说明 |
 | [`unsupported-cases.md`](unsupported-cases.md) | 当前 full-tier 的 191 个 `unsupported` skip 用例及原因，按 suite 分组 |
 
-所有文档均用中文撰写；代码块、命令、路径、标识符和 ABI/工具名称保持原样。
+`docs/` 下的参考文档以中文撰写；`examples/README.md`、`scripts/README.md`
+等其他目录说明可能使用英文。代码块、命令、路径、标识符和 ABI/工具名称保持原样。
 
 另见仓库的 [`README.md`](../README.md)（简介、原理、现状、用法）和 [`dev.md`](../dev.md)
 （架构、实现决策与开发指南）。

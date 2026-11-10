@@ -445,24 +445,34 @@ CIPI 或 CIPC。详细用法、复制函数指针、`dlclose` 生命周期和 no
 
 ```text
 $ ./scripts/tools/cib_dump.py --headers build/hello.cib
+file: build/hello.cib
+size: 145 bytes
 CIPKG: v4
-  module: off=22 len=58
-  plans:  off=80 len=0 (omitted)
-  imports: off=80 len=0 (omitted)
-  const:   off=80 len=64
+  module: off=22 len=59
+  plans:  off=81 len=0 (omitted)
+  imports: off=81 len=0 (omitted)
+  const:   off=81 len=64
 CIVM: v2 arch=1 entry=0 functions=1
-CIPC: names=0 data=32 bytes base=0
-  [0] params=0 locals=1 code=40 bytes
+CIPC: names=0 data=32 bytes base=0x00000000
+  data[32 bytes]:
+    0000: 00 00 00 00 00 00 00 00 2a 00 00 00 00 00 00 00  |........*.......|
+    0010: ff ff ff ff 00 00 00 00 20 00 00 00 00 00 00 00  |........ .......|
+  [0] params=0 locals=1 code=41 bytes code_off=0x0012
+CIPL: omitted
+CIPI: omitted
 ```
 
 这个包没有计划和外部调用，所以 CIPL/CIPI 为空；CIPC 仍必须存在，并保存 32 字节的只读/标量常量数据（section 共 64 字节，含 20 字节头和 16 字节对齐 padding）。`--asm` 可以看到常量已经变成 `LOAD_CONST_POOL`：
 
 ```text
 $ ./scripts/tools/cib_dump.py --asm build/hello.cib
-fn0 entry: params=0 locals=1 code=40
-  0000: 600400                   ALLOCA 4
-  0003: 210000                   STORE_LOCAL 0
-  0006: a500000030               LOAD_CONST_POOL off=0 width=8 signed=0
+fn0 entry: params=0 locals=1 code=41
+  0000: 9f040004                 ALLOCA_ALIGNED size=4 align=4
+  0004: 210000                   STORE_LOCAL 0
+  0007: a500000030               LOAD_CONST_POOL off=0 width=8 signed=0
+  000c: 200000                   LOAD_LOCAL 0
+  000f: 6204                     STORE_MEM 4
+  0011: a508000030               LOAD_CONST_POOL off=8 width=8 signed=0
   ...
 ```
 

@@ -201,6 +201,7 @@ if (cb != 0) {
   不阻塞；应使用空闲 VM 或同线程 callback。
 - callback 的签名由 VM 函数的定义决定；原生调用方必须按相同 ABI 调用。
 
+<a id="ci-native-plan"></a>
 #### 7.3.2 `CI_NATIVE_PLAN`：从 dlsym 动态调用 native 函数
 
 `ci_callback_acquire` 解决的是“原生代码调用 VM 函数”。反向场景是 VM 通过
@@ -418,7 +419,8 @@ make check-version        # VERSION 单一来源校验
 
 `make bench` 在当前主机上编译并预热 7 个示例，再为每个示例记录 20 次独立
 `cinterp-run` 进程的耗时，结果写入 `build/benchmark.json`。当前 native Linux x64
-ReleaseSmall 基线约为 **5.5–6.0 ms/run**；这个数字包含进程启动、包加载和一次执行，
+ReleaseSmall 基线约为 **5.25–5.51 ms/run**（median；mean 5.27–5.61 ms，当前
+`build/benchmark.json` 采样）；这个数字包含进程启动、包加载和一次执行，
 适合做同一机器上的前后回归比较，不是纯 VM 指令吞吐。
 
 ### 12.1 命令行与构建选项
