@@ -27,3 +27,4 @@ sem_init	unsupported: host pthread/TLS runtime model
 pthread_robust	unsupported: host pthread/TLS runtime model
 strtol	unsupported: host libc reference difference (musl strtol)
 wcstol	unsupported: host libc reference difference (musl wcstol)
+sscanf_long	unsupported: intermittent long-input sscanf/stack crash

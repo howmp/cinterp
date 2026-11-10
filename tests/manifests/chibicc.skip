@@ -1,26 +1,25 @@
 # refreshed after P1/P2 bug fixes
-alloca	compile: In file included from /home/admin/cl/build/suites/chibicc/test/alloca.c:1:
-asm	compile: In file included from /home/admin/cl/build/suites/chibicc/test/asm.c:1:
-atomic	compile: In file included from /home/admin/cl/build/suites/chibicc/test/atomic.c:1:
-bitfield	compile: In file included from /home/admin/cl/build/suites/chibicc/test/bitfield.c:1:
-builtin	compile: In file included from /home/admin/cl/build/suites/chibicc/test/builtin.c:1:
+alloca	compile: /home/admin/cl/build/suites/chibicc/test/alloca.c:8:14: error: call to undeclared library function 'alloca' with type 'void *(unsigned long)'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+asm	compile: /home/admin/cl/build/suites/chibicc/test/asm.c:19:14: error: incompatible pointer to integer conversion passing 'char *' to parameter of type 'int' [-Wint-conversion]
+atomic	compile: /home/admin/cl/build/suites/chibicc/test/atomic.c:59:25: error: address argument to atomic operation must be a pointer to _Atomic type ('int *' invalid)
+bitfield	compile: /home/admin/cl/build/suites/chibicc/test/bitfield.c:51:50: error: duplicate member 'c'
+builtin	compile: /home/admin/cl/build/suites/chibicc/test/builtin.c:24:53: error: ISO C requires a named parameter before '...'
 commonsym	non-goal: shared-library common symbol interposition differs from C/ELF tentative definitions
-compat	compile: In file included from /home/admin/cl/build/suites/chibicc/test/compat.c:1:
-const	compile: In file included from /home/admin/cl/build/suites/chibicc/test/const.c:1:
-constexpr	compile: In file included from /home/admin/cl/build/suites/chibicc/test/constexpr.c:1:
-control	compile: In file included from /home/admin/cl/build/suites/chibicc/test/control.c:1:
+compat	compile: /home/admin/cl/build/suites/chibicc/test/compat.c:15:62: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
+const	compile: /home/admin/cl/build/suites/chibicc/test/const.c:10:44: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
+constexpr	compile: /home/admin/cl/build/suites/chibicc/test/constexpr.c:38:24: error: size of array has non-integer type 'int *'
+control	compile: /home/admin/cl/build/suites/chibicc/test/control.c:96:63: error: cannot jump from this indirect goto statement to one of its possible targets
 float	unsupported: test depends on poison/out-of-range conversion
-function	compile: In file included from /home/admin/cl/build/suites/chibicc/test/function.c:1:
-generic	compile: In file included from /home/admin/cl/build/suites/chibicc/test/generic.c:1:
+function	compile: /home/admin/cl/build/suites/chibicc/test/function.c:96:23: error: use of undeclared identifier '__va_area__'
+generic	compile: /home/admin/cl/build/suites/chibicc/test/generic.c:8:25: error: invalid digit 'f' in decimal constant
 initializer	unsupported: test depends on UB pointer arithmetic/stack layout
-line	compile: In file included from /home/admin/cl/build/suites/chibicc/test/line.c:1:
-literal	compile: In file included from /home/admin/cl/build/suites/chibicc/test/literal.c:1:
-macro	compile: In file included from /home/admin/cl/build/suites/chibicc/test/macro.c:1:
+line	compile: bar:3:13: error: invalid line marker flag '2': cannot pop empty include stack
+literal	compile: /home/admin/cl/build/suites/chibicc/test/literal.c:87:21: error: invalid digit 'f' in decimal constant
+macro	compile: /home/admin/cl/build/suites/chibicc/test/macro.c:333:10: fatal error: ' include4.h ' file not found
 pointer	unsupported: test depends on adjacent stack objects
-pragma-once	compile: In file included from /home/admin/cl/build/suites/chibicc/test/pragma-once.c:1:
-sizeof	compile: In file included from /home/admin/cl/build/suites/chibicc/test/sizeof.c:1:
-struct	compile: In file included from /home/admin/cl/build/suites/chibicc/test/struct.c:1:
-tls	compile: In file included from /home/admin/cl/build/suites/chibicc/test/tls.c:1:
-typedef	compile: In file included from /home/admin/cl/build/suites/chibicc/test/typedef.c:1:
-unicode	compile: In file included from /home/admin/cl/build/suites/chibicc/test/unicode.c:1:
+pragma-once	compile: /home/admin/cl/build/suites/chibicc/test/pragma-once.c:5:10: fatal error: 'test/pragma-once.c' file not found
+sizeof	compile: /home/admin/cl/build/suites/chibicc/test/sizeof.c:96:21: error: invalid digit 'f' in decimal constant
+tls	compile: /home/admin/cl/build/suites/chibicc/test/tls.c:32:40: error: incompatible function pointer types passing 'int (void *)' to parameter of type 'void *(*)(void *)' [-Wincompatible-function-pointer-types]
+typedef	compile: /home/admin/cl/build/suites/chibicc/test/typedef.c:11:24: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
+unicode	compile: /home/admin/cl/build/suites/chibicc/test/unicode.c:30:17: error: character too large for enclosing character literal type
 variable	unsupported: test depends on adjacent stack objects

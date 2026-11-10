@@ -1,6 +1,6 @@
 # refreshed after VLA/C11/external-data work
 100_c99array-decls	diagnostic/frontend: expected compile error/dialect: /home/admin/cl/build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
-101_cleanup	resource: compiler limit: cinterp: compiler limit: function main local_count 65648 exceeds 65535
+101_cleanup	compile: thread 3280260 panic: integer overflow
 102_alignas	diagnostic/frontend: expected compile error/dialect: /home/admin/cl/build/suites/tcc/tests/tests2/102_alignas.c:4:14: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
 104+_inline	non-goal: external inline: stdout mismatch
 104_inline	non-goal: external inline: stdout mismatch

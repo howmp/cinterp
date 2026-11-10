@@ -1,5 +1,5 @@
 # generated from initial compile-only probe
 annot1	compile: /home/admin/cl/build/suites/CompCert/test/regression/annot1.c:7:10: error: use of unknown builtin '__builtin_annot_intval' [-Wimplicit-function-declaration]
 extasm	compile: cinterp: unsupported instruction: %1 = call i32 asm "TEST0 out:$0 in:$1", "=r,r,~{cc},~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !24
-init3	compile: /home/admin/cl/build/suites/CompCert/test/regression/init3.c:5:14: error: incompatible pointer to integer conversion initializing 'int' with an expression of type 'void *' [-Wint-c
+init3	compile: /home/admin/cl/build/suites/CompCert/test/regression/init3.c:5:20: error: incompatible pointer to integer conversion initializing 'int' with an expression of type 'void *' [-Wint-conversion]
 packedstruct1	compile: /home/admin/cl/build/suites/CompCert/test/regression/packedstruct1.c:19:19: error: expected identifier or '('
