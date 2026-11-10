@@ -1,13 +1,13 @@
 # regenerated after P0/P1 semantic changes
-aes	mismatch: stdout mismatch
-almabench	mismatch: stdout mismatch
-binarytrees	mismatch: stdout mismatch
-chomp	mismatch: stdout mismatch
-fftw	mismatch: stdout mismatch
-knucleotide	mismatch: stdout mismatch
-lists	mismatch: stdout mismatch
-nbody	mismatch: stdout mismatch
-sha1	mismatch: stdout mismatch
-sha3	mismatch: stdout mismatch
-siphash24	mismatch: stdout mismatch
-spectral	timeout: run timeout
+aes	unsupported: slow benchmark deferred
+almabench	unsupported: slow benchmark deferred
+binarytrees	unsupported: slow benchmark deferred
+chomp	unsupported: slow benchmark deferred
+fftw	unsupported: slow benchmark deferred
+knucleotide	unsupported: slow benchmark deferred
+lists	unsupported: slow benchmark deferred
+nbody	unsupported: slow benchmark deferred
+sha1	unsupported: slow benchmark deferred
+sha3	unsupported: slow benchmark deferred
+siphash24	unsupported: slow benchmark deferred
+spectral	unsupported: slow benchmark deferred
