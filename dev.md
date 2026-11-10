@@ -123,7 +123,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量�
 
 - `ci_vm_run`/`ci_vm_run_args` 每次进入都调用 `resetRunImage`：清零值栈槽位/`sp`/`mem_top`/`arg_area_start`/`frame_count`，清零整块线性内存，清空 `jumps`（上一次运行的 `setjmp` 目标不能复活），清空按 run 收集的 `native_targets`；`native_plan_cache` 保留（plan 索引不变）。
 - `result` 不参与重置：只有成功运行才写入，`ci_vm_result` 始终返回最后一次成功结果。
-- 全局安装代码由编译器生成在 `main` 开头（`SET_MEM_TOP` + 全局镜像），因此重复运行 `main` 会重新安装 globals；非 `main` 入口不会执行安装代码，只看到清零区域，属已知限制。
+- 全局安装代码由编译器生成在 `main` 开头（`SET_MEM_TOP` + 全局镜像），因此重复运行 `main` 会重新安装 globals。运行时只接受 `main` 别名；其他入口名返回 `CI_E_ENTRY`。
 - 每 VM 有独立执行权（owner/depth/条件变量）：另一线程 `ci_vm_run` 返回 `CI_E_BUSY`；同一线程嵌套（callback 内再次 run）返回 `CI_E_RUNTIME`，避免清空外层镜像。
 - loader（`ci_vm_load_module`/`load_plans`/`load_package`/`load_library`）在执行期间返回 `CI_E_BUSY`。`ci_vm_busy` 查询状态；`ci_vm_destroy` 等待空闲，`ci_vm_destroy_ex(vm, CI_DESTROY_TRY)` 在 busy 时返回 `CI_E_BUSY`。
 - 不同 VM 使用不同锁，可并行；进程级只有 callback 槽位锁和 `ci_process` 注册表锁。
@@ -510,7 +510,7 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 - **FFI 返回块生命周期**：宽值/多 loc 返回值现在按调用从调用方 VM 线性内存分配，存活到当前帧返回；不再共享 `ret_buf`。长循环中大量宽返回会按 `ret_size` 增长，最终受线性内存上限约束（与 f80/f128 临时值一致）。VM→VM 寄存器返回聚合仍依赖 callee 内存未被改写，属于后续独立 ownership 工作。
 - **Win32 `thiscall` 支持范围**：原生/间接调用和 callback 均支持；第一个 4 字节标量（`this`）走 ECX，其余走 callee 清理的栈。Win64 的 `__vectorcall`/COM 仍不支持。
 - **原生库句柄不卸载**：`ci_vm_load_library` 与 CIPI provider 的 `dlopen`/`LoadLibrary` 句柄随进程保留，没有 `dlclose`/`FreeLibrary`；长期多包宿主应自建进程边界。
-- **宿主堆、atexit/signal 与全局初始化**：`malloc` 等宿主堆分配跨 run 累积，不随 VM 线性内存重置；`atexit`/`signal` 是进程全局状态，多 VM/重复运行共享；非 `main` 入口不会执行编译器生成的 globals 安装代码。这些均已文档化，不在本次改变语义。
+- **宿主堆、atexit/signal 与全局初始化**：`malloc` 等宿主堆分配跨 run 累积，不随 VM 线性内存重置；`atexit`/`signal` 是进程全局状态，多 VM/重复运行共享；全局安装代码只出现在 `main`，运行时也只接受 `main` 入口。
 - **callback 槽位**：固定 256 个进程级静态槽。自动 `CREATE_CALLBACK` 槽在 VM 销毁/plan 重载前一直占用（跨 run 复用）；显式 `ci_callback_acquire` 槽在 release 后回到可复用集合，未 release 的显式槽随 VM 销毁/重载退休。自动槽耗尽后返回 `TooManyCallbacks`。
 - **外部线程异步 callback**：VM 正在运行时，另一线程调用的 callback 默认 fail-fast（非 sret 返回值置零、sret 缓冲区不变，并记录 `CI_E_BUSY`），不排队、不阻塞；`libc-test/pthread_tsd` 因此显式 skip。需要异步回调的库应在 VM 空闲时调用，或改成同步 callback 设计。
 - **生成式差分**：YARPGen whitelist 已清空；nightly 的 7 个 skip 是 native 拒绝/超时或 `compiler limit:` 引擎上限。Csmith 仍有 3 条 known failure；报告保留 stale 检测，whitelist 条目开始通过会失败。

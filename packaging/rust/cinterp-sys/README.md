@@ -71,8 +71,8 @@ cargo test --offline
   `ci_callback_acquire`/`ci_callback_release` 显式管理生命周期：release 成功后槽位可
   复用，释放后的旧指针不得再次调用；未 release 的显式槽随 VM 销毁/重载退休。
 - 每次 `run` 都是全新镜像（线性内存/值栈/帧/`setjmp` 目标重置，`main` 重新安装
-  globals），`Vm::result()` 返回最后一次成功运行的结果。非 `main` 入口不会执行全局
-  安装代码。
+  globals），`Vm::result()` 返回最后一次成功运行的结果。运行时只接受 `main` 入口别名；
+  其他入口名返回 `CI_E_ENTRY`。
 
 ## 示例代码
 
