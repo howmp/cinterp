@@ -175,7 +175,9 @@ M     code bytes
 
 VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认值，上限 16 MiB），`mem_top` 是 bump pointer：
 
-- 运行时在每次 `ci_vm_run*` 开始时把 CIPC data 复制到 `mem[0..data_len]`，并设置 `mem_top = data_len`；值栈/帧/`setjmp` 目标同时清零。
+- 运行时在每次 `ci_vm_run*` 开始时把 CIPC data 复制到
+  `mem[data_base..data_base+data_len]`，并设置 `mem_top = data_base + data_len`；
+  值栈/帧/`setjmp` 目标同时清零。`data_base` 之前的区域是 mutable globals 的保留区。
 - `OP_ADDR_CONST offset` 压入 `&mem[offset]` 的**宿主地址**；`OP_LOAD_CONST_POOL ref` 从 CIPC data 读取 1/2/4/8 字节常量。
 - `OP_ALLOCA size` 在 8 字节对齐的 `mem_top` 分配并清零，压入宿主地址；`OP_ALLOCA_DYN` 从栈弹 size，做同样的动态分配（VLA）。
 - FFI 宽/多 loc 返回值使用同一 bump allocator 分配（16 字节对齐）；块在帧返回前不会回收，长循环可能耗尽线性内存。
@@ -395,7 +397,8 @@ size  field
 
 - `name_ref`：CIPC 中的计划名。callback 计划的名称是 `callback:<vm-function>`，没有原生符号。
 - `args_count`：实际传入的参数个数；上限 64。
-- `loc_count`：一个参数可拆成多个位置（HFA 的 xmm0/xmm1…）；上限 8。
+- `loc_count`：一个参数可拆成多个位置（HFA 的 xmm0/xmm1…）；runtime 解码上限 8，
+  当前编译器 `serializePlans` 会拒绝超过 7 个 Loc 的参数。
 - `size`：参数的字节宽度。
 - `offset`：参数在 marshal arg block 中的偏移；`stack` loc 的 `index` 是栈参数缓冲区内的字节偏移；返回 loc 的 offset 是返回缓冲区偏移。
 - `is_struct=1`：参数的 VM 值是指向结构体字节的指针；运行时从该地址拷贝 `size` 字节到 arg block。
@@ -499,9 +502,9 @@ CIPC data，`--full-data` 显示全部，`--data-limit N` 可调整上限。
 | -1 | `CI_ERROR` | `errorCode` 的兜底分支：未归类的错误，正常路径不应出现 |
 | -2 | `CI_E_INVALID_ARGUMENT` | `InvalidArgument`、`TooManyArgs` |
 | -3 | `CI_E_OUT_OF_MEMORY` | `OutOfMemory` |
-| -4 | `CI_E_BAD_PACKAGE` | `BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageSize`、`BadMagic`、`BadVersion`、`BadArch`、`BadModule`、`BadLocals`、`TooManyFunctions`、`NameTooLong`、`ModuleTooLarge`、`Truncated`、`TrailingBytes`、`TooManyImports`、`TooManyProviders`、`BadPool`、`BadPoolVersion`、`BadPoolName`、`BadConstIndex` |
+| -4 | `CI_E_BAD_PACKAGE` | `BadPackage`、`BadPackageMagic`、`BadPackageVersion`、`BadPackageSize`、`BadMagic`、`BadVersion`、`BadArch`、`BadModule`、`BadLocals`、`TooManyFunctions`、`NameTooLong`、`ModuleTooLarge`、`Truncated`、`TrailingBytes`、`BadImportMagic`、`BadImportVersion`、`TooManyImports`、`TooManyProviders`、`BadPool`、`BadPoolVersion`、`BadPoolName`、`TruncatedPool`、`TrailingPool`、`BadConstIndex` |
 | -5 | `CI_E_TARGET` | `UnsupportedLibc`（musl 运行时） |
-| -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`TooManyPlans`、`TooManyLocs`、`BadLocKind`、`PlansRequireCipc` |
+| -6 | `CI_E_PLANS` | `NoPlans`、`BadAbi`、`BadPlan`、`BadImportPlan`、`BadImportProvider`、`ImportArchMismatch`、`ImportUnavailable`、`TooManyPlans`、`TooManyLocs`、`BadLocKind`、`PlansRequireCipc` |
 | -7 | `CI_E_LINK` | `SymbolNotFound`、`LibraryNotFound`、`SymbolTooLong`、`PathTooLong`、`TooManyLibraries`、`TooManyNativeTargets` |
 | -8 | `CI_E_ENTRY` | `EntryNotFound` |
 | -9 | `CI_E_RESOURCE` | `StackOverflow`、`FrameOverflow`、`ReturnTooLarge`、`ProcessFull`（超过 64 个进程级 VM） |
