@@ -11,7 +11,9 @@
 
 ## 编译
 
-`cinterp-cc` 不接受 `-I/-D` 参数，`compile.py` 会为每个 `entry.c` 生成临时包装源：
+`cinterp-cc` 不直接接受 `-I/-D` 位置参数；需要额外 C 前端选项时可用
+`--cc-flag`（例如 `--cc-flag -Ipath`）。BOF 的 `compile.py` 仍会为每个
+`entry.c` 生成临时包装源：
 
 - 定义 `BOF`、加入 `src/common` 头文件；
 - 从 `bofdefs.h` 自动生成 `KERNEL32$Foo -> Foo`、`MSVCRT$foo -> foo` 等前缀映射；

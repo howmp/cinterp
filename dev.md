@@ -428,7 +428,7 @@ ReleaseSmall 基线约为 **5.5–6.0 ms/run**；这个数字包含进程启动�
 ```bash
 ./build/cinterp-cc compile source.c -o out.cib \
   [--dump] [--dump-ast] [--dump-imports] [--keep-ir] [--target TARGET] \
-  [--cc zig] [--cc-path PATH] [--no-auto-link]
+  [--cc zig] [--cc-path PATH] [--cc-flag FLAG]... [--no-auto-link]
 ```
 
 `--dump` 打印函数和 FFI 计划（包括 `conv`）；`--dump-ast` 打印解析后的 typed AST；

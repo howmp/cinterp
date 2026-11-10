@@ -51,7 +51,8 @@ lowering 约定的一部分。`-fno-stack-protector` 去掉了编译器插入的
 ## 命令行
 
 ```text
-cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--keep-ir]
+cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig]
+                    [--cc-flag FLAG]... [--keep-ir]
                     [--dump] [--dump-ast] [--dump-imports]
                     [--no-auto-link]
 cinterp-cc --version
@@ -62,6 +63,7 @@ cinterp-cc --version
 | `-o`, `--output PATH` | 输出包；默认取源文件路径，并把它的最后一个扩展名替换为 `.cib` |
 | `--target T` | `x86_64-linux`（默认）、`x86_64-windows`、`i686-windows`、`aarch64-linux`；其他任何值都以退出码 2 结束 |
 | `--cc-path PATH` | C 前端可执行文件（默认 `zig`） |
+| `--cc-flag FLAG` | 额外传给 C 前端的受控选项；可重复，例如 `--cc-flag -fgnu89-inline` |
 | `--cc NAME` | C 编译器选择项；只实现了 `zig`，任何其他值都以退出码 2 结束 |
 | `--keep-ir` | 在输出文件旁保留临时的 `<out>.<random>.ll` |
 | `--dump` | 向 stdout 打印每个函数的大小以及每一个计划（`args= ret= stack= conv=`） |
