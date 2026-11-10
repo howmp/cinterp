@@ -1,8 +1,8 @@
 # Unsupported 用例
 
-本文件由 `build/test-suites-full.json` 生成，列出当前 **191** 个 `unsupported` skip。
+本文件由 `scripts/tools/gen_unsupported_doc.py` 从 `build/test-suites-full.json` 生成，列出当前 **191** 个 `unsupported` skip。
 
-说明：`reason` 保留 suite runner 记录的 skip 原因；其中编译诊断可能只保留首行。
+说明：`reason` 保留 suite runner 记录的 skip 原因；编译诊断在 report 中可能只保留首行。绝对路径的 `build/suites/` 前缀会被规范化为相对路径。
 
 ## c-testsuite (2)
 
