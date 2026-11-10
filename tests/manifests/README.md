@@ -136,7 +136,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | c-testsuite | 220 | 218 | 2 | 内联跳过（`00204`、`00216`） |
 | tcc-tests2 | 142 | 99 | 43 | |
 | chibicc | 41 | 17 | 24 | |
-| libc-test | 75 | 47 | 28 | `pthread_tsd` 因外部线程 callback 的 fail-fast 策略跳过 |
+| libc-test | 75 | 46 | 29 | `pthread_tsd` 因外部线程 callback 的 fail-fast 策略跳过 |
 | libc-test-regression | 69 | 48 | 21 | |
 | gcc-torture | 1306 | 1299 | 7 | 执行类用例 |
 | gcc-torture-compile | 1411 | 1403 | 8 | 仅编译（`mode: compile`）；含 6 条运行时/资源上限与 2 条 vector 全局初始化 skip |
