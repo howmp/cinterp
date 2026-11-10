@@ -1,10 +1,10 @@
 # refreshed after P1/P2 bug fixes
-daemon-failure	mismatch: stdout mismatch
-dn_expand-empty	mismatch: stdout mismatch
-dn_expand-ptr-0	mismatch: stdout mismatch
-flockfile-list	mismatch: stdout mismatch
-fpclassify-invalid-ld80	mismatch: stdout mismatch
-malloc-brk-fail	mismatch: stdout mismatch
+daemon-failure	unsupported: musl-specific daemon behavior
+dn_expand-empty	unsupported: musl/glibc resolver reference difference
+dn_expand-ptr-0	unsupported: musl/glibc resolver reference difference
+flockfile-list	unsupported: native malloc interposition/stdio lifetime model
+fpclassify-invalid-ld80	unsupported: musl x87 invalid-ld80 UB semantics
+malloc-brk-fail	unsupported: host memory quota/brk semantics out of scope
 pthread_atfork-errno-clobber	unsupported: host pthread/TLS/signal runtime model
 pthread_cancel-sem_wait	unsupported: host pthread/TLS/signal runtime model
 pthread_cond-smasher	unsupported: host pthread/TLS/signal runtime model
@@ -13,9 +13,9 @@ pthread_exit-cancel	unsupported: host pthread/TLS/signal runtime model
 pthread_exit-dtor	unsupported: host pthread/TLS/signal runtime model
 pthread_once-deadlock	unsupported: host pthread/TLS/signal runtime model
 raise-race	unsupported: host pthread/TLS/signal runtime model
-regex-ere-backref	mismatch: stdout mismatch
-regex-escaped-high-byte	mismatch: stdout mismatch
-setvbuf-unget	timeout: run timeout
+regex-ere-backref	unsupported: musl/glibc regex reference difference
+regex-escaped-high-byte	unsupported: musl/glibc regex reference difference
+setvbuf-unget	unsupported: slow stdio buffer test deferred
 sigaltstack	unsupported: host pthread/TLS/signal runtime model
 tls_get_new-dtv	unsupported: host pthread/TLS/signal runtime model
 tls_get_new-dtv_dso	unsupported: host pthread/TLS/signal runtime model
