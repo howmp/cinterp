@@ -135,7 +135,7 @@
 - `pthread_tsd` — foreign-thread callback while the VM is executing (fail-fast thread policy; use idle-VM or same-thread callbacks)
 - `sem_init` — unsupported: host pthread/TLS runtime model
 - `sscanf` — unsupported: host libc reference difference (musl scanf)
-- `sscanf_long` — unsupported: intermittent long-input sscanf/stack crash
+- `sscanf_long` — unsupported: host glibc sscanf under RLIMIT_STACK=100KiB can SIGSEGV (native binary passes; musl reference behavior)
 - `strftime` — unsupported: host libc reference difference (musl strftime)
 - `strtol` — unsupported: host libc reference difference (musl strtol)
 - `tls_align` — unsupported: host pthread/TLS runtime model
