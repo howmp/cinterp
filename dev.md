@@ -164,10 +164,83 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 - 显式槽使用 `ci_callback_acquire(fn)`/`ci_callback_release(fn)` 宏：`cinterp-cc` 通过 `zig cc -include` 强制包含内嵌的 `compiler/src/data/cinterp_callbacks.h`，CIB 源码不需要 `#include` 或 include path。编译器把 `__ci_callback_acquire`/`__ci_callback_release` 降为 CIVM 0xA3/0xA4，不生成 CIPI import。
 - acquire 只接受直接函数引用（可带 cast；运行期函数指针变量在编译期报 `ci_callback_acquire requires a direct function reference`），返回 trampoline 或 NULL（池耗尽）；release 成功返回 0、callback 仍在执行返回 `CI_E_BUSY`、指针不属于当前 VM/已释放返回 `CI_E_INVALID_ARGUMENT`。释放后的槽回到可复用集合，旧指针不得再调用；未释放的显式槽在 VM 销毁/plan 重载时退休。
 - `ci_callback_pool_stats(total, live, free_slots, retired)` 提供诊断；`ci_vm_callback_error` 记录因 VM 正被另一线程运行而跳过的 dispatch（`CI_E_BUSY`），`ci_vm_clear_error` 一并清除。
-- `CI_NATIVE_PLAN(T)` 用于声明动态 native 函数指针类型：在文件作用域写
-  `typedef int (*fn_t)(int,int); CI_NATIVE_PLAN(fn_t);`，之后 `fn_t f = dlsym(...); f(...)` 可重复调用。
-  宏生成一个带完整签名的 signing stub 和 `used` 引用，编译器把它转成 CIPL 的 `native` plan（flags bit7），并从 CIPI/全局数据中过滤掉 stub；没有该声明的间接调用仍受 native target 注册表约束。项目不做沙箱，错误地址可能直接使宿主进程崩溃。
 - Win32 cdecl/stdcall/fastcall/thiscall callback 支持；stdcall/fastcall/thiscall 使用 `Win32CbFrame.cleanup` 在返回时跳过 callee-owned 栈参数。fastcall trampoline 在入口保存 ECX/EDX，thiscall 保存 ECX；dispatcher 按对应 layout 读取寄存器/栈参数。
+
+#### 7.3.1 Callback 自动槽与显式槽
+
+把 VM 函数直接传给原生函数时，编译器自动生成反向计划并占用一个进程级
+trampoline 槽：
+
+```c
+void on_event(int x);
+
+native_set_handler(on_event);  // 自动槽；槽随 VM/plan 生命周期退休
+```
+
+需要手动控制槽的生命周期时，使用：
+
+```c
+typedef int (*sum_cb)(int);
+
+sum_cb cb = (sum_cb)ci_callback_acquire((ci_callback_fn)on_sum);
+if (cb != 0) {
+    int r = cb(3);             // 原生代码或 VM 都可以调用
+    ci_callback_release((ci_callback_fn)cb);  // 成功后指针失效
+}
+```
+
+约束：
+
+- `ci_callback_acquire` 只接受**直接函数引用**，不能传运行期函数变量；
+  可以带 cast。返回 `NULL` 表示 256 个进程级槽已耗尽。
+- 自动槽在 VM 销毁/plan 重载时退休，不会在重复运行间泄漏。
+- 显式槽在 `ci_callback_release` 成功后回到可复用集合；旧函数指针不得再调用。
+- callback 执行期间释放同一槽返回 `CI_E_BUSY`；不属于当前 VM/已释放的指针
+  返回 `CI_E_INVALID_ARGUMENT`。
+- 另一线程正在运行 VM 时，外部线程发起的 callback 默认 fail-fast，不排队、
+  不阻塞；应使用空闲 VM 或同线程 callback。
+- callback 的签名由 VM 函数的定义决定；原生调用方必须按相同 ABI 调用。
+
+#### 7.3.2 `CI_NATIVE_PLAN`：从 dlsym 动态调用 native 函数
+
+`ci_callback_acquire` 解决的是“原生代码调用 VM 函数”。反向场景是 VM 通过
+`dlsym` 取得一个原生函数指针并调用它。此时需要先声明函数指针类型的 ABI：
+
+```c
+#include <dlfcn.h>
+
+typedef int (*add_t)(int, int);
+CI_NATIVE_PLAN(add_t);        // 必须放在文件作用域
+
+int main(void) {
+    void *h = dlopen("libfoo.so", RTLD_LAZY | RTLD_LOCAL);
+    add_t f = (add_t)dlsym(h, "add");
+    add_t f1 = f;
+    f(2, 3);                   // 普通函数指针调用
+    f1(1, 1);                  // 复制后仍可调用
+    return 0;
+}
+```
+
+语义：
+
+- `CI_NATIVE_PLAN(T)` 生成一个带完整签名的 compile-time stub；编译器把它
+  转成 CIPL plan 的 `native` 位（flags bit7），并从 CIPI/全局数据中过滤掉
+  stub 和引用符号。
+- 带 `native` 位的 plan 允许间接调用任意**非零 host address**；不要求地址
+  在 `native_targets` 注册表中。没有该声明的调用仍返回 `BadAddress`。
+- 声明是类型级的：`f1 = f; f1()`、重复调用、作为参数传递都使用同一签名计划。
+- `dlsym` 返回的**数据指针**不需要 `CI_NATIVE_PLAN`；VM 的 `LOAD_MEM`/
+  `STORE_MEM` 接受非零宿主地址。
+- `CI_NATIVE_PLAN` 只对通过函数指针的间接调用生效，不改变直接调用的 CIPI
+  符号解析。
+- 项目不是沙箱：错误的 host address 会直接触发宿主故障；调用者必须保证
+  `dlsym` 结果非空、签名匹配，并在 `dlclose` 后不再调用该指针。
+- `dlsym(0, "main")` 不应与 VM 的 `&main` 比较：前者是宿主进程地址，后者是
+  CIVM 函数索引。该身份映射不在当前支持范围内。
+- `CI_NATIVE_PLAN` 要求文件作用域的 typedef 名称，不支持把裸的
+  `void (*)(void)` 类型表达式直接作为宏参数。
+
 
 ### 7.4 结构体 FFI
 

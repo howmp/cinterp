@@ -418,6 +418,24 @@ size  field
 
 计划表只描述位置，不描述实际寄存器编号映射；具体 `gpr[0]`/`xmm[0]` 由目标 ABI 的 `platform.zig` frame 和固定汇编引擎映射。
 
+### 5.5 动态 native 计划（`CI_NATIVE_PLAN`）
+
+`CI_NATIVE_PLAN(T)` 是 `cinterp-cc` 强制包含的 `cinterp_callbacks.h` 提供的宏，用于
+声明一个可接收宿主动态函数指针（例如 `dlsym` 返回值）的 ABI：
+
+```c
+typedef int (*add_t)(int, int);
+CI_NATIVE_PLAN(add_t);
+add_t f = (add_t)dlsym(h, "add");
+f(1, 2);
+```
+
+编译器会为 `add_t` 生成一个带完整签名的 stub，并把调用点的 CIPL plan 标成
+`native`（flags bit7）。运行时对带该标志的计划允许任意非零 host address；
+没有声明的间接调用仍要求地址已经注册为 native target。stub/引用符号不会进入
+CIPI 或 CIPC。详细用法、复制函数指针、`dlclose` 生命周期和 no-sandbox 风险见
+[`dev.md`](../dev.md) 的 FFI 章节。
+
 ## 6. 完整示例：`hello.cib`
 
 运行 `./build/cinterp-cc compile examples/basics/hello.c -o build/hello.cib` 后，`CIPKG v4` 的 section 顺序和大小可以直接查看：
