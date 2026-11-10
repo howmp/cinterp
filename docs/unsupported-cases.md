@@ -9,32 +9,31 @@
 - `00204` — requires vector types
 - `00216` — requires complex aggregate global initializers
 
-## chibicc (25)
+## chibicc (24)
 
-- `alloca` — compile: In file included from build/suites/chibicc/test/alloca.c:1:
-- `asm` — compile: In file included from build/suites/chibicc/test/asm.c:1:
-- `atomic` — compile: In file included from build/suites/chibicc/test/atomic.c:1:
-- `bitfield` — compile: In file included from build/suites/chibicc/test/bitfield.c:1:
-- `builtin` — compile: In file included from build/suites/chibicc/test/builtin.c:1:
+- `alloca` — compile: build/suites/chibicc/test/alloca.c:8:14: error: call to undeclared library function 'alloca' with type 'void *(unsigned long)'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+- `asm` — compile: build/suites/chibicc/test/asm.c:19:14: error: incompatible pointer to integer conversion passing 'char *' to parameter of type 'int' [-Wint-conversion]
+- `atomic` — compile: build/suites/chibicc/test/atomic.c:59:25: error: address argument to atomic operation must be a pointer to _Atomic type ('int *' invalid)
+- `bitfield` — compile: build/suites/chibicc/test/bitfield.c:51:50: error: duplicate member 'c'
+- `builtin` — compile: build/suites/chibicc/test/builtin.c:24:53: error: ISO C requires a named parameter before '...'
 - `commonsym` — non-goal: shared-library common symbol interposition differs from C/ELF tentative definitions
-- `compat` — compile: In file included from build/suites/chibicc/test/compat.c:1:
-- `const` — compile: In file included from build/suites/chibicc/test/const.c:1:
-- `constexpr` — compile: In file included from build/suites/chibicc/test/constexpr.c:1:
-- `control` — compile: In file included from build/suites/chibicc/test/control.c:1:
+- `compat` — compile: build/suites/chibicc/test/compat.c:15:62: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
+- `const` — compile: build/suites/chibicc/test/const.c:10:44: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
+- `constexpr` — compile: build/suites/chibicc/test/constexpr.c:38:24: error: size of array has non-integer type 'int *'
+- `control` — compile: build/suites/chibicc/test/control.c:96:63: error: cannot jump from this indirect goto statement to one of its possible targets
 - `float` — unsupported: test depends on poison/out-of-range conversion
-- `function` — compile: In file included from build/suites/chibicc/test/function.c:1:
-- `generic` — compile: In file included from build/suites/chibicc/test/generic.c:1:
+- `function` — compile: build/suites/chibicc/test/function.c:96:23: error: use of undeclared identifier '__va_area__'
+- `generic` — compile: build/suites/chibicc/test/generic.c:8:25: error: invalid digit 'f' in decimal constant
 - `initializer` — unsupported: test depends on UB pointer arithmetic/stack layout
-- `line` — compile: In file included from build/suites/chibicc/test/line.c:1:
-- `literal` — compile: In file included from build/suites/chibicc/test/literal.c:1:
-- `macro` — compile: In file included from build/suites/chibicc/test/macro.c:1:
+- `line` — compile: bar:3:13: error: invalid line marker flag '2': cannot pop empty include stack
+- `literal` — compile: build/suites/chibicc/test/literal.c:87:21: error: invalid digit 'f' in decimal constant
+- `macro` — compile: build/suites/chibicc/test/macro.c:333:10: fatal error: ' include4.h ' file not found
 - `pointer` — unsupported: test depends on adjacent stack objects
-- `pragma-once` — compile: In file included from build/suites/chibicc/test/pragma-once.c:1:
-- `sizeof` — compile: In file included from build/suites/chibicc/test/sizeof.c:1:
-- `struct` — compile: In file included from build/suites/chibicc/test/struct.c:1:
-- `tls` — compile: In file included from build/suites/chibicc/test/tls.c:1:
-- `typedef` — compile: In file included from build/suites/chibicc/test/typedef.c:1:
-- `unicode` — compile: In file included from build/suites/chibicc/test/unicode.c:1:
+- `pragma-once` — compile: build/suites/chibicc/test/pragma-once.c:5:10: fatal error: 'test/pragma-once.c' file not found
+- `sizeof` — compile: build/suites/chibicc/test/sizeof.c:96:21: error: invalid digit 'f' in decimal constant
+- `tls` — compile: build/suites/chibicc/test/tls.c:32:40: error: incompatible function pointer types passing 'int (void *)' to parameter of type 'void *(*)(void *)' [-Wincompatible-function-pointer-types]
+- `typedef` — compile: build/suites/chibicc/test/typedef.c:11:24: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
+- `unicode` — compile: build/suites/chibicc/test/unicode.c:30:17: error: character too large for enclosing character literal type
 - `variable` — unsupported: test depends on adjacent stack objects
 
 ## compcert (16)
@@ -75,24 +74,24 @@
 
 - `annot1` — compile: build/suites/CompCert/test/regression/annot1.c:7:10: error: use of unknown builtin '__builtin_annot_intval' [-Wimplicit-function-declaration]
 - `extasm` — compile: cinterp: unsupported instruction: %1 = call i32 asm "TEST0 out:$0 in:$1", "=r,r,~{cc},~{dirflag},~{fpsr},~{flags}"(i32 %0), !srcloc !24
-- `init3` — compile: build/suites/CompCert/test/regression/init3.c:5:14: error: incompatible pointer to integer conversion initializing 'int' with an expression of type 'void *' [-Wint-c
+- `init3` — compile: build/suites/CompCert/test/regression/init3.c:5:20: error: incompatible pointer to integer conversion initializing 'int' with an expression of type 'void *' [-Wint-conversion]
 - `packedstruct1` — compile: build/suites/CompCert/test/regression/packedstruct1.c:19:19: error: expected identifier or '('
 
 ## gcc-ieee (15)
 
-- `bfloat16-builtin-issignaling-1` — compile: In file included from build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/bfloat16-builtin-issignaling-1.c:21:
+- `bfloat16-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'bf16' on floating constant
 - `builtin-issignaling-1` — compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !65
 - `cdivchkd` — non-goal: _Complex (explicitly unsupported); observed 2026-10-31
 - `cdivchkf` — non-goal: _Complex (explicitly unsupported); observed 2026-10-31
 - `cdivchkld` — non-goal: _Complex (explicitly unsupported); observed 2026-10-31
-- `float128-builtin-issignaling-1` — compile: In file included from build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float128-builtin-issignaling-1.c:13:
-- `float128x-builtin-issignaling-1` — compile: In file included from build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float128x-builtin-issignaling-1.c:13:
+- `float128-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f128' on floating constant
+- `float128x-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f128x' on floating constant
 - `float16-builtin-issignaling-1` — compile: cinterp: bad parameter: 'half noundef %x'
-- `float32-builtin-issignaling-1` — compile: In file included from build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float32-builtin-issignaling-1.c:13:
-- `float32x-builtin-issignaling-1` — compile: In file included from build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float32x-builtin-issignaling-1.c:13:
-- `float64-builtin-issignaling-1` — compile: In file included from build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float64-builtin-issignaling-1.c:13:
-- `float64x-builtin-issignaling-1` — compile: In file included from build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/float64x-builtin-issignaling-1.c:13:
-- `fp-cmp-cond-1` — non-goal:vector_type (<1 x float>): cinterp unsupported fcmp type <1
+- `float32-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f32' on floating constant
+- `float32x-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f32x' on floating constant
+- `float64-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f64' on floating constant
+- `float64x-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f64x' on floating constant
+- `fp-cmp-cond-1` — compile: 238:14: error: unsupported instruction 'insertelement' (found 'insertelement')
 - `pr50310` — compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !385
 - `pr72824-2` — compile: cinterp: bad parameter: '<4 x float> noundef %value'
 
@@ -117,7 +116,7 @@
 - `stuct` — compiler limit: CIVM module larger than 2 MiB
 - `vector-align-1` — unsupported: vector global initializer
 
-## libc-test (28)
+## libc-test (29)
 
 - `clocale_mbfuncs` — unsupported: host libc reference difference (musl locale/wide-char)
 - `crypt` — unsupported: libcrypt provider unavailable on host
@@ -136,6 +135,7 @@
 - `pthread_tsd` — foreign-thread callback while the VM is executing (fail-fast thread policy; use idle-VM or same-thread callbacks)
 - `sem_init` — unsupported: host pthread/TLS runtime model
 - `sscanf` — unsupported: host libc reference difference (musl scanf)
+- `sscanf_long` — unsupported: intermittent long-input sscanf/stack crash
 - `strftime` — unsupported: host libc reference difference (musl strftime)
 - `strtol` — unsupported: host libc reference difference (musl strtol)
 - `tls_align` — unsupported: host pthread/TLS runtime model
@@ -191,7 +191,7 @@
 ## tcc-tests2 (43)
 
 - `100_c99array-decls` — diagnostic/frontend: expected compile error/dialect: build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
-- `101_cleanup` — resource: compiler limit: cinterp: compiler limit: function main local_count 65648 exceeds 65535
+- `101_cleanup` — compile: thread 3280260 panic: integer overflow
 - `102_alignas` — diagnostic/frontend: expected compile error/dialect: build/suites/tcc/tests/tests2/102_alignas.c:4:14: error: type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [-Wimplicit-int]
 - `104+_inline` — non-goal: external inline: stdout mismatch
 - `104_inline` — non-goal: external inline: stdout mismatch
