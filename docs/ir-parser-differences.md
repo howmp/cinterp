@@ -27,10 +27,10 @@
 | ABI 计划测试 | `compiler/src/abi.zig` | SysV/Win64/Win32/AAPCS64 的计划形态、varargs、`conv` 映射 |
 | 限制测试 | `compiler/src/main.zig` | `validateLimits` 拒绝那些会被运行时截断的记录尺寸 |
 
-golden 文件位于 `compiler/src/testdata/lower_ast/golden/*.golden`（17 个
+golden 文件位于 `compiler/src/testdata/lower_ast/golden/*.golden`（18 个
 文件），是所有到达 CIVM/CIPL/CIPI 的 `CompileResult` 字段的规范文本映像：
 `clang18`、`control_flow`、`external_constant`、`f32_literals`、
-`ffi_callback`、`ffi_qsort`、`global_name_in_initializer`、`globals`、
+`ffi_callback`、`ffi_callback_scope`、`ffi_qsort`、`global_name_in_initializer`、`globals`、
 `hello`、`intrinsics`、`inttoptr_global`、`metadata_global`、`misc`、
 `null_callee`、`null_callee_args`、`null_suffix_callee`、`structs`。
 
@@ -147,6 +147,6 @@ cd compiler && zig build test   # parser, verifier, ABI and lowering tests
 make test                       # runtime + compiler unit tests + integration
 make test-suites-full           # full C suite through the AST frontend
 make test-suites-cross          # csuite + upstream smoke on Win64/Win32/ARM64
-make c-testsuite                # 17 local cases in tests/csuite (scripts/test/c_testsuite.sh), host target only
+make c-testsuite                # 18 local cases in tests/csuite (scripts/test/c_testsuite.sh), host target only
 make test-winapi                # Windows API imports under Wine (fails when nothing can run)
 ```
