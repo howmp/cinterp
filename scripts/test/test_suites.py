@@ -479,10 +479,23 @@ def summarize_failure(stderr: str, rc: int) -> str:
         return f"rc={rc}"
     if any("Traceback (most recent call last):" in line for line in lines):
         return "compiler crash: " + lines[-1]
-    for line in lines:
-        if line.startswith("cinterp:") or re.search(r"\b(?:fatal error|error):", line, re.IGNORECASE):
-            return line
-    return lines[0]
+    diagnostics = [
+        line
+        for line in lines
+        if line.startswith("cinterp:")
+        or re.search(r":\d+:\d+: (?:fatal error|error):", line, re.IGNORECASE)
+        or re.search(r"(?:^|\s)\d+:\d+: (?:fatal error|error):", line, re.IGNORECASE)
+    ]
+    # Prefer a located compiler diagnostic over cinterp's final
+    # `error: CCompilerFailed` line and the include-chain prefix.
+    if diagnostics:
+        return diagnostics[-1]
+    errors = [
+        line
+        for line in lines
+        if line.startswith("cinterp:") or re.search(r"\b(?:fatal error|error):", line, re.IGNORECASE)
+    ]
+    return errors[-1] if errors else lines[0]
 
 
 def run_case(
