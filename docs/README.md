@@ -12,6 +12,7 @@
 | [`ir-subset.md`](ir-subset.md) | `cinterp-cc` 接受的 LLVM IR 子集：模块形式、类型、常量、指令、支持的 `llvm.*` intrinsic，以及会被拒绝并给出诊断的内容 |
 | [`zig-frontend.md`](zig-frontend.md) | Zig 前端：`cinterp-cc` 如何驱动 `zig cc`、`compiler/src/ir` → `lower_ast.zig` 流水线、CLI 标志、调用约定/计划去重/限制的契约、外部符号表、发布压缩包内容 |
 | [`ir-parser-differences.md`](ir-parser-differences.md) | IR 前端回归覆盖（解析器测试、降低 golden 用例），以及对已退役字符串解析器缺陷的明确标注为历史记录的说明 |
+| [`unsupported-cases.md`](unsupported-cases.md) | 当前 full-tier 的 191 个 `unsupported` skip 用例及原因，按 suite 分组 |
 
 所有文档均用中文撰写；代码块、命令、路径、标识符和 ABI/工具名称保持原样。
 
