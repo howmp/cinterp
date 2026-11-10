@@ -44,7 +44,7 @@ make test-suites-full       # adds gcc-torture(+compile), gcc-ieee, CompCert(+c/
                             # LLVM UnitTests/regression-c, libc-test-regression
 make test-suites-nightly    # all fixed suites (full + the four cross-target smoke suites)
                             # plus scripts/fuzz/generate_diff.py (YARPGen, 100 iterations)
-make test-suites-cross      # csuite + the four smoke suites on Win64/Win32/ARM64 (145 cases each)
+make test-suites-cross      # csuite + the four smoke suites on Win64/Win32/ARM64 (146 cases each)
 make generate-diff          # YARPGen differential smoke
 ```
 
@@ -91,14 +91,16 @@ python3 scripts/test/test_suites.py --tier full --jobs 8 --cib-cache build/cib-c
 
 ### 跳过 / 排除清单（2026-11-03）
 
-- 11 个清单引用了 `repo_skip_file`。这些文件合计包含 **202** 行非注释的
-  `ID<TAB>reason`；`llvm-regression-c.json` 另外增加一条内联跳过，因此在
-  `build/test-suites-full.json` 中共有 **203** 次跳过。
+- 11 个清单引用了 `repo_skip_file`。这些文件合计包含 **187** 行非注释的
+  `ID<TAB>reason`；`c-testsuite.json` 的 2 条和 `llvm-regression-c.json` 的 2 条
+  内联跳过另计，因此 `build/test-suites-full.json` 中共有 **191** 次跳过。
 - `libc-test/pthread_tsd` 被跳过：它在 VM 执行期间从 worker 线程调用 VM
   callback；每 VM fail-fast 线程策略会有意跳过这种外部线程 callback。
-- `tests/manifests/gcc-torture-compile.skip` 有三个条目，对应其包会超出运行时上限的
-  仅编译压力用例（`limits-externdecl` >512 个导入，`pr37669-2` >64 个参数，`stuct`
-  >2 MiB 模块）。`llvm-regression-c.json` 出于同样的原因内联跳过 `pr60822`。
+- `tests/manifests/gcc-torture-compile.skip` 有八个条目：六个是超出运行时上限的仅编译
+  压力用例（`limits-externdecl` >512 个导入，`pr37669-2` >64 个参数，`stuct` >2 MiB
+  模块，以及 3 个 static data >16 MiB 用例），另两个是 vector 全局初始化
+  （`simd-6`、`vector-align-1`）。`llvm-regression-c.json` 内联跳过 `pr60822`
+  和 `20020107-1`。
 - `tests/manifests/c-testsuite.skip` 是**孤立的**：没有任何清单引用它
   （`c-testsuite.json` 把它的两条跳过保留为内联），而独立运行器使用的是
   `tests/csuite/cinterp.skip`，不是这个文件。参见下面的 c-testsuite 小节。
@@ -123,7 +125,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 ## 当前原生基线（2026-11-03）
 
 在 `x86_64-linux` 上运行 `make test-suites-full`；这些数字直接读取自
-`build/test-suites-full.json`（`tier=full`，`counts = {ok: 4319, skip: 203}`，
+`build/test-suites-full.json`（`tier=full`，`counts = {ok: 4331, skip: 191}`，
 共 4522 条结果）。TCC 的参考输出会针对绝对的 `__FILE__`
 路径、行尾空格和 TCC 编译器警告做归一化处理；这样在不削弱语义比较的前提下
 多恢复了 4 个用例。
@@ -133,18 +135,18 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | csuite | 18 | 18 | 0 | 本地子集，`// expect:` 标记 |
 | c-testsuite | 220 | 218 | 2 | 内联跳过（`00204`、`00216`） |
 | tcc-tests2 | 142 | 99 | 43 | |
-| chibicc | 41 | 15 | 26 | |
-| libc-test | 75 | 46 | 29 | `pthread_tsd` 因外部线程 callback 的 fail-fast 策略跳过 |
+| chibicc | 41 | 16 | 25 | |
+| libc-test | 75 | 47 | 28 | `pthread_tsd` 因外部线程 callback 的 fail-fast 策略跳过 |
 | libc-test-regression | 69 | 48 | 21 | |
-| gcc-torture | 1306 | 1287 | 19 | 执行类用例 |
-| gcc-torture-compile | 1411 | 1405 | 6 | 仅编译（`mode: compile`）；6 条运行时/资源上限跳过 |
+| gcc-torture | 1306 | 1299 | 7 | 执行类用例 |
+| gcc-torture-compile | 1411 | 1403 | 8 | 仅编译（`mode: compile`）；含 6 条运行时/资源上限与 2 条 vector 全局初始化 skip |
 | gcc-ieee | 79 | 64 | 15 | |
-| compcert | 75 | 55 | 20 | |
-| compcert-c | 24 | 12 | 12 | |
+| compcert | 75 | 59 | 16 | |
+| compcert-c | 24 | 12 | 12 | 慢 benchmark 全部 unsupported/deferred |
 | compcert-compile | 34 | 30 | 4 | 仅编译（`mode: compile`） |
 | llvm-singlesource | 93 | 85 | 8 | 仅编译（`mode: compile`） |
-| llvm-regression-c | 935 | 934 | 1 | 仅编译（`mode: compile`），已去重 ID；1 条运行时上限跳过 |
-| **总计** | **4522** | **4316** | **206** | |
+| llvm-regression-c | 935 | 933 | 2 | 仅编译（`mode: compile`），已去重 ID；2 条 inline skip |
+| **总计** | **4522** | **4331** | **191** | |
 
 ### 仅编译部分
 
@@ -153,17 +155,17 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 
 | 套件 | 通过 |
 | --- | ---: |
-| gcc-torture-compile | 1405 |
-| llvm-regression-c | 934 |
+| gcc-torture-compile | 1403 |
+| llvm-regression-c | 933 |
 | compcert-compile | 30 |
-| **按仅编译统计的小计** | **2369** |
+| **按仅编译统计的小计** | **2366** |
 | llvm-singlesource（同样是 `mode: compile`） | 85 |
-| **所有编译模式的通过数** | **2454** |
+| **所有编译模式的通过数** | **2451** |
 
-其余 4316 − 2454 = **1862** 次通过是可执行用例，其 stdout /
+其余 4331 − 2451 = **1880** 次通过是可执行用例，其 stdout /
 退出状态 / `// expect:` 结果会与参考结果进行比较。
 
-### 每日/交叉冒烟套件（不属于 4316 的一部分）
+### 每日/交叉冒烟套件（不属于 4331 的一部分）
 
 这四个冒烟套件只属于 `nightly` 层级；它们由
 `make test-suites-cross` 和 `cross-abi` 工作流按目标分别执行，结果落在

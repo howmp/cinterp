@@ -456,10 +456,10 @@ ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当
 
 ### 12.2 当前基线
 
-- `make test-suites-full`：**4316/4522 通过，206 skip**；其中 6 个 compile-only 压力用例因超过运行时上限显式 skip（512 imports / 64 args / 2 MiB module / static data > 16 MiB），另有 1 个 libc-test 用例因异步外部线程 callback 的 fail-fast 策略显式 skip。
-- 通过用例中约 55% 是仅编译（gcc-torture-compile 1408 + llvm-regression-c 934 + compcert-compile 30 = 2372）；它们只验证编译器接受源码并产出包，不验证程序输出。可执行基线是其余 1862 个通过用例。
-- `make test-suites`：395/495（100 skip）。
-- `make test-suites-nightly`：4446/4649（203 skip）；YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure。
+- `make test-suites-full`：**4331/4522 通过，191 skip**；当前 skip 全部为 `unsupported`，没有 `known-failure`。
+- 通过用例中 gcc-torture-compile 1403 + llvm-regression-c 933 + compcert-compile 30 = 2366 个是仅编译（另有 llvm-singlesource 85 个也是 `mode: compile`，所有编译模式合计 2451）；可执行基线是其余 1880 个通过用例。
+- `make test-suites` / `make test-suites-nightly` 的数字随 manifest 和当次 report 变化；请以对应 `build/test-suites*.json` 为准，不在本文固定易漂移的总数。
+- 最近一次 nightly 的已知结果：YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure；nightly 固定 suite 的通过/跳过数以当次 report 为准。
 - 并发：`test_suites.py --jobs` 默认 CPU 核数，且所有选中 suite 共用一个全局 worker 池；`SUITE_JOBS` 可覆盖。nightly 由 `scripts/test/test_nightly.sh` 并行执行 suite 与 `generate_diff`，`GEN_JOBS`/`MINIMIZE_JOBS` 控制差分并发，日志为 `build/nightly-suite.log` 和 `build/nightly-diff.log`；顺序模式为 `make test-suites-nightly-serial`，`NIGHTLY_MINIMIZE=0` 跳过最小化。
 - `scripts/test/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
 - 多 CIB/线程：`scripts/test/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）；重复 callback 运行由 C API 测试承担。

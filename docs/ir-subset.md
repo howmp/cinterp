@@ -95,8 +95,8 @@ IR 报告 `line:column`（`compiler/src/main.zig`，`lowerModule`）。
 
 ```bash
 cd compiler && zig build test   # parser fixtures, verifier tests, lowering goldens
-make test-suites-full           # full local suite (4318 passed / 203 skipped;
-                                # 2372 of the passes are compile-only)
+make test-suites-full           # full local suite (4331 passed / 191 skipped;
+                                # 2451 compile-mode passes, 1880 executable)
 make test-suites-cross          # csuite + upstream smoke on Win64/Win32/ARM64
 ```
 
