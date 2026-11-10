@@ -14,7 +14,6 @@ pthread_cond	unsupported: host pthread/TLS runtime model
 pthread_mutex	unsupported: host pthread/TLS runtime model
 pthread_mutex_pi	unsupported: host pthread/TLS runtime model
 sscanf	unsupported: host libc reference difference (musl scanf)
-sscanf_long	exit -11 != 0
 strftime	unsupported: host libc reference difference (musl strftime)
 tls_align	unsupported: host pthread/TLS runtime model
 tls_align_dlopen	unsupported: host pthread/TLS runtime model
