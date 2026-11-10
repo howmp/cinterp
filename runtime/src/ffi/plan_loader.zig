@@ -27,6 +27,7 @@ pub const StoredPlan = struct {
     sse_count: u8 = 0,
     ret_size: u16 = 0,
     conv: u8 = 0,
+    native: bool = false,
 };
 
 pub const Store = struct {
@@ -79,6 +80,7 @@ pub const Store = struct {
             .sse_count = p.sse_count,
             .ret_size = p.ret_size,
             .conv = p.conv,
+            .native = p.native,
         };
     }
 
@@ -173,6 +175,7 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, names: []const []
         plan.sret = (flags & 1) != 0;
         plan.sse_count = (flags >> 1) & 0xf;
         plan.conv = (flags >> 5) & 3;
+        plan.native = (flags & 0x80) != 0;
         plan.ret_size = ret_size;
 
         var ai: usize = 0;

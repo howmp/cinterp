@@ -74,6 +74,9 @@ fn isTag(value: ast.Value, comptime tag: std.meta.Tag(ast.Value)) bool {
 /// opcodes, so they must never reach CIPI (the runtime does not export them).
 pub const callback_acquire_symbol = "__ci_callback_acquire";
 pub const callback_release_symbol = "__ci_callback_release";
+/// `CI_NATIVE_PLAN(T)` emits a `<function signature>` declaration and a
+/// referenced dummy global so Clang keeps the declaration in LLVM IR.
+pub const native_plan_prefix = "__ci_native_plan_";
 
 pub fn isCallbackBuiltin(name: []const u8) bool {
     return eql(name, callback_acquire_symbol) or eql(name, callback_release_symbol);
@@ -715,6 +718,7 @@ fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const 
         // ignores these via its text heuristics; keep the data image free of
         // them in the AST path too.
         if (std.mem.startsWith(u8, g.name, "llvm.") or std.mem.startsWith(u8, g.name, ".llvm.")) continue;
+        if (startsWith(g.name, native_plan_prefix)) continue;
         if (g.modifiers.thread_local) return error.UnsupportedGlobalInitializer;
         if (g.init == null) {
             // `@x = external global i32`: an unresolved external symbol, no
@@ -805,6 +809,7 @@ fn plansEqual(a: abi.Plan, b: abi.Plan) bool {
     if (a.args.len != b.args.len or a.ret_locs.len != b.ret_locs.len) return false;
     if (a.stack_size != b.stack_size or a.sret != b.sret) return false;
     if (a.sse_count != b.sse_count or a.ret_size != b.ret_size or a.conv != b.conv) return false;
+    if (a.native != b.native) return false;
     for (a.args, b.args) |x, y| {
         if (x.size != y.size or x.alignment != y.alignment or x.is_struct != y.is_struct) return false;
         if (x.locs.len != y.locs.len) return false;
@@ -816,6 +821,18 @@ fn plansEqual(a: abi.Plan, b: abi.Plan) bool {
         if (l.kind != m.kind or l.index != m.index or l.size != m.size or l.offset != m.offset) return false;
     }
     return true;
+}
+
+/// Canonical signature key used by `CI_NATIVE_PLAN` declarations.
+fn nativePlanSignature(allocator: Allocator, layout: *const Layout, ret: *const ast.Type, args: []const *const ast.Type, is_varargs: bool) ![]const u8 {
+    var out = std.ArrayList(u8).init(allocator);
+    try out.appendSlice(try renderPlanType(allocator, layout, ret));
+    for (args) |arg| {
+        try out.append('|');
+        try out.appendSlice(try renderPlanType(allocator, layout, arg));
+    }
+    if (is_varargs) try out.appendSlice("|...");
+    return out.toOwnedSlice();
 }
 
 const Patch = struct { pos: u32, label: []const u8 };
@@ -840,6 +857,7 @@ const Context = struct {
     func_params: []const []const ParamInfo,
     functions: []const abi.Function,
     plans: std.ArrayList(abi.Plan),
+    native_plan_signatures: std.StringHashMap(void),
     callbacks: CallbackTable,
     abi: u8,
     ptr_size: u32,
@@ -861,7 +879,17 @@ const Context = struct {
         var globals = try buildGlobals(allocator, module, &layout, ptr_size, opts.gep_const, opts.legacy_codegen);
 
         var decls = std.StringHashMap(*const ast.Decl).init(allocator);
-        for (module.declares) |*d| try decls.put(d.name, d);
+        var native_plan_signatures = std.StringHashMap(void).init(allocator);
+        for (module.declares) |*d| {
+            if (startsWith(d.name, native_plan_prefix)) {
+                var arg_types = try allocator.alloc(*const ast.Type, d.sig.params.len);
+                for (d.sig.params, 0..) |param, i| arg_types[i] = param.ty;
+                const key = try nativePlanSignature(allocator, &layout, d.sig.ret, arg_types, d.sig.is_varargs);
+                try native_plan_signatures.put(key, {});
+                continue;
+            }
+            try decls.put(d.name, d);
+        }
 
         var func_indices = std.StringHashMap(u16).init(allocator);
         for (module.functions, 0..) |f, idx| try func_indices.put(f.name, @intCast(idx));
@@ -926,6 +954,7 @@ const Context = struct {
             .func_params = func_params,
             .functions = &.{},
             .plans = std.ArrayList(abi.Plan).init(allocator),
+            .native_plan_signatures = native_plan_signatures,
             .callbacks = .{ .by_func = std.StringHashMap(CallbackEntry).init(allocator) },
             .abi = abi_id,
             .ptr_size = ptr_size,
@@ -2397,6 +2426,16 @@ const Lowerer = struct {
         // function-pointer type never carries a cconv in textual IR, which is
         // why `ast.FunctionType` has no `cc` field to consult.
         plan.conv = abi.convFromName(call.cc);
+        var arg_types = try self.allocator.alloc(*const ast.Type, call.args.len);
+        for (call.args, 0..) |arg, i| arg_types[i] = arg.ty;
+        const sig_key = try nativePlanSignature(
+            self.allocator,
+            &self.ctx.layout,
+            call.ret,
+            arg_types,
+            call.is_varargs,
+        );
+        plan.native = self.ctx.native_plan_signatures.contains(sig_key);
         const plan_index = try self.ctx.internPlan(plan);
         try self.emitU8(op.OP_CALL_INDIRECT_NATIVE);
         try self.emitU16(plan_index);
@@ -3449,6 +3488,29 @@ test "llvm.abs maps to abs/llabs and drops the poison flag" {
     const llabs_plan = planIndexByName(result, "llabs").?;
     try testing.expectEqual(@as(usize, 1), result.plans[abs_plan].args.len);
     try testing.expectEqual(@as(usize, 1), result.plans[llabs_plan].args.len);
+}
+
+test "CI_NATIVE_PLAN marks indirect plans native-callable" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\declare void @__ci_native_plan_fn_t()
+        \\
+        \\define void @call_native(ptr %p) {
+        \\entry:
+        \\  call void %p()
+        \\  ret void
+        \\}
+    );
+
+    const result = try compile(allocator, &module, 1, 8);
+    const plan_index = planIndexByName(result, "indirect") orelse return error.TestExpectedPlan;
+    try testing.expect(result.plans[plan_index].native);
 }
 
 test "null callee calls lower to no instructions" {

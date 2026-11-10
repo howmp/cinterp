@@ -2449,7 +2449,11 @@ pub const VM = struct {
                         const p = store.planAt(plan_idx) orelse return error.BadPlan;
                         const plan = store.callPlan(p);
                         const target_addr = addressFromBits(tag.i);
-                        if (!self.isNativeTarget(target_addr)) return error.BadAddress;
+                        if (target_addr == 0) return error.BadAddress;
+                        // CI_NATIVE_PLAN marks the ABI as accepting dynamically
+                        // resolved native addresses (e.g. dlsym). Other plans
+                        // keep the legacy registered-native-target gate.
+                        if (!plan.native and !self.isNativeTarget(target_addr)) return error.BadAddress;
                         const target: *const anyopaque = @ptrFromInt(target_addr);
                         try self.invokeFfi(plan, target);
                     }

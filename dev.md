@@ -164,6 +164,9 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 - 显式槽使用 `ci_callback_acquire(fn)`/`ci_callback_release(fn)` 宏：`cinterp-cc` 通过 `zig cc -include` 强制包含内嵌的 `compiler/src/data/cinterp_callbacks.h`，CIB 源码不需要 `#include` 或 include path。编译器把 `__ci_callback_acquire`/`__ci_callback_release` 降为 CIVM 0xA3/0xA4，不生成 CIPI import。
 - acquire 只接受直接函数引用（可带 cast；运行期函数指针变量在编译期报 `ci_callback_acquire requires a direct function reference`），返回 trampoline 或 NULL（池耗尽）；release 成功返回 0、callback 仍在执行返回 `CI_E_BUSY`、指针不属于当前 VM/已释放返回 `CI_E_INVALID_ARGUMENT`。释放后的槽回到可复用集合，旧指针不得再调用；未释放的显式槽在 VM 销毁/plan 重载时退休。
 - `ci_callback_pool_stats(total, live, free_slots, retired)` 提供诊断；`ci_vm_callback_error` 记录因 VM 正被另一线程运行而跳过的 dispatch（`CI_E_BUSY`），`ci_vm_clear_error` 一并清除。
+- `CI_NATIVE_PLAN(T)` 用于声明动态 native 函数指针类型：在文件作用域写
+  `typedef int (*fn_t)(int,int); CI_NATIVE_PLAN(fn_t);`，之后 `fn_t f = dlsym(...); f(...)` 可重复调用。
+  宏生成一个带完整签名的 signing stub 和 `used` 引用，编译器把它转成 CIPL 的 `native` plan（flags bit7），并从 CIPI/全局数据中过滤掉 stub；没有该声明的间接调用仍受 native target 注册表约束。项目不做沙箱，错误地址可能直接使宿主进程崩溃。
 - Win32 cdecl/stdcall/fastcall/thiscall callback 支持；stdcall/fastcall/thiscall 使用 `Win32CbFrame.cleanup` 在返回时跳过 callee-owned 栈参数。fastcall trampoline 在入口保存 ECX/EDX，thiscall 保存 ECX；dispatcher 按对应 layout 读取寄存器/栈参数。
 
 ### 7.4 结构体 FFI
@@ -376,7 +379,7 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 `ReleaseSmall`（`make runtime` 的默认值）剥离 unwind 表、帧指针、panic 跟踪和符号，
 ELF 发布产物还会去掉 `.eh_frame`/`.eh_frame_hdr`。错误名表仅 Debug 构建保留；
 ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当前 Linux x64
-体积约为 Debug 8.8 MiB、ReleaseSmall 97,776 B。详细体积和 post-link 处理见下文。
+体积约为 Debug 8.8 MiB、ReleaseSmall 97,872 B。详细体积和 post-link 处理见下文。
 
 ### 12.2 当前基线
 
@@ -388,7 +391,7 @@ ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。当
 - `scripts/test/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
 - 多 CIB/线程：`scripts/test/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）；重复 callback 运行由 C API 测试承担。
 - 本地 c-testsuite 18/18；上游 manifest 为 218/2，独立脚本默认旧 skip 列表为 217/3（`00189` 已可通过），引用时需注明来源。
-- ReleaseSmall：native Linux x64 97,776 B；size-cross static sysv 81,968 B、Win64 75,264 B、Win32 81,408 B、ARM64 98,176 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/release/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
+- ReleaseSmall：native Linux x64 97,872 B；size-cross static sysv 82,032 B、Win64 75,264 B、Win32 81,408 B、ARM64 98,240 B（默认预算 135,168 B = 132 KiB，可用 `SIZE_BUDGET` 覆盖）。Windows 可执行文件使用 Zig 的 `WinStartup`/TLS 入口，不链接 MinGW CRT；静态库/共享库仍保留 CRT。PE 运行时通过汇编 `.drectve` 合并 `.rdata` 到 `.text`；`size-cross`/release 再 post-link 调用 `scripts/release/strip_runtime.sh`：ELF 删除 `.eh_frame*`，PE 删除 `.eh_fram`。ReleaseSafe/ReleaseSmall/ReleaseFast 不保留 Zig 错误名表，错误只通过 `CI_E_*` 状态码表达；Debug 构建保留错误名并输出到 stderr。
 
 ### 12.3 发布压缩包
 

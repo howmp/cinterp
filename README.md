@@ -18,13 +18,14 @@
    使用进程级固定 256 槽的静态 trampoline 池。自动 callback 槽在 VM 销毁/计划重载时永久退休，
    显式 `ci_callback_acquire`/`ci_callback_release` 槽可复用；这是进程级硬上限。
 2. **支持 FFI 和 callback**：编译期生成调用计划，支持结构体、varargs，以及
-   cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback。
+   cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback；
+   `CI_NATIVE_PLAN(T)` 可为 dlsym 等动态函数指针声明可调用的 native 计划。
 3. **运行时紧凑，约 100 KiB**（ReleaseSmall）：
-   1. Linux x86-64（native）：97,776 B ≈ 95 KiB
-   2. Linux x86-64（static SysV）：81,968 B ≈ 80 KiB
+   1. Linux x86-64（native）：97,872 B ≈ 95 KiB
+   2. Linux x86-64（static SysV）：82,032 B ≈ 80 KiB
    3. Windows x86-64：75,264 B ≈ 74 KiB
    4. Windows x86：81,408 B ≈ 80 KiB
-   5. Linux AArch64：98,176 B ≈ 96 KiB
+   5. Linux AArch64：98,240 B ≈ 96 KiB
 
 4. **可用于替代 BOF 场景**：直接编译普通 C 源文件（包括直接 `#include <windows.h>`），
    不再需要手动声明 WinAPI 函数原型。参见 [`examples/bof`](examples/bof/) 和

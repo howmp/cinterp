@@ -217,7 +217,8 @@ fn serializePlans(allocator: Allocator, plans: []const abi.Plan, abi_id: u8, nam
         try writeU16(&out, plan.stack_size);
         try out.append((if (plan.sret) @as(u8, 1) else 0) |
             (@as(u8, plan.sse_count) << 1) |
-            (@as(u8, plan.conv) << 5));
+            (@as(u8, plan.conv) << 5) |
+            (if (plan.native) @as(u8, 0x80) else 0));
         try writeU16(&out, plan.ret_size);
         for (plan.args) |arg| {
             if (arg.locs.len > 7) return error.TooManyLocs;

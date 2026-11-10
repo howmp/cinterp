@@ -352,7 +352,7 @@ size  field
 1     args_count
 1     ret_count
 2     stack_size
-1     flags：bit0=sret，bits1..4=sse_count，bits5..6=conv
+1     flags：bit0=sret，bits1..4=sse_count，bits5..6=conv，bit7=native
 2     ret_size
 ```
 
@@ -402,6 +402,7 @@ size  field
 - `sret=1`：隐藏返回指针；`sret` loc 指示隐藏指针槽。
 - `sse_count`：SysV `%al` / Win64 varargs 的向量计数。
 - `conv`：Win32 调用约定；0=cdecl，1=stdcall，2=fastcall，3=thiscall；其他 ABI 忽略。
+- `native=1`：该计划由 `CI_NATIVE_PLAN(T)` 声明，允许间接调用任意非零 native 地址（例如 dlsym 返回的函数指针）；未标记的计划仍要求地址已注册为 native target。
 - `ret_size`：sret/聚合返回缓冲区字节数。
 - `ret_count > 0`：普通返回 loc（`ret_count ≤ 8`）；多 loc、`st0` 或单 loc `size > 8` 时，运行时会把返回块复制到按调用分配的 VM 临时块并压入其地址。
 - `stack_size`：计划需要的栈参数字节数；运行时校验不超过 4096。

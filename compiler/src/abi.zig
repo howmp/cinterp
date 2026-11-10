@@ -39,6 +39,9 @@ pub const Plan = struct {
     sse_count: u8 = 0,
     ret_size: u16 = 0,
     conv: u8 = 0,
+    /// The plan was declared through CI_NATIVE_PLAN; indirect calls may
+    /// target an arbitrary non-null native address.
+    native: bool = false,
 };
 
 pub const Function = struct {

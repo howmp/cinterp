@@ -23,4 +23,5 @@ pub const CallPlan = struct {
     sse_count: u8 = 0,
     ret_size: u16 = 0,
     conv: u8 = 0,
+    native: bool = false,
 };

@@ -281,6 +281,7 @@ def parse_cipl(plans: bytes, names: list[str]) -> dict:
                 "sret": bool(flags & 1),
                 "sse_count": (flags >> 1) & 0x0F,
                 "conv": (flags >> 5) & 0x03,
+                "native": bool(flags & 0x80),
                 "ret_size": ret_size,
             }
         )
@@ -480,7 +481,8 @@ def header_text(cib: dict, data_limit: int | None = 256) -> str:
                 f"args={len(plan['args'])} rets={len(plan['ret_locs'])} "
                 f"stack={plan['stack_size']} flags=0x{plan['flags']:02x} "
                 f"sret={int(plan['sret'])} sse={plan['sse_count']} "
-                f"conv={plan['conv']} ret_size={plan['ret_size']}"
+                f"conv={plan['conv']} ret_size={plan['ret_size']} "
+                f"native={int(plan['native'])}"
             )
             for ai, arg in enumerate(plan["args"]):
                 locs = ", ".join(loc_text(loc) for loc in arg["locs"])
