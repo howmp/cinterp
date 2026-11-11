@@ -1,6 +1,7 @@
 const std = @import("std");
 const vm = @import("vm.zig");
 const abi = @import("ffi/abi.zig");
+const cipc = @import("ffi/cipc.zig");
 const platform = @import("ffi/platform.zig");
 
 /// Serializes bytecode and CIVM/CIPL fields so a test can spell its program out
@@ -90,28 +91,52 @@ fn buildEmptyPlans(buf: []u8) []const u8 {
     return a.code();
 }
 
-/// A minimal CIPC header with no names/data. The 20-byte header is padded to
-/// the 16-byte data alignment (32 bytes total).
-fn buildCipc() [32]u8 {
-    var cipc: [32]u8 = [_]u8{0} ** 32;
-    @memcpy(cipc[0..4], "CIPC");
-    cipc[4] = 1;
-    return cipc;
+/// A minimal CIPC v2 header with no names/data. The 36-byte header is padded
+/// to the 16-byte data alignment (48 bytes total).
+fn buildCipc() [48]u8 {
+    var bytes: [48]u8 = [_]u8{0} ** 48;
+    @memcpy(bytes[0..4], "CIPC");
+    bytes[4] = 2;
+    return bytes;
 }
 
 /// A v4 trusted CIPKG package: 22-byte header, then module/plans/CIPC.
-fn buildPackage(buf: []u8, module: []const u8, plans: []const u8) []const u8 {
+fn buildPackageWithCipc(buf: []u8, module: []const u8, plans: []const u8, cipc_bytes: []const u8) []const u8 {
     var a = Asm{ .buf = buf };
-    const cipc = buildCipc();
     a.bytes("CIPKG");
     a.u8v(4);
     a.u32v(@intCast(module.len));
     a.u32v(@intCast(plans.len));
     a.u32v(0);
-    a.u32v(cipc.len);
+    a.u32v(@intCast(cipc_bytes.len));
     a.bytes(module);
     a.bytes(plans);
-    a.bytes(&cipc);
+    a.bytes(cipc_bytes);
+    return a.code();
+}
+
+fn buildPackage(buf: []u8, module: []const u8, plans: []const u8) []const u8 {
+    const cipc_bytes = buildCipc();
+    return buildPackageWithCipc(buf, module, plans, &cipc_bytes);
+}
+
+fn buildCipcWithData(buf: []u8, data: []const u8, key_opt: ?[cipc.key_len]u8) []const u8 {
+    var a = Asm{ .buf = buf };
+    const key = key_opt orelse [_]u8{0} ** cipc.key_len;
+    a.bytes("CIPC");
+    a.u8v(2);
+    a.u8v(if (key_opt != null) 1 else 0);
+    a.u16v(0);
+    a.u32v(0);
+    a.u32v(@intCast(data.len));
+    a.u32v(0);
+    a.bytes(&key);
+    while (a.pos % 16 != 0) a.u8v(0);
+    if (key_opt) |k| {
+        for (data, 0..) |byte, i| a.u8v(byte ^ k[i % k.len]);
+    } else {
+        a.bytes(data);
+    }
     return a.code();
 }
 
@@ -991,7 +1016,7 @@ test "loaders report CI_E_BUSY while the VM executes" {
     const module = buildModule(&module_buf, &funcs);
     var plans_buf: [32]u8 = undefined;
     const plans = buildEmptyPlans(&plans_buf);
-    var package_buf: [192]u8 = undefined;
+    var package_buf: [256]u8 = undefined;
     const package = buildPackage(&package_buf, module, plans);
 
     const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
@@ -1211,7 +1236,7 @@ test "a process loads, runs, unloads and destroys independent VMs" {
     };
     var module_buf: [128]u8 = undefined;
     var plans_buf: [32]u8 = undefined;
-    var package_buf: [192]u8 = undefined;
+    var package_buf: [256]u8 = undefined;
     const package = buildPackage(&package_buf, buildModule(&module_buf, &funcs), buildEmptyPlans(&plans_buf));
 
     const process = vm.ci_process_create(null) orelse return error.OutOfMemory;
@@ -1227,7 +1252,7 @@ test "a process loads, runs, unloads and destroys independent VMs" {
     try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(second.?));
 
     // A rejected package leaves the registry alone and records the category.
-    var broken_buf: [192]u8 = undefined;
+    var broken_buf: [256]u8 = undefined;
     @memcpy(broken_buf[0..package.len], package);
     broken_buf[0] = 'X';
     var unused: ?*vm.VM = null;
@@ -1259,7 +1284,7 @@ test "a process reports busy VMs instead of freeing them" {
     };
     var module_buf: [128]u8 = undefined;
     var plans_buf: [32]u8 = undefined;
-    var package_buf: [192]u8 = undefined;
+    var package_buf: [256]u8 = undefined;
     const package = buildPackage(&package_buf, buildModule(&module_buf, &funcs), buildEmptyPlans(&plans_buf));
 
     const process = vm.ci_process_create(null) orelse return error.OutOfMemory;
@@ -1294,4 +1319,42 @@ test "a process reports busy VMs instead of freeing them" {
     try std.testing.expectEqual(@as(c_int, 0), vm.ci_vm_busy(machine));
     // Idle again, so the retry frees the VM and the process.
     vm.ci_process_destroy(process);
+}
+
+test "CIPC v2 encrypted data is decrypted on every run" {
+    const key = [_]u8{
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01,
+    };
+    const keys = [_]?[cipc.key_len]u8{ key, null };
+
+    for (keys) |key_opt| {
+        var code_buf: [8]u8 = undefined;
+        var code = Asm{ .buf = &code_buf };
+        code.u8v(vm.OP_LOAD_CONST_POOL);
+        code.u32v(@as(u32, 3) << 28);
+        code.u8v(vm.OP_RET);
+        const funcs = [_]FunctionSpec{
+            .{ .name = "main", .params = 0, .locals = 0, .code = code.code() },
+        };
+        var module_buf: [128]u8 = undefined;
+        const module = buildModule(&module_buf, &funcs);
+        var plans_buf: [32]u8 = undefined;
+        const plans = buildEmptyPlans(&plans_buf);
+
+        var data: [8]u8 = undefined;
+        std.mem.writeInt(u64, &data, 42, .little);
+        var cipc_buf: [64]u8 = undefined;
+        const cipc_bytes = buildCipcWithData(&cipc_buf, &data, key_opt);
+        var package_buf: [256]u8 = undefined;
+        const package = buildPackageWithCipc(&package_buf, module, plans, cipc_bytes);
+
+        const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+        defer vm.ci_vm_destroy(machine);
+        try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_load_package(machine, package.ptr, package.len));
+        try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
+        try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+        try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
+        try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
+    }
 }

@@ -23,11 +23,12 @@
 | CIVM 字节码模块 | 2 | 编译器 | 运行时只读 2 |
 | CIPL FFI 计划表 | 4 | 编译器 | 运行时只读 4 |
 | CIPI 导入表 | 2 | 编译器 | 运行时只读 2 |
-| CIPC 常量/名称池 | 1 | 编译器 | 运行时只读 1 |
+| CIPC 常量/名称池 | 2 | 编译器 | 运行时只读 2 |
 | C ABI | 2（`CI_ABI_VERSION`） | `cinterp.h` / `libcinterp` | 嵌入方 |
 
 `CIPKG` v4 只包含 22 字节头、CIVM、CIPL、CIPI 和 CIPC，不携带目标声明。包必须由与
 编译目标匹配的运行时加载；运行时保留 CIPL `abi_id` 检查，用于拒绝明显的 ABI 混用。
+CIPC v2 的 `name_blob`/`data` 默认 XOR 混淆；项目不保留 CIPC v1 读取、旧包迁移或兼容层。
 
 ## C ABI
 

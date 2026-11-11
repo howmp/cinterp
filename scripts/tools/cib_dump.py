@@ -48,6 +48,10 @@ def take(data: bytes, pos: int, length: int) -> tuple[bytes, int]:
     return data[pos : pos + length], pos + length
 
 
+def xor_bytes(data: bytes, key: bytes) -> bytes:
+    return bytes(byte ^ key[i % len(key)] for i, byte in enumerate(data))
+
+
 ABI_NAMES = {1: "sysv", 2: "win64", 3: "win32", 4: "aapcs64"}
 LOC_KINDS = {
     0: "gpr",
@@ -349,39 +353,55 @@ def parse_imports(imports: bytes, names: list[str]) -> dict:
 
 
 def parse_cipc(pool: bytes) -> dict:
-    if len(pool) < 20 or pool[:4] != b"CIPC":
+    if len(pool) < 36 or pool[:4] != b"CIPC":
         raise Bad("CIPC magic/header")
-    if read_u8(pool, 4) != 1:
-        raise Bad("CIPC version")
+    version = read_u8(pool, 4)
+    if version != 2:
+        raise Bad(f"unsupported CIPC version {version}")
+    flags = read_u8(pool, 5)
+    if flags & ~1:
+        raise Bad(f"CIPC flags 0x{flags:02x}")
+    encrypted = bool(flags & 1)
+    key = pool[20:36]
     count = read_u16(pool, 6)
     blob_len = read_u32(pool, 8)
     data_len = read_u32(pool, 12)
     data_base = read_u32(pool, 16)
-    offsets_end = 20 + count * 2
+    offsets_end = 36 + count * 2
     blob_start = offsets_end
     if blob_start + blob_len > len(pool):
         raise Bad("CIPC name blob truncated")
     data_start = (blob_start + blob_len + 15) & ~15
     if data_start + data_len != len(pool):
         raise Bad("CIPC data length")
+    name_blob = pool[blob_start : blob_start + blob_len]
+    data = pool[data_start : data_start + data_len]
+    if encrypted:
+        name_blob = xor_bytes(name_blob, key)
+        data = xor_bytes(data, key)
     names = []
     name_offsets = []
     for i in range(count):
-        off = read_u16(pool, 20 + i * 2)
-        begin = blob_start + off
-        end = pool.find(b"\x00", begin, blob_start + blob_len)
-        if begin >= blob_start + blob_len or end < 0:
+        off = read_u16(pool, 36 + i * 2)
+        begin = off
+        if begin >= blob_len:
+            raise Bad("CIPC name offset")
+        end = name_blob.find(b"\x00", begin, blob_len)
+        if end < 0:
             raise Bad("CIPC name offset")
         name_offsets.append(off)
-        names.append(pool[begin:end].decode("utf-8", "replace"))
+        names.append(name_blob[begin:end].decode("utf-8", "replace"))
     return {
+        "version": version,
+        "flags": flags,
+        "encrypted": encrypted,
         "name_count": count,
         "names": names,
         "name_offsets": name_offsets,
         "name_blob_len": blob_len,
         "data_len": data_len,
         "data_base": data_base,
-        "data": pool[data_start:],
+        "data": data,
     }
 
 
@@ -455,7 +475,9 @@ def header_text(cib: dict, data_limit: int | None = 256) -> str:
         + (" (omitted)" if cipi["omitted"] else ""),
         f"  const:   off={22 + cib['module_len'] + cib['plan_len'] + cib['import_len']} len={cib['const_len']}",
         f"CIVM: v{civm['version']} arch={civm['arch']} entry={civm['entry']} functions={len(civm['functions'])}",
-        f"CIPC: names={len(cib['cipc']['names'])} data={cib['cipc']['data_len']} bytes base=0x{cib['cipc']['data_base']:08x}",
+        f"CIPC: v{cib['cipc']['version']} names={len(cib['cipc']['names'])} "
+        f"data={cib['cipc']['data_len']} bytes base=0x{cib['cipc']['data_base']:08x} "
+        f"flags=0x{cib['cipc']['flags']:02x} encrypted={'yes' if cib['cipc']['encrypted'] else 'no'}",
     ]
     cipc = cib["cipc"]
     for index, name in enumerate(cipc["names"]):

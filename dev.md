@@ -296,7 +296,8 @@ int main(void) {
 
 - **CIVM v2**：magic/版本/arch、函数表、代码、入口函数索引；不保存函数名；模块上限 2 MiB，函数上限 512。
 - **CIPL v4**：CallPlan 表，计划名通过 CIPC 名称引用；CIPC 头含 data_base。计划上限 1024，每 plan 64 args、8 ret locs、每 arg 8 locs，名称上限 128。
-- **CIPKG v4（trusted）**：22 字节头（magic + version + module/plan/import/const 四个 u32 长度）+ CIVM + CIPL + CIPI + CIPC；CIPC 只含只读 globals/常量，mutable globals 在 VM 内存 0..data_base 由 main 安装。不写目标元数据，运行时不做目标校验，包必须由匹配的运行时加载。
+- **CIPKG v4（trusted）**：22 字节头（magic + version + module/plan/import/const 四个 u32 长度）+ CIVM + CIPL + CIPI + CIPC；不写目标元数据，运行时不做目标校验，包必须由匹配的运行时加载。
+- **CIPC v2**：名称池 + data（只读 globals、字符串、标量/宽浮点常量、mutable 初始化 chunk 值）；默认用包内随机 16 字节 key XOR `name_blob`/`data`，key 在 CIPC 头内；名称在加载时解密，data 在每次 run 拷贝时整块解密。`cinterp-cc --no-xor-const-pool` 输出明文。mutable globals 镜像仍在 VM 内存 `0..data_base` 由 `main` 安装。XOR 只是防 `strings` 的混淆，key 随包，不构成保密/完整性边界。
 - **CIPI v2**：plan index → provider 库/真实符号/ordinal；名称通过 CIPC 引用；上限 512 entry、每 entry 8 provider，名称/符号 64 字节。
 - 详细字段和错误码见 [`docs/cib.md`](./docs/cib.md)；版本兼容策略见 [`docs/compatibility.md`](./docs/compatibility.md)。
 

@@ -104,6 +104,26 @@ printf '%s\n' "$puts_out" | grep -Fq "hello from cinterp"
 printf '%s\n' "$puts_out" | grep -Fq "result: 0"
 echo "OK ffi_puts"
 
+echo "== CIPC XOR obfuscation"
+compile examples/ffi/ffi_puts.c -o "$OUT/ffi_puts_xor.cib" >/dev/null
+if grep -a -q "hello from cinterp" "$OUT/ffi_puts_xor.cib"; then
+    echo "FAIL default package exposes string literal" >&2
+    exit 1
+fi
+xor_out="$("$RUNTIME" "$OUT/ffi_puts_xor.cib" 2>&1)"
+printf '%s\n' "$xor_out" | grep -Fq "hello from cinterp"
+printf '%s\n' "$xor_out" | grep -Fq "result: 0"
+
+compile examples/ffi/ffi_puts.c --no-xor-const-pool -o "$OUT/ffi_puts_plain.cib" >/dev/null
+if ! grep -a -q "hello from cinterp" "$OUT/ffi_puts_plain.cib"; then
+    echo "FAIL --no-xor-const-pool did not produce plaintext" >&2
+    exit 1
+fi
+plain_out="$("$RUNTIME" "$OUT/ffi_puts_plain.cib" 2>&1)"
+printf '%s\n' "$plain_out" | grep -Fq "hello from cinterp"
+printf '%s\n' "$plain_out" | grep -Fq "result: 0"
+echo "OK CIPC XOR obfuscation"
+
 compile examples/ffi/ffi_printf.c -o "$OUT/ffi_printf.cib" >/dev/null
 printf_out="$("$RUNTIME" "$OUT/ffi_printf.cib" 2>&1)"
 printf '%s\n' "$printf_out" | grep -Fq "7 2.5"

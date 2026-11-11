@@ -30,6 +30,10 @@ def u32(b: bytes, o: int) -> int:
     return struct.unpack_from("<I", b, o)[0]
 
 
+def xor_bytes(data: bytes, key: bytes) -> bytes:
+    return bytes(byte ^ key[i % len(key)] for i, byte in enumerate(data))
+
+
 def parse_civm(module: bytes) -> int:
     if module[:4] != b"CIVM":
         raise Bad("CIVM magic")
@@ -110,25 +114,33 @@ def parse_cipl(plans: bytes, name_count: int) -> tuple[int, int]:
 
 
 def parse_cipc(pool: bytes) -> int:
-    if len(pool) < 20 or pool[:4] != b"CIPC":
+    if len(pool) < 36 or pool[:4] != b"CIPC":
         raise Bad("CIPC magic/header")
-    if pool[4] != 1:
+    if pool[4] != 2:
         raise Bad(f"unsupported CIPC version {pool[4]}")
+    flags = pool[5]
+    if flags & 0xFE:
+        raise Bad(f"CIPC flags 0x{flags:02x}")
+    encrypted = bool(flags & 1)
+    key = pool[20:36]
     count = u16(pool, 6)
     blob_len = u32(pool, 8)
     data_len = u32(pool, 12)
-    blob_start = 20 + count * 2
+    blob_start = 36 + count * 2
     if blob_start + blob_len > len(pool):
         raise Bad("CIPC name blob overruns section")
     data_start = (blob_start + blob_len + 15) & ~15
     if data_start + data_len != len(pool):
         raise Bad("CIPC data length mismatch")
+    name_blob = pool[blob_start : blob_start + blob_len]
+    if encrypted:
+        name_blob = xor_bytes(name_blob, key)
     for i in range(count):
-        off = u16(pool, 20 + i * 2)
-        begin = blob_start + off
-        if begin >= blob_start + blob_len:
+        off = u16(pool, 36 + i * 2)
+        begin = off
+        if begin >= blob_len:
             raise Bad(f"CIPC name {i} offset out of range")
-        end = pool.find(b"\x00", begin, blob_start + blob_len)
+        end = name_blob.find(b"\x00", begin, blob_len)
         if end < 0:
             raise Bad(f"CIPC name {i} is not terminated")
     return count

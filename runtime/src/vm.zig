@@ -1269,9 +1269,17 @@ pub const VM = struct {
         self.resetRunImage();
         if (self.const_pool) |pool| {
             const base: usize = pool.data_base;
-            if (base + pool.data.len > self.mem.len) return error.OutOfMemory;
-            @memcpy(self.mem[base .. base + pool.data.len], pool.data);
-            self.mem_top = base + pool.data.len;
+            const end = std.math.add(usize, base, pool.data.len) catch return error.OutOfMemory;
+            if (end > self.mem.len) return error.OutOfMemory;
+            if (pool.encrypted) {
+                var i: usize = 0;
+                while (i < pool.data.len) : (i += 1) {
+                    self.mem[base + i] = pool.data[i] ^ pool.key[i % pool.key.len];
+                }
+            } else {
+                @memcpy(self.mem[base..end], pool.data);
+            }
+            self.mem_top = end;
         }
 
         const entry_fn = self.functions[fi];
@@ -2970,6 +2978,7 @@ pub fn errorCode(err: anyerror) c_int {
         error.TooManyProviders,
         error.BadPool,
         error.BadPoolVersion,
+        error.BadPoolFlags,
         error.BadPoolName,
         error.TruncatedPool,
         error.TrailingPool,

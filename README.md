@@ -31,6 +31,9 @@
 4. **可用于替代 BOF 场景**：直接编译普通 C 源文件（包括直接 `#include <windows.h>`），
    不再需要手动声明 WinAPI 函数原型。参见 [`examples/bof`](examples/bof/) 和
    [`examples/windows`](examples/windows/)。
+5. **CIPC 常量/名称池默认 XOR 混淆**：编译时使用每包随机 16 字节 key，运行时加载时解密
+   名称池、每次 run 时解密 data；`cinterp-cc --no-xor-const-pool` 可输出明文以便调试。
+   key 随包分发，只用于避免 `strings` 直接读出字符串，不是安全/完整性边界。
 
 ## 3. 原理（编译 → 执行）
 

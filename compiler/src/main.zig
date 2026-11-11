@@ -470,7 +470,7 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8, callbacks_
 
 fn usage() void {
     std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--cc-flag FLAG]... [--keep-ir]\n" ++
-        "                      [--dump] [--dump-ast] [--dump-imports] [--no-auto-link]\n", .{});
+        "                      [--dump] [--dump-ast] [--dump-imports] [--no-auto-link] [--no-xor-const-pool]\n", .{});
 }
 
 /// Parse the IR text into the typed AST, verify target consistency and lower it.
@@ -537,6 +537,7 @@ pub fn main() !void {
     var dump_ast = false;
     var dump_imports = false;
     var auto_link = true;
+    var xor_pool = true;
 
     var i: usize = 2;
     while (i < argv.len) : (i += 1) {
@@ -592,6 +593,8 @@ pub fn main() !void {
             dump_imports = true;
         } else if (std.mem.eql(u8, a, "--no-auto-link")) {
             auto_link = false;
+        } else if (std.mem.eql(u8, a, "--no-xor-const-pool")) {
+            xor_pool = false;
         } else if (a.len > 0 and a[0] == '-') {
             usage();
             std.process.exit(2);
@@ -685,7 +688,15 @@ pub fn main() !void {
     defer names.deinit();
     const plans = try serializePlans(allocator, result.plans, target.abi, &names);
     try import_table.internNames(&names);
-    const const_bytes = try cipc.serialize(allocator, &names, result.const_data, result.data_base);
+    var key: [cipc.key_len]u8 = [_]u8{0} ** cipc.key_len;
+    if (xor_pool) std.crypto.random.bytes(&key);
+    const const_bytes = try cipc.serialize(
+        allocator,
+        &names,
+        result.const_data,
+        result.data_base,
+        if (xor_pool) key else null,
+    );
     const import_bytes = try import_table.serialize(allocator, &names);
     const package = try packageSerialize(allocator, module, plans, import_bytes, const_bytes);
     const file = try std.fs.cwd().createFile(out, .{});
