@@ -244,34 +244,40 @@ if want win32; then
     assert_conv ffi_callback_fastcall 'callback:' 2
     assert_conv ffi_callback_thiscall 'callback:' 3
     # __stdcall callback (workstream E). The helper calls an int(__stdcall *)(int,int).
+    echo "Win32: checking stdcall callback files"
     for required in examples/ffi/ffi_callback_stdcall.c examples/ffi/ffi_callback_stdcall_helper.c; do
         if [ ! -f "$required" ]; then
             echo "FAIL Win32: missing $required; the stdcall callback case cannot be verified" >&2
             exit 1
         fi
     done
+    echo "Win32: compiling stdcall callback"
     "$CINTERP_CC" compile examples/ffi/ffi_callback_stdcall.c --target i686-windows \
-        -o "$OUT/ffi_callback_stdcall-i686-windows.cib" >/dev/null
+        -o "$OUT/ffi_callback_stdcall-i686-windows.cib"
+    echo "Win32: building stdcall helper"
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/libffi_callback_stdcall_helper32.dll" examples/ffi/ffi_callback_stdcall_helper.c
     # __fastcall callback: first two int args arrive in ECX/EDX.
+    echo "Win32: checking fastcall callback files"
     for required in examples/ffi/ffi_callback_fastcall.c examples/ffi/ffi_callback_fastcall_helper.c; do
         if [ ! -f "$required" ]; then
             echo "FAIL Win32: missing $required; the fastcall callback case cannot be verified" >&2
             exit 1
         fi
     done
+    echo "Win32: compiling fastcall callback"
     "$CINTERP_CC" compile examples/ffi/ffi_callback_fastcall.c --target i686-windows \
-        -o "$OUT/ffi_callback_fastcall-i686-windows.cib" >/dev/null
+        -o "$OUT/ffi_callback_fastcall-i686-windows.cib"
+    echo "Win32: building fastcall helper"
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/libffi_callback_fastcall_helper32.dll" examples/ffi/ffi_callback_fastcall_helper.c
     # __thiscall native call and callback: first arg in ECX, rest callee-popped stack.
     "$CINTERP_CC" compile examples/ffi/ffi_thiscall.c --target i686-windows \
-        -o "$OUT/ffi_thiscall-i686-windows.cib" >/dev/null
+        -o "$OUT/ffi_thiscall-i686-windows.cib"
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/libffi_thiscall_helper32.dll" examples/ffi/ffi_thiscall_helper.c
     "$CINTERP_CC" compile examples/ffi/ffi_callback_thiscall.c --target i686-windows \
-        -o "$OUT/ffi_callback_thiscall-i686-windows.cib" >/dev/null
+        -o "$OUT/ffi_callback_thiscall-i686-windows.cib"
     zig cc -target x86-windows-gnu -shared -O0 -Wl,--export-all-symbols \
         -o "$OUT/libffi_callback_thiscall_helper32.dll" examples/ffi/ffi_callback_thiscall_helper.c
     win_run cinterp-run32.exe hello-i686-windows.cib "" 42

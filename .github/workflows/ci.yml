@@ -103,4 +103,4 @@ jobs:
           cd ..
           mkdir -p build
           ./compiler/zig-out/bin/cinterp-cc compile --target aarch64-linux examples/basics/hello.c -o build/hello-arm64.cib
-          qemu-aarch64 -L /usr/aarch64-linux-gnu runtime/zig-out/bin/cinterp-run build/hello-arm64.cib | grep 'result: 42'
+          qemu-aarch64 -L /usr/aarch64-linux-gnu runtime/zig-out/bin/cinterp-run build/hello-arm64.cib 2>&1 | grep 'result: 42'
