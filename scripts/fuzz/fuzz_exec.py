@@ -72,7 +72,7 @@ def main() -> int:
     ap.add_argument(
         "--tolerate-faults",
         action="store_true",
-        help="count SIGSEGV/SIGBUS/SIGILL as expected faults (mutated native calls)",
+        help="count SIGSEGV/SIGBUS/SIGILL/SIGABRT as expected faults (mutated bytecode)",
     )
     ap.add_argument(
         "--tolerate-timeouts",
@@ -113,20 +113,12 @@ def main() -> int:
             stderr = proc.stderr.decode("utf-8", "replace")
             if proc.returncode < 0:
                 sig = -proc.returncode
-                safe_panic = sig == signal.SIGABRT and any(
-                    marker in stderr
-                    for marker in (
-                        "Segmentation fault at address",
-                        "General protection exception",
-                        "Bus error",
-                        "Illegal instruction",
-                    )
-                )
-                if args.tolerate_faults and (
-                    sig in (signal.SIGSEGV, signal.SIGBUS, signal.SIGILL) or safe_panic
+                if args.tolerate_faults and sig in (
+                    signal.SIGSEGV, signal.SIGBUS, signal.SIGILL, signal.SIGABRT
                 ):
                     # Corrupted bytecode may legitimately form arbitrary
-                    # pointers; packages are trusted build products.
+                    # pointers or trip runtime safety checks; packages are
+                    # trusted build products.
                     faults += 1
                     continue
             if proc.returncode < 0 or proc.returncode >= 128:

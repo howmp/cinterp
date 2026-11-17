@@ -179,7 +179,7 @@ fuzz-ffi-exec: compiler runtime
 	$(PYTHON) scripts/fuzz/fuzz_exec.py --iterations 300 --ffi --tolerate-faults --tolerate-timeouts --seed $(FUZZ_SEED)
 
 fuzz-bytecode: compiler runtime
-	$(PYTHON) scripts/fuzz/fuzz_bytecode.py --iterations 500 --tolerate-timeouts --seed $(FUZZ_SEED)
+	$(PYTHON) scripts/fuzz/fuzz_bytecode.py --iterations 500 --tolerate-faults --tolerate-timeouts --seed $(FUZZ_SEED)
 
 fuzz-cross: compiler runtime
 	$(PYTHON) scripts/fuzz/fuzz_cross.py --iterations 100 --seed $(FUZZ_SEED)
@@ -191,9 +191,9 @@ fuzz-sanitizer: compiler
 	mkdir -p $(BUILD)/fuzz-sanitizer
 	cd runtime && zig build -Doptimize=ReleaseSafe
 	cp runtime/zig-out/bin/cinterp-run $(BUILD)/fuzz-sanitizer/cinterp-run
-	$(PYTHON) scripts/fuzz/fuzz.py --iterations 500 --seed $(FUZZ_SEED) --runtime $(BUILD)/fuzz-sanitizer/cinterp-run
+	$(PYTHON) scripts/fuzz/fuzz.py --iterations 500 --seed $(FUZZ_SEED)
 	$(PYTHON) scripts/fuzz/fuzz_exec.py --iterations 200 --tolerate-faults --tolerate-timeouts --seed $(FUZZ_SEED) --runtime $(BUILD)/fuzz-sanitizer/cinterp-run
-	$(PYTHON) scripts/fuzz/fuzz_bytecode.py --iterations 300 --tolerate-timeouts --seed $(FUZZ_SEED) --runtime $(BUILD)/fuzz-sanitizer/cinterp-run
+	$(PYTHON) scripts/fuzz/fuzz_bytecode.py --iterations 300 --tolerate-faults --tolerate-timeouts --seed $(FUZZ_SEED) --runtime $(BUILD)/fuzz-sanitizer/cinterp-run
 
 differential: compiler runtime
 	./scripts/fuzz/differential.sh

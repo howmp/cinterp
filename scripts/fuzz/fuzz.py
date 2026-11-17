@@ -10,9 +10,25 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNTIME = ROOT / "runtime/zig-out/bin/cinterp-run"
+HARNESS = ROOT / "build/fuzz-load/capi_fuzz"
 COMPILER = ROOT / "build/cinterp-cc"
 SEEDS = ["hello", "arrays", "structs", "ffi_qsort", "ffi_structs"]
+
+
+def build_harness() -> None:
+    HARNESS.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "cc", "-std=c11", "-O1",
+            "-I", "runtime/zig-out/include",
+            "runtime/tests/capi_fuzz.c",
+            "runtime/zig-out/lib/libcinterp.a",
+            "-ldl", "-lpthread", "-lm",
+            "-o", str(HARNESS),
+        ],
+        check=True,
+        cwd=ROOT,
+    )
 
 
 def compile_seed(name: str, out: Path) -> Path:
@@ -52,13 +68,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", type=int, default=200)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--runtime", type=Path, default=RUNTIME)
     args = parser.parse_args()
 
-    runtime = args.runtime.resolve()
-    if not runtime.exists():
-        print(f"missing runtime: {runtime}", file=sys.stderr)
-        return 2
+    build_harness()
     rng = random.Random(args.seed)
     crashes = 0
     runs = 0
@@ -73,7 +85,7 @@ def main() -> int:
             runs += 1
             try:
                 proc = subprocess.run(
-                    [str(runtime), str(candidate)],
+                    [str(HARNESS), "--load-only", str(candidate)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=3,

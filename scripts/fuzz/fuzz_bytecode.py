@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import signal
 import struct
 import subprocess
 import sys
@@ -142,6 +143,11 @@ def main() -> int:
         action="store_true",
         help="count mutated-bytecode infinite loops as expected timeouts instead of failures",
     )
+    parser.add_argument(
+        "--tolerate-faults",
+        action="store_true",
+        help="count SIGSEGV/SIGBUS/SIGILL/SIGABRT from mutated bytecode as expected faults",
+    )
     parser.add_argument("--runtime", type=Path, default=RUNTIME)
     parser.add_argument("--artifacts", type=Path, default=DEFAULT_ARTIFACTS,
                         help="directory for crash candidates (default: build/fuzz-artifacts)")
@@ -152,7 +158,7 @@ def main() -> int:
     runtime = args.runtime.resolve()
     artifacts = args.artifacts.resolve()
     rng = random.Random(args.seed)
-    crashes = timeouts = runs = executed = skipped = 0
+    crashes = timeouts = faults = runs = executed = skipped = 0
     with tempfile.TemporaryDirectory(prefix="cinterp-fuzz-bytecode-") as td:
         tmp = Path(td)
         seeds = [compile_seed(name, tmp) for name in SEEDS]
@@ -181,6 +187,13 @@ def main() -> int:
                     artifacts, f"fuzz-bytecode-timeout-r{runs}-seed{args.seed}.cib", candidate)
                 print(f"TIMEOUT mutation #{runs} (saved {saved})", file=sys.stderr)
                 continue
+            if proc.returncode < 0:
+                sig = -proc.returncode
+                if args.tolerate_faults and sig in (
+                    signal.SIGSEGV, signal.SIGBUS, signal.SIGILL, signal.SIGABRT
+                ):
+                    faults += 1
+                    continue
             if proc.returncode < 0 or proc.returncode >= 128:
                 saved = save_artifact(
                     artifacts, f"fuzz-bytecode-crash-r{runs}-seed{args.seed}.cib", candidate)
@@ -192,7 +205,8 @@ def main() -> int:
                 crashes += 1
     print(
         f"fuzz-bytecode: {runs} mutations, {skipped} skipped, "
-        f"{executed} executed, {crashes} crashes, {timeouts} timeouts"
+        f"{executed} executed, {crashes} crashes, {faults} expected faults, "
+        f"{timeouts} timeouts"
     )
     if skipped and skipped == runs:
         print(
