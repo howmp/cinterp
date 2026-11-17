@@ -224,7 +224,7 @@ VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划�
 - C ABI 2 是 append-only 的：`CI_E_BUSY = -12`、`ci_vm_busy`、`ci_vm_destroy_ex`、
   `ci_vm_callback_error`、`ci_callback_pool_stats` 和 `ci_process_*` 都是追加项，
   既有函数、数值和语义不变，因此不需要提升 `CI_ABI_VERSION`。
-- 当前包格式版本、C ABI 规则和“未发布、不保留旧格式迁移”的边界记录在
+- 当前包格式版本、C ABI 规则和“已发布但仍不保证格式兼容、不保留旧格式迁移”的边界记录在
   [`compatibility.md`](compatibility.md) 中。
 - `CI_ABI_VERSION` 与共享库 SONAME 主版本是相互独立的编号；请检查
   `ci_abi_version()`，而不要从 `.so` 文件名推断兼容性。SONAME 策略见
