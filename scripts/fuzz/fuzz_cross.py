@@ -70,7 +70,7 @@ def compile_seed(name: str, target: str, out: Path, compiler: Path) -> Path:
     package = out / f"{name}-{target}.cib"
     subprocess.run(
         [str(compiler), "compile",
-         str(ROOT / "examples" / f"{name}.c"), "--target", target, "-o", str(package)],
+         str(next(ROOT.glob(f"examples/**/{name}.c"))), "--target", target, "-o", str(package)],
         check=True, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     return package

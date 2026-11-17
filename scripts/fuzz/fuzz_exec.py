@@ -25,7 +25,7 @@ DEFAULT_ARTIFACTS = ROOT / "build/fuzz-artifacts"
 
 def compile_seed(name: str, out: Path) -> Path:
     package = out / f"{name}.cib"
-    src = str(ROOT / "examples" / f"{name}.c")
+    src = str(next(ROOT.glob(f"examples/**/{name}.c")))
     subprocess.run([str(COMPILER), "compile", src, "-o", str(package)],
                    cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return package

@@ -17,7 +17,7 @@ SEEDS = ["hello", "arrays", "structs", "ffi_qsort", "ffi_structs"]
 
 def compile_seed(name: str, out: Path) -> Path:
     package = out / f"{name}.cib"
-    src = str(ROOT / "examples" / f"{name}.c")
+    src = str(next(ROOT.glob(f"examples/**/{name}.c")))
     subprocess.run(
         [str(COMPILER), "compile", src, "-o", str(package)],
         check=True,

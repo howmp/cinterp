@@ -21,7 +21,7 @@ def compile_seed(name: str, out: Path) -> Path:
     package = out / f"{name}.cib"
     subprocess.run(
         [str(COMPILER), "compile",
-         str(ROOT / "examples" / f"{name}.c"), "-o", str(package)],
+         str(next(ROOT.glob(f"examples/**/{name}.c"))), "-o", str(package)],
         check=True, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     return package

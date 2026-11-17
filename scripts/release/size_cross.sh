@@ -25,3 +25,6 @@ check x86_64-linux cinterp-run-sysv
 check x86_64-windows-gnu cinterp-run-win64.exe
 check x86-windows-gnu cinterp-run-win32.exe
 check aarch64-linux-gnu cinterp-run-arm64
+
+# Restore the native runtime: later CI/local steps execute runtime/zig-out directly.
+zig build -Doptimize=ReleaseSmall >/dev/null
