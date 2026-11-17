@@ -37,6 +37,8 @@ STATUSES = ("ok", "skip", "compile", "load", "run", "timeout", "mismatch", "harn
 
 WINE_LOCK = threading.Lock()
 WINE_ENVS: dict[tuple[str, str], dict[str, str]] = {}
+WINE32_WOW64 = False
+WINE32_PROBED = False
 
 
 def norm_text(data: bytes) -> bytes:
@@ -378,6 +380,36 @@ def wine_runner(target: str) -> list[str]:
     return shlex.split(value) or ["wine"]
 
 
+def wine32_is_wow64() -> bool:
+    """Detect Wine builds that reject WINEARCH=win32 in WoW64 mode."""
+    global WINE32_WOW64, WINE32_PROBED
+    if WINE32_PROBED:
+        return WINE32_WOW64
+    WINE32_PROBED = True
+    if os.environ.get("WINEPREFIX"):
+        return False
+    wineboot = shutil.which("wineboot")
+    if not wineboot:
+        return False
+    env = dict(
+        os.environ,
+        WINEPREFIX=str(ROOT / "build/wine32"),
+        WINEARCH="win32",
+        WINEDEBUG="-all",
+        WINEDLLOVERRIDES="mscoree,mshtml=",
+    )
+    try:
+        proc = subprocess.run(
+            [wineboot, "-u"], env=env, capture_output=True, text=True,
+            timeout=60, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    output = (proc.stdout or "") + (proc.stderr or "")
+    WINE32_WOW64 = "not supported in wow64 mode" in output
+    return WINE32_WOW64
+
+
 def wine_env(target: str) -> dict[str, str]:
     """Environment for local Wine runs.
 
@@ -386,10 +418,14 @@ def wine_env(target: str) -> dict[str, str]:
     test run even when the failing process has already exited. Disabling
     Mono/Gecko overrides prevents their install prompts as well.
     """
-    arch = "win64" if target == "x86_64-windows" else "win32"
-    prefix = Path(os.environ.get("WINEPREFIX") or (ROOT / "build" / f"wine{arch}"))
-    key = (str(prefix), arch)
     with WINE_LOCK:
+        if target == "i686-windows" and wine32_is_wow64():
+            # WoW64-only Wine builds run 32-bit executables from a win64 prefix.
+            arch = "win64"
+        else:
+            arch = "win64" if target == "x86_64-windows" else "win32"
+        prefix = Path(os.environ.get("WINEPREFIX") or (ROOT / "build" / f"wine{arch}"))
+        key = (str(prefix), arch)
         cached = WINE_ENVS.get(key)
         if cached is not None:
             return dict(cached)

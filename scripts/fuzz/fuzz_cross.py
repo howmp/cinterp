@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -98,20 +99,57 @@ def runner_for(name: str, info: dict, runtime: Path) -> list[str]:
     return [wine, str(runtime)]
 
 
+WINE32_WOW64: bool | None = None
+
+
+def wine32_is_wow64() -> bool:
+    global WINE32_WOW64
+    if WINE32_WOW64 is not None:
+        return WINE32_WOW64
+    WINE32_WOW64 = False
+    if os.environ.get("WINEPREFIX"):
+        return False
+    wineboot = shutil.which("wineboot")
+    if not wineboot:
+        return False
+    prefix = ROOT / "build/wine-win32"
+    env = dict(
+        os.environ,
+        WINEPREFIX=str(prefix),
+        WINEARCH="win32",
+        WINEDEBUG="-all",
+        WINEDLLOVERRIDES="mscoree,mshtml=",
+    )
+    try:
+        proc = subprocess.run(
+            [wineboot, "-u"], env=env, capture_output=True, text=True,
+            timeout=60, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    output = (proc.stdout or "") + (proc.stderr or "")
+    WINE32_WOW64 = "not supported in wow64 mode" in output
+    return WINE32_WOW64
+
+
 def env_for(name: str, info: dict) -> dict:
     env = dict(os.environ)
     if "wine_arch" in info and sys.platform != "win32":
-        prefix = ROOT / "build" / f"wine-{info['wine_arch']}"
+        arch = info["wine_arch"]
+        if arch == "win32" and wine32_is_wow64():
+            # WoW64-only Wine builds run 32-bit executables from a win64 prefix.
+            arch = "win64"
+        prefix = ROOT / "build" / f"wine-{arch}"
         if not (prefix / "drive_c/windows/system32/kernel32.dll").exists():
             subprocess.run(
                 ["wineboot", "-u"],
-                env=dict(env, WINEPREFIX=str(prefix), WINEARCH=info["wine_arch"],
+                env=dict(env, WINEPREFIX=str(prefix), WINEARCH=arch,
                          WINEDEBUG="-all"),
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
             )
         env.update(
             WINEPREFIX=str(prefix),
-            WINEARCH=info["wine_arch"],
+            WINEARCH=arch,
             WINEDEBUG="-all",
         )
     return env
