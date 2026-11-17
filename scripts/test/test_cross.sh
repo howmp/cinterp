@@ -128,7 +128,7 @@ win_run() {
         if [[ -n "$lib" ]]; then prog=("./$harness" "$package" "$lib"); else prog=("./$exe" "$package"); fi
         local part
         for ((r=0; r<repeat; r++)); do
-            part="$(cd "$OUT" && "${prog[@]}" 2>&1)"
+            part="$(cd "$OUT" && "${prog[@]}" 2>&1)" || true
             out+="$part"$'\n'
         done
     else
@@ -161,7 +161,7 @@ win_run() {
         for ((r=0; r<repeat; r++)); do
             part="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
                 WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
-                "$runner" "${prog[@]}" 2>&1)"
+                "$runner" "${prog[@]}" 2>&1)" || true
             out+="$part"$'\n'
         done
     fi
