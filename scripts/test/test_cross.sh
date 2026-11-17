@@ -141,8 +141,13 @@ win_run() {
         fi
         local wine_prefix wine_arch
         if [[ "$exe" == *32.exe ]]; then
-            wine_prefix="${WINEPREFIX:-$ROOT/build/wine32}"
-            wine_arch=win32
+            if [ "${CINTERP_WINE32_WOW64:-0}" = "1" ]; then
+                wine_prefix="${WINEPREFIX:-$ROOT/build/wine64}"
+                wine_arch=win64
+            else
+                wine_prefix="${WINEPREFIX:-$ROOT/build/wine32}"
+                wine_arch=win32
+            fi
         else
             wine_prefix="${WINEPREFIX:-$ROOT/build/wine64}"
             wine_arch=win64
@@ -162,6 +167,20 @@ win_run() {
             part="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
                 WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
                 "$runner" "${prog[@]}" 2>&1)" || true
+            if [[ "$wine_arch" == "win32" && "$part" == *"not supported in wow64 mode"* ]]; then
+                # New WoW64-only Wine builds reject WINEARCH=win32; a win64
+                # prefix still runs 32-bit executables there.
+                CINTERP_WINE32_WOW64=1
+                wine_arch=win64
+                wine_prefix="${WINEPREFIX:-$ROOT/build/wine64}"
+                if [ ! -f "$wine_prefix/drive_c/windows/system32/kernel32.dll" ]; then
+                    WINEARCH=win64 WINEPREFIX="$wine_prefix" WINEDEBUG=-all \
+                        WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u >/dev/null 2>&1 || true
+                fi
+                part="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
+                    WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
+                    "$runner" "${prog[@]}" 2>&1)" || true
+            fi
             out+="$part"$'\n'
         done
     fi
