@@ -13,3 +13,5 @@ __pycache__/
 /fred.txt
 compiler/.zig-cache/
 compiler/zig-out/
+examples/keygenme/.zig-cache/
+examples/keygenme/zig-out/

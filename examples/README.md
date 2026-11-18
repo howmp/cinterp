@@ -13,6 +13,10 @@ Examples are grouped by topic:
   and `file_io.c`. They run on Windows or under Wine via `make test-winapi`.
 - `bof/` — the CS-Situational-Awareness-BOF compile harness and normalized BOF
   sources.
+- `keygenme/` — a name/serial keygenme whose CIB bytecode is embedded into a
+  Zig host; `make keygenme` builds standalone Linux x86-64, Linux ARM64,
+  Windows x64, and Windows x86 executables, writes CIB dumps, and includes a
+  Python keygen.
 
 Most examples can be compiled and run with:
 

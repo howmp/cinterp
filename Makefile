@@ -1,4 +1,4 @@
-.PHONY: all help test compiler runtime debug-runtime cross-runtimes-win compiler-test integration lint size release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean distclean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-nightly-serial test-suites-report test-suites-cross test-winapi fetch-suites generate-diff generate-diff-nightly generate-diff-csmith release-artifacts evidence check-version
+.PHONY: all help test compiler runtime debug-runtime cross-runtimes-win compiler-test integration lint size keygenme release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean distclean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-nightly-serial test-suites-report test-suites-cross test-winapi fetch-suites generate-diff generate-diff-nightly generate-diff-csmith release-artifacts evidence check-version
 
 PYTHON ?= python3
 BUILD := build
@@ -37,6 +37,7 @@ help:
 		'test                runtime + compiler tests and examples' \
 		'lint                structural CIB lint' \
 		'size / size-cross   runtime and CIB size budgets' \
+		'keygenme            embedded keygenme binaries for four targets' \
 		'cross-test          Win64/Win32/ARM64 example runs' \
 		'test-suites-full    full pinned upstream suite' \
 		'bench               benchmark and build/benchmark.json' \
@@ -95,6 +96,9 @@ size: compiler runtime
 	@test "$$(stat -c%s $(BUILD)/ffi_qsort.cib)" -lt $(CIB_BUDGET)
 
 release-check: test size
+
+keygenme: compiler
+	PYTHON='$(PYTHON)' ./examples/keygenme/build.sh
 
 cross-test: compiler
 	./scripts/test/test_cross.sh
