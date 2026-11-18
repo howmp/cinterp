@@ -10,12 +10,27 @@ on:
 jobs:
   standard:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.13.0
-      - run: sudo apt-get update && sudo apt-get install -y clang python3 make cmake m4
+      - name: Install dependencies
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 install -y --no-install-recommends \
+            clang cmake m4
+      - name: Cache fetched suites
+        uses: actions/cache@v4
+        with:
+          path: build/suites
+          key: suites-standard-${{ runner.os }}-${{ hashFiles('scripts/test/fetch_suites.py') }}
       - name: fetch standard suites
         run: |
           python3 scripts/test/fetch_suites.py \
@@ -34,12 +49,27 @@ jobs:
   nightly:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.13.0
-      - run: sudo apt-get update && sudo apt-get install -y clang python3 make cmake m4
+      - name: Install dependencies
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 install -y --no-install-recommends \
+            clang cmake m4
+      - name: Cache fetched suites
+        uses: actions/cache@v4
+        with:
+          path: build/suites
+          key: suites-nightly-${{ runner.os }}-${{ hashFiles('scripts/test/fetch_suites.py') }}
       - run: python3 scripts/test/fetch_suites.py --all --support
       - run: make test-suites-nightly
       - name: verify plan evidence
