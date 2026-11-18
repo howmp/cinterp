@@ -48,6 +48,9 @@ jobs:
 
   windows-wine:
     runs-on: ubuntu-latest
+    env:
+      WINEDEBUG: -all
+      WINEDLLOVERRIDES: mscoree,mshtml,winedbg.exe=d
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2

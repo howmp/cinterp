@@ -154,10 +154,10 @@ win_run() {
         fi
         if [ ! -f "$wine_prefix/drive_c/windows/system32/kernel32.dll" ]; then
             WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" WINEDEBUG=-all \
-                WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u >/dev/null 2>&1 || true
+                WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d" wineboot -u >/dev/null 2>&1 || true
         fi
         WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" WINEDEBUG=-all \
-            WINEDLLOVERRIDES="mscoree,mshtml=" "$runner" reg add \
+            WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d" "$runner" reg add \
             'HKCU\Software\Wine\WineDbg' /v ShowCrashDialog /t REG_DWORD /d 0 /f \
             >/dev/null 2>&1 || true
         local -a prog
@@ -165,7 +165,7 @@ win_run() {
         local part
         for ((r=0; r<repeat; r++)); do
             part="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
-                WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
+                WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d" \
                 "$runner" "${prog[@]}" 2>&1)" || true
             if [[ "$wine_arch" == "win32" && "$part" == *"not supported in wow64 mode"* ]]; then
                 # New WoW64-only Wine builds reject WINEARCH=win32; a win64
@@ -175,10 +175,10 @@ win_run() {
                 wine_prefix="${WINEPREFIX:-$ROOT/build/wine64}"
                 if [ ! -f "$wine_prefix/drive_c/windows/system32/kernel32.dll" ]; then
                     WINEARCH=win64 WINEPREFIX="$wine_prefix" WINEDEBUG=-all \
-                        WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u >/dev/null 2>&1 || true
+                        WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d" wineboot -u >/dev/null 2>&1 || true
                 fi
                 part="$(cd "$OUT" && WINEARCH="$wine_arch" WINEPREFIX="$wine_prefix" \
-                    WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=" \
+                    WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d" \
                     "$runner" "${prog[@]}" 2>&1)" || true
             fi
             out+="$part"$'\n'

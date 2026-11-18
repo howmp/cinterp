@@ -77,7 +77,8 @@ def main() -> int:
             continue
         if shutil.which(wine_bin) is None:
             continue
-        env = dict(os.environ, WINEPREFIX=str(prefix), WINEDEBUG="-all")
+        env = dict(os.environ, WINEPREFIX=str(prefix), WINEDEBUG="-all",
+                   WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d")
         for filename, expected in CASES:
             stem = Path(filename).stem
             source = f"examples/windows/{filename}"

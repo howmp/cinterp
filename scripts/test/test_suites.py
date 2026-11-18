@@ -396,7 +396,7 @@ def wine32_is_wow64() -> bool:
         WINEPREFIX=str(ROOT / "build/wine32"),
         WINEARCH="win32",
         WINEDEBUG="-all",
-        WINEDLLOVERRIDES="mscoree,mshtml=",
+        WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d",
     )
     try:
         proc = subprocess.run(
@@ -416,7 +416,9 @@ def wine_env(target: str) -> dict[str, str]:
     `WINEDEBUG=-all` silences debug output; `ShowCrashDialog=0` in the prefix
     registry disables Wine's modal crash dialog, which otherwise can block a
     test run even when the failing process has already exited. Disabling
-    Mono/Gecko overrides prevents their install prompts as well.
+    Mono/Gecko overrides prevents their install prompts as well, and
+    `winedbg.exe=d` keeps a crash from attaching the interactive debugger if
+    the registry setting is missing or reset.
     """
     with WINE_LOCK:
         if target == "i686-windows" and wine32_is_wow64():
@@ -434,7 +436,7 @@ def wine_env(target: str) -> dict[str, str]:
             WINEPREFIX=str(prefix),
             WINEARCH=arch,
             WINEDEBUG="-all",
-            WINEDLLOVERRIDES="mscoree,mshtml=",
+            WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d",
         )
         if not (prefix / "drive_c/windows/system32/kernel32.dll").exists():
             wineboot = shutil.which("wineboot")

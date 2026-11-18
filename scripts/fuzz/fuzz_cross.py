@@ -118,7 +118,7 @@ def wine32_is_wow64() -> bool:
         WINEPREFIX=str(prefix),
         WINEARCH="win32",
         WINEDEBUG="-all",
-        WINEDLLOVERRIDES="mscoree,mshtml=",
+        WINEDLLOVERRIDES="mscoree,mshtml,winedbg.exe=d",
     )
     try:
         proc = subprocess.run(
