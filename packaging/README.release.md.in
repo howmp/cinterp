@@ -204,12 +204,19 @@ cinterp 采用 MIT 许可证；参见 `LICENSE`。这个仅含运行时的 tarba
 sha256sum -c SHA256SUMS
 ```
 
-如果该发布已签名，还会一并发布 `SHA256SUMS.asc` 和 `KEYS.asc`：
+`SHA256SUMS` 由 GitHub Actions 使用 Sigstore keyless 签名，签名结果发布于
+`SHA256SUMS.sigstore.json`（Sigstore bundle，包含签名、短时证书和 Rekor
+透明度日志记录）。没有长期密钥，也不需要导入公钥；验证时直接绑定到本仓库
+的 release workflow：
 
 ```sh
-gpg --import KEYS.asc
-gpg --verify SHA256SUMS.asc SHA256SUMS
+cosign verify-blob \
+  --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity \
+    https://github.com/howmp/cinterp/.github/workflows/release.yml@refs/tags/<tag> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS
 ```
 
-如果这两个文件缺失，则该发布是**未签名**的：`SHA256SUMS` 仍能发现损坏
-和传输途中的篡改，但它不提供来源证明。
+校验通过后 `SHA256SUMS` 的完整性由签名保证，再执行 `sha256sum -c SHA256SUMS`。
+需要安装 [cosign](https://github.com/sigstore/cosign) v3。

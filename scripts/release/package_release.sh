@@ -204,14 +204,7 @@ build_one aarch64-linux-gnu arm64
     sha256sum ./*.tar.gz ./*.spdx.json > SHA256SUMS
 )
 
-if [ -n "${CINTERP_GPG_KEY:-}" ]; then
-    gpg --batch --yes --armor --local-user "$CINTERP_GPG_KEY" \
-        --detach-sign "$OUT/SHA256SUMS"
-    gpg --armor --export "$CINTERP_GPG_KEY" > "$OUT/KEYS.asc"
-    echo "signed SHA256SUMS with $CINTERP_GPG_KEY"
-else
-    echo "SHA256SUMS written unsigned (set CINTERP_GPG_KEY to sign)"
-fi
+echo "SHA256SUMS written; CI signs it keylessly with Sigstore (release workflow)"
 
 echo "release artifacts in $OUT"
 ls -1 "$OUT"

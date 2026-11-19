@@ -11,7 +11,7 @@ cd runtime
 zig build -Doptimize=ReleaseSmall
 # zig-out/include/cinterp.h
 # zig-out/lib/libcinterp.a
-# zig-out/lib/libcinterp.so -> libcinterp.so.0 -> libcinterp.so.0.1.1
+# zig-out/lib/libcinterp.so -> libcinterp.so.0 -> libcinterp.so.0.1.2
 ```
 
 其他目标使用 Zig 的交叉编译：

@@ -472,7 +472,8 @@ ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。Rel
 ### 12.3 发布压缩包
 
 `make release-artifacts` 会把四个目标压缩包写入 `build/release/`，并生成每个目标的
-SPDX SBOM 和 `SHA256SUMS`（设置 `CINTERP_GPG_KEY` 时进行 GPG 签名）：
+SPDX SBOM 和 `SHA256SUMS`。CI 在打包后用 Sigstore keyless 签名 `SHA256SUMS`，
+产出 `SHA256SUMS.sigstore.json`（无需 GPG 密钥）：
 
 | 压缩包 | 内容 |
 | --- | --- |
