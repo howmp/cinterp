@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Execute mutated CIB packages against cinterp-run.
 
-Timeouts count as failures by default (a hang is a real defect); pass
-``--tolerate-timeouts`` to keep the old behaviour. Crash and timeout candidates
-are written to ``build/fuzz-artifacts`` so CI can upload them.
+This is an execute-level fuzzer and is not part of CI: mutated bytecode may
+legitimately carry arbitrary addresses or form infinite loops, so a green run
+requires ``--tolerate-faults --tolerate-timeouts``. Timeouts count as failures
+by default (a hang is a real defect); pass ``--tolerate-timeouts`` to keep the
+old behaviour. Crash and timeout candidates are written to
+``build/fuzz-artifacts`` for local triage.
 """
 from __future__ import annotations
 

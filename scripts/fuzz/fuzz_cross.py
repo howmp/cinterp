@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Run load-only package fuzzing against the cross-compiled runtimes."""
+"""Run mutated packages against the cross-compiled runtimes.
+
+This executes the package (`cinterp-run` runs `main`), so it is an
+execute-level fuzzer, unlike `fuzz.py`, which only loads. It is not part of CI:
+mutated bytecode may legitimately carry arbitrary addresses or loop forever, so
+staying green requires ``--tolerate-faults``. Run it locally when investigating
+cross-target runtime behaviour.
+"""
 from __future__ import annotations
 
 import argparse

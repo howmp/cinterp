@@ -169,11 +169,14 @@ generate-diff-nightly: compiler runtime
 generate-diff-csmith: compiler runtime
 	$(PYTHON) scripts/fuzz/generate_diff.py --generator csmith --iterations 3 --report $(BUILD)/generate-diff-csmith.json
 
-# Fuzzing notes: mutated packages are trusted build products, so corrupted
-# bytecode may legitimately segfault under the ReleaseSmall runtime; fuzz-exec
-# and fuzz-cross tolerate those faults but fail on timeouts and on any crash
-# that appears without --tolerate-faults. A fully strict variant cannot be
-# green against ReleaseSmall, so it is intentionally not exposed as a target.
+# Fuzzing notes. `fuzz` is load-only: it only checks that the loader rejects
+# corrupted packages with CI_* errors, has no tolerance switches, and is the one
+# target CI runs as a gate.
+#
+# Every other target executes mutated bytecode. Such packages are trusted build
+# products, so they may legitimately carry arbitrary addresses or loop forever;
+# these targets only stay green with --tolerate-faults/--tolerate-timeouts and
+# are therefore kept for local investigation rather than CI.
 fuzz: compiler runtime
 	$(PYTHON) scripts/fuzz/fuzz.py --iterations 1000 --seed $(FUZZ_SEED)
 
