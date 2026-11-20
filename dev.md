@@ -422,7 +422,7 @@ make check-version        # VERSION 单一来源校验
 
 `make bench` 在当前主机上编译并预热 7 个示例，再为每个示例记录 20 次独立
 `cinterp-run` 进程的耗时，结果写入 `build/benchmark.json`。当前 native Linux x64
-ReleaseSmall 基线约为 **5.25–5.51 ms/run**（median；mean 5.27–5.61 ms，当前
+ReleaseSmall 基线约为 **5.24–5.45 ms/run**（median；mean 5.27–5.48 ms，当前
 `build/benchmark.json` 采样）；这个数字包含进程启动、包加载和一次执行，
 适合做同一机器上的前后回归比较，不是纯 VM 指令吞吐。
 
