@@ -405,6 +405,7 @@ make fuzz                 # load-only 变异
 make fuzz-exec            # 执行变异；崩溃失败，变异无限循环超时计数并保存
 make fuzz-bytecode        # 结构化 CIVM 变异
 make fuzz-ffi-exec
+make fuzz-cross           # 跨目标执行变异；--tolerate-faults 视访问违例为预期故障
 make fuzz-capi-asan
 make fuzz-sanitizer
 make bench                 # 本机进程级基准，输出 build/benchmark.json

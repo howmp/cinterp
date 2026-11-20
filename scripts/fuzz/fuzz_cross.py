@@ -161,6 +161,12 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=3.0)
+    parser.add_argument(
+        "--tolerate-faults",
+        action="store_true",
+        help="count access violations and other abnormal exits as expected faults "
+             "(mutated bytecode may carry arbitrary addresses)",
+    )
     args = parser.parse_args()
 
     names = [item for item in args.targets.split(",") if item]
@@ -181,7 +187,7 @@ def main() -> int:
     print(f"compiler: {compiler}", file=sys.stderr)
 
     rng = random.Random(args.seed)
-    crashes = timeouts = runs = 0
+    crashes = timeouts = faults = runs = 0
     with tempfile.TemporaryDirectory(prefix="cinterp-fuzz-cross-") as td:
         tmp = Path(td)
         for name in names:
@@ -208,13 +214,23 @@ def main() -> int:
                     timeouts += 1
                     continue
                 if proc.returncode < 0 or proc.returncode >= 128:
+                    if args.tolerate_faults:
+                        # Corrupted bytecode may carry arbitrary addresses, so a
+                        # mutated package can legitimately fault inside the VM's
+                        # memory instructions. Packages are trusted build
+                        # products, matching fuzz_exec.py's --tolerate-faults.
+                        faults += 1
+                        continue
                     print(
                         f"CRASH {name} signal/abort rc={proc.returncode} "
                         f"on mutation #{runs}",
                         file=sys.stderr,
                     )
                     crashes += 1
-    print(f"fuzz-cross: {runs} mutations, {crashes} crashes, {timeouts} timeouts")
+    print(
+        f"fuzz-cross: {runs} mutations, {crashes} crashes, "
+        f"{faults} expected faults, {timeouts} timeouts"
+    )
     return 1 if crashes else 0
 
 

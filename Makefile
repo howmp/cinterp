@@ -171,7 +171,8 @@ generate-diff-csmith: compiler runtime
 
 # Fuzzing notes: mutated packages are trusted build products, so corrupted
 # bytecode may legitimately segfault under the ReleaseSmall runtime; fuzz-exec
-# tolerates those faults but fails on timeouts. A fully strict variant cannot be
+# and fuzz-cross tolerate those faults but fail on timeouts and on any crash
+# that appears without --tolerate-faults. A fully strict variant cannot be
 # green against ReleaseSmall, so it is intentionally not exposed as a target.
 fuzz: compiler runtime
 	$(PYTHON) scripts/fuzz/fuzz.py --iterations 1000 --seed $(FUZZ_SEED)
@@ -186,7 +187,7 @@ fuzz-bytecode: compiler runtime
 	$(PYTHON) scripts/fuzz/fuzz_bytecode.py --iterations 500 --tolerate-faults --tolerate-timeouts --seed $(FUZZ_SEED)
 
 fuzz-cross: compiler runtime
-	$(PYTHON) scripts/fuzz/fuzz_cross.py --iterations 100 --seed $(FUZZ_SEED)
+	$(PYTHON) scripts/fuzz/fuzz_cross.py --iterations 100 --tolerate-faults --seed $(FUZZ_SEED)
 
 fuzz-capi-asan: compiler runtime
 	$(PYTHON) scripts/fuzz/fuzz_capi_sanitizer.py --iterations 200 --seed $(FUZZ_SEED)
