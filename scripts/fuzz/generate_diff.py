@@ -9,7 +9,10 @@ When the native build succeeds but cinterp fails to compile, the case counts as
 a `failure` (a real gap); `--allow-compile-skip` restores the old skip behaviour
 for local triage. Seeds listed in tests/generator-known-failures.json that still
 fail are counted as `known_skip`; a listed seed that now passes is reported as
-stale and fails the run so the whitelist cannot rot.
+stale and fails the run so the whitelist cannot rot. An entry may instead be an
+object with `slow: true` for a seed that only exceeds the run timeout: it
+excuses timeouts only (never wrong output or compile errors) and is never
+reported as stale, because whether it fits in the timeout depends on the host.
 """
 from __future__ import annotations
 
@@ -213,13 +216,28 @@ def main() -> int:
     known = {}
     if known_path.is_file():
         known = json.loads(known_path.read_text()).get(args.generator, {})
+
+    def known_meta(value) -> tuple[str, bool]:
+        """Whitelist entries are a reason string, or an object with `slow: true`.
+
+        A `slow` entry only excuses run timeouts: a wrong result or compile error
+        from that seed must still fail, and it never counts as stale because
+        whether it fits in the run timeout depends on the machine.
+        """
+        if isinstance(value, dict):
+            return str(value.get("reason", "")), bool(value.get("slow"))
+        return str(value), False
+
     def run_seed(seed: int) -> dict:
         if args.generator == "csmith":
             item = case_csmith(seed, generator, temp, args.allow_compile_skip)
         else:
             item = case(seed, generator, temp, args.max_source_bytes, args.allow_compile_skip)
         if item["status"] == "failure" and str(seed) in known:
-            item.update(status="skip", reason="known: " + str(known[str(seed)]), known_hit=True)
+            reason, slow = known_meta(known[str(seed)])
+            if slow and "run timeout" not in item["reason"]:
+                return item
+            item.update(status="skip", reason="known: " + reason, known_hit=True)
         return item
 
     results = []
@@ -247,12 +265,14 @@ def main() -> int:
     stale_known = sorted(
         int(seed)
         for seed in known
-        if seed in generated and by_seed[int(seed)]["status"] == "ok"
+        if seed in generated
+        and by_seed[int(seed)]["status"] == "ok"
+        and not known_meta(known[seed])[1]
     )
     for seed in stale_known:
         print(
             f"STALE known-failure seed {seed}: listed in tests/generator-known-failures.json "
-            f"but now agrees with native ({known[str(seed)]}); remove it from the whitelist",
+            f"but now agrees with native ({known_meta(known[str(seed)])[0]}); remove it from the whitelist",
             file=sys.stderr,
         )
     fail_root = Path(args.failures_dir)
@@ -269,7 +289,7 @@ def main() -> int:
                     shutil.rmtree(dst)
                 shutil.copytree(src, dst)
                 (dst / "failure.json").write_text(json.dumps(item, indent=2) + "\n")
-                if args.minimize and item["status"] in ("failure", "skip"):
+                if args.minimize and item["status"] in ("failure", "skip") and not item.get("known_hit"):
                     minimize_tasks.append((item, dst))
 
         def minimize_one(task: tuple[dict, Path]) -> None:

@@ -4,5 +4,10 @@
     "2": "known TooManyFunctions on generated seed 2",
     "3": "known checksum mismatch on generated seed 3"
   },
-  "yarpgen": {}
+  "yarpgen": {
+    "24": {
+      "reason": "slow seed: native 0.06s, cinterp ~27s standalone, so the 60s run timeout only trips on contended CI runners",
+      "slow": true
+    }
+  }
 }

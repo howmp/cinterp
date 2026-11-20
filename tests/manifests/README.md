@@ -180,9 +180,12 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 
 `make test-suites-smoke`（smoke 层级）只运行 `csuite`（在宿主上为 18/18）。
 生成的 YARPGen/Csmith 已知失败种子单独记录在
-`tests/generator-known-failures.json` 中。YARPGen 白名单目前
-为空；超出已记录运行时上限的生成程序会被报告为
-`cinterp engine limit:` 跳过，而白名单中的种子一旦开始通过，就会让
+`tests/generator-known-failures.json` 中。YARPGen 白名单有一个
+`slow` 条目（seed 24：cinterp 解释执行约 27 秒，空闲机器能完成，
+CI 并发下超过 60 秒运行上限）。`slow` 条目只豁免运行超时：同一 seed
+出现输出不一致或编译失败仍然算 failure，也不会因机器变快而报 stale。
+超出已记录运行时上限的生成程序会被报告为
+`cinterp engine limit:` 跳过，而普通白名单中的种子一旦开始通过，就会让
 `scripts/fuzz/generate_diff.py` 因 stale 而失败。Csmith 映射仍有三个
 条目。
 

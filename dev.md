@@ -462,7 +462,7 @@ ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。Rel
 - `make test-suites-full`：**4331/4522 通过，191 skip**；当前 skip 全部为 `unsupported`，没有 `known-failure`。
 - 通过用例中 gcc-torture-compile 1403 + llvm-regression-c 933 + compcert-compile 30 = 2366 个是仅编译（另有 llvm-singlesource 85 个也是 `mode: compile`，所有编译模式合计 2451）；可执行基线是其余 1880 个通过用例。
 - `make test-suites` / `make test-suites-nightly` 的数字随 manifest 和当次 report 变化；请以对应 `build/test-suites*.json` 为准，不在本文固定易漂移的总数。
-- 最近一次 nightly 的已知结果：YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure；nightly 固定 suite 的通过/跳过数以当次 report 为准。
+- 最近一次 nightly 的已知结果：YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure（空闲快速机器）；CI 上 seed 24 超时后计入 known_skip，变为 92 通过 / 8 skip / 1 known_skip / 0 failure。nightly 固定 suite 的通过/跳过数以当次 report 为准。
 - 并发：`test_suites.py --jobs` 默认 CPU 核数，且所有选中 suite 共用一个全局 worker 池；`SUITE_JOBS` 可覆盖。nightly 由 `scripts/test/test_nightly.sh` 并行执行 suite 与 `generate_diff`，`GEN_JOBS`/`MINIMIZE_JOBS` 控制差分并发，日志为 `build/nightly-suite.log` 和 `build/nightly-diff.log`；顺序模式为 `make test-suites-nightly-serial`，`NIGHTLY_MINIMIZE=0` 跳过最小化。
 - `scripts/test/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
 - 多 CIB/线程：`scripts/test/test.sh` 覆盖 `runtime/tests/capi_multi.c`（静态/共享链接、3 个 VM 并行、busy 语义）；重复 callback 运行由 C API 测试承担。
@@ -517,7 +517,7 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 - **宿主堆、atexit/signal 与全局初始化**：`malloc` 等宿主堆分配跨 run 累积，不随 VM 线性内存重置；`atexit`/`signal` 是进程全局状态，多 VM/重复运行共享；全局安装代码只出现在 `main`，运行时也只接受 `main` 入口。
 - **callback 槽位**：固定 256 个进程级静态槽。自动 `CREATE_CALLBACK` 槽在 VM 销毁/plan 重载前一直占用（跨 run 复用）；显式 `ci_callback_acquire` 槽在 release 后回到可复用集合，未 release 的显式槽随 VM 销毁/重载退休。自动槽耗尽后返回 `TooManyCallbacks`。
 - **外部线程异步 callback**：VM 正在运行时，另一线程调用的 callback 默认 fail-fast（非 sret 返回值置零、sret 缓冲区不变，并记录 `CI_E_BUSY`），不排队、不阻塞；`libc-test/pthread_tsd` 因此显式 skip。需要异步回调的库应在 VM 空闲时调用，或改成同步 callback 设计。
-- **生成式差分**：YARPGen whitelist 已清空；nightly 的 7 个 skip 是 native 拒绝/超时或 `compiler limit:` 引擎上限。Csmith 仍有 3 条 known failure；报告保留 stale 检测，whitelist 条目开始通过会失败。
+- **生成式差分**：YARPGen whitelist 只有 seed 24 一个 `slow` 条目（解释执行约 27 秒，CI 并发下超 60 秒运行上限；只豁免超时，且不会因机器变快而报 stale）；nightly 的 7 个 skip 是 native 拒绝/超时或 `compiler limit:` 引擎上限。Csmith 仍有 3 条 known failure；报告保留 stale 检测，普通 whitelist 条目开始通过会失败。
 
 ### 14.1 暂缓的大功能（第 5 项）
 
