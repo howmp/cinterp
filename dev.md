@@ -102,9 +102,10 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量�
 ### 6.1 值与 opcode
 
 - 栈槽固定 8 字节；`Value` 为 `extern union { i: i64, u: u64 }`，浮点按位存放，f32 仅在低 32 位有效，f80/f128 通过线性内存按指针传递。
-- **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xA5）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
+- **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xA6）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
 - 当前实现覆盖常量/局部变量、内存、整数/浮点/位运算/比较/转换、控制流、指针/GEP、varargs、setjmp/longjmp、VLA、f80/f128、`llvm.is.fpclass`、`MEMCPY/MEMSET`、原生调用/callback 等。
 - 操作数使用固定小端 `u8/u16/u32/u64` 编码；跳转目标是加载后的字节码偏移。CIVM/CIPL 的逐字节布局见 [`docs/cib.md`](./docs/cib.md)。
+- 窄整数规约用单条 `NORMALIZE`（`0xA6`）完成，取代旧的 `常量掩码 + AND [+ SHL + SHR_S]` 序列。运行时还会在顺序执行时融合 `STORE_LOCAL; LOAD_LOCAL` 对：-O0 IR 对几乎每次局部变量读取都会生成这一对，同槽位时等价于空操作，异槽位时只需替换栈顶；跳转落到 `LOAD_LOCAL` 时仍按独立指令执行，语义不变。
 
 ### 6.2 帧与线性内存
 

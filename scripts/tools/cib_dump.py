@@ -187,6 +187,7 @@ OPS: dict[int, tuple[str, str]] = {
     0xA3: ("CALLBACK_ACQUIRE", "callback_acquire"),
     0xA4: ("CALLBACK_RELEASE", NO_ARG),
     0xA5: ("LOAD_CONST_POOL", "pool"),
+    0xA6: ("NORMALIZE", "u8"),
 }
 
 

@@ -142,6 +142,12 @@ pub const OP_CALLBACK_RELEASE: u8 = 0xA4;
 /// `OP_LOAD_CONST_POOL u32 ref`: read a 1/2/4/8-byte constant from CIPC
 /// data (`ref` carries offset, width and signedness).
 pub const OP_LOAD_CONST_POOL: u8 = 0xA5;
+/// `OP_NORMALIZE u8 param`: reduce the top of stack to an 8/16/32-bit integer.
+/// `param & 3` selects the width (0/1/2 = 8/16/32 bits) and bit 7 selects sign
+/// extension; without it the value is zero-extended. This replaces the
+/// `mask; and; shift; shl; shift; shr_s` chain the compiler used to emit for
+/// every narrow integer operation.
+pub const OP_NORMALIZE: u8 = 0xA6;
 
 fn floatToI64Safe(x: anytype) !i64 {
     const xf: f64 = @floatCast(x);
@@ -208,6 +214,11 @@ fn fpClassValue(v: Value, kind: u8) u16 {
         },
         else => 0,
     };
+}
+
+fn peekU16(bytes: []const u8, off: usize) ?u16 {
+    if (off + 2 > bytes.len) return null;
+    return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
 }
 
 fn readU32At(bytes: []const u8, off: usize) u32 {
@@ -1479,6 +1490,20 @@ pub const VM = struct {
                     }
                     try self.push(.{ .i = @bitCast(bits) });
                 },
+                OP_NORMALIZE => {
+                    const param = try readU8(code, &ip);
+                    const width_code: u8 = param & 0x03;
+                    if (width_code == 0x03) return error.BadOpcode;
+                    const bits: u32 = @as(u32, 8) << @intCast(width_code);
+                    const shift: u6 = @intCast(64 - bits);
+                    if (self.sp == 0) return error.StackUnderflow;
+                    const top = &self.values[self.sp - 1];
+                    const raw: u64 = @bitCast(top.i);
+                    top.i = if ((param & 0x80) != 0)
+                        @as(i64, @bitCast(raw << shift)) >> shift
+                    else
+                        @bitCast(raw & ((@as(u64, 1) << @intCast(bits)) - 1));
+                },
                 OP_ADD => {
                     const b = try self.pop();
                     const a = try self.pop();
@@ -1844,8 +1869,27 @@ pub const VM = struct {
                     const slot: usize = idx;
                     const local_count: usize = f.local_count;
                     if (slot >= local_count) return error.BadLocal;
-                    const v = try self.pop();
-                    self.values[base + slot] = v;
+                    if (self.sp == 0) return error.StackUnderflow;
+                    self.values[base + slot] = self.values[self.sp - 1];
+                    // -O0 IR emits `store %v, %local` followed by a `load %local`
+                    // for nearly every use. The pair keeps the stack balanced,
+                    // so fuse it: the top of stack already holds the stored
+                    // value and the load only has to replace it (or nothing,
+                    // when both instructions name the same slot). Fusing on
+                    // fallthrough only is safe: a jump that targets the load
+                    // still executes it as a standalone instruction.
+                    var fused = false;
+                    if (ip < code.len and code[ip] == OP_LOAD_LOCAL) {
+                        if (peekU16(code, ip + 1)) |slot2| {
+                            const other: usize = slot2;
+                            if (other < local_count) {
+                                if (other != slot) self.values[self.sp - 1] = self.values[base + other];
+                                ip += 3;
+                                fused = true;
+                            }
+                        }
+                    }
+                    if (!fused) self.sp -= 1;
                 },
                 OP_CMP_EQ => {
                     const b = try self.pop();
