@@ -113,3 +113,7 @@ pub const OP_CALLBACK_ACQUIRE: u8 = 0xA3;
 pub const OP_CALLBACK_RELEASE: u8 = 0xA4;
 /// `LOAD_CONST_POOL u32 offset`: push eight bytes from the CIPC data blob.
 pub const OP_LOAD_CONST_POOL: u8 = 0xA5;
+/// `NORMALIZE u8 param`: reduce the top of stack to an 8/16/32-bit integer.
+/// `param & 3` selects the width (0/1/2 = 8/16/32 bits) and bit 7 selects sign
+/// extension; without it the value is zero-extended.
+pub const OP_NORMALIZE: u8 = 0xA6;

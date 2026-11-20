@@ -1178,15 +1178,27 @@ const Lowerer = struct {
 
     fn normalizeInt(self: *Lowerer, bits: u32, signed: bool) !void {
         if (bits == 0 or bits >= 64) return;
-        try self.emitConst(maskFor(bits));
-        try self.emitU8(op.OP_AND);
-        if (signed) {
-            const shift: i64 = @intCast(64 - bits);
-            try self.emitConst(shift);
-            try self.emitU8(op.OP_SHL);
-            try self.emitConst(shift);
-            try self.emitU8(op.OP_SHR_S);
-        }
+        const width_code: u8 = switch (bits) {
+            8 => 0,
+            16 => 1,
+            32 => 2,
+            else => {
+                try self.emitConst(maskFor(bits));
+                try self.emitU8(op.OP_AND);
+                if (signed) try self.emitSignShift(bits);
+                return;
+            },
+        };
+        try self.emitU8(op.OP_NORMALIZE);
+        try self.emitU8(width_code | (if (signed) @as(u8, 0x80) else 0));
+    }
+
+    fn emitSignShift(self: *Lowerer, bits: u32) !void {
+        const shift: i64 = @intCast(64 - bits);
+        try self.emitConst(shift);
+        try self.emitU8(op.OP_SHL);
+        try self.emitConst(shift);
+        try self.emitU8(op.OP_SHR_S);
     }
 
     // ----------------------------------------------------------- value emitters
@@ -1315,23 +1327,14 @@ const Lowerer = struct {
             .zext => {
                 try self.emitValueOf(c.src, c.value);
                 if (intBitsOf(c.src)) |bits| {
-                    if (bits < 64) {
-                        try self.emitConst(maskFor(bits));
-                        try self.emitU8(op.OP_AND);
-                    }
+                    if (bits < 64) try self.normalizeInt(bits, false);
                 }
                 try self.normalizeInt(intBitsOf(c.dst) orelse 64, true);
             },
             .sext => {
                 try self.emitValueOf(c.src, c.value);
                 if (intBitsOf(c.src)) |bits| {
-                    if (bits < 64) {
-                        const shift: i64 = @intCast(64 - bits);
-                        try self.emitConst(shift);
-                        try self.emitU8(op.OP_SHL);
-                        try self.emitConst(shift);
-                        try self.emitU8(op.OP_SHR_S);
-                    }
+                    if (bits < 64) try self.normalizeInt(bits, true);
                 }
                 try self.normalizeInt(intBitsOf(c.dst) orelse 64, true);
             },
@@ -1957,13 +1960,10 @@ const Lowerer = struct {
         switch (b.op) {
             .udiv, .urem => {
                 if (bits < 64) {
-                    const mask = maskFor(bits);
                     try self.emitValueOf(b.ty, b.lhs);
-                    try self.emitConst(mask);
-                    try self.emitU8(op.OP_AND);
+                    try self.normalizeInt(bits, false);
                     try self.emitValueOf(b.ty, b.rhs);
-                    try self.emitConst(mask);
-                    try self.emitU8(op.OP_AND);
+                    try self.normalizeInt(bits, false);
                     try self.emitU8(if (b.op == .udiv) op.OP_DIV_U else op.OP_REM_U);
                     try self.normalizeInt(bits, true);
                 } else {
@@ -1976,18 +1976,8 @@ const Lowerer = struct {
             .lshr, .ashr => {
                 const shift_signed = b.op == .ashr;
                 if (bits < 64) {
-                    if (shift_signed) {
-                        const shift: i64 = @intCast(64 - bits);
-                        try self.emitValueOf(b.ty, b.lhs);
-                        try self.emitConst(shift);
-                        try self.emitU8(op.OP_SHL);
-                        try self.emitConst(shift);
-                        try self.emitU8(op.OP_SHR_S);
-                    } else {
-                        try self.emitValueOf(b.ty, b.lhs);
-                        try self.emitConst(maskFor(bits));
-                        try self.emitU8(op.OP_AND);
-                    }
+                    try self.emitValueOf(b.ty, b.lhs);
+                    try self.normalizeInt(bits, shift_signed);
                     try self.emitValueOf(b.ty, b.rhs);
                     try self.emitU8(if (shift_signed) op.OP_SHR_S else op.OP_SHR_U);
                     try self.normalizeInt(bits, true);
@@ -2043,10 +2033,7 @@ const Lowerer = struct {
             .inttoptr, .bitcast, .addrspacecast => {},
             .ptrtoint => {
                 if (dst_bits) |bits| {
-                    if (bits < 64) {
-                        try self.emitConst(maskFor(bits));
-                        try self.emitU8(op.OP_AND);
-                    }
+                    if (bits < 64) try self.normalizeInt(bits, false);
                 }
             },
             .fptosi => {
@@ -2087,10 +2074,7 @@ const Lowerer = struct {
             },
             .uitofp => {
                 if (src_bits) |bits| {
-                    if (bits < 64) {
-                        try self.emitConst(maskFor(bits));
-                        try self.emitU8(op.OP_AND);
-                    }
+                    if (bits < 64) try self.normalizeInt(bits, false);
                 }
                 if (dst_kind) |kind| {
                     try self.emitU8(switch (kind) {
@@ -2134,22 +2118,13 @@ const Lowerer = struct {
             .trunc => try self.normalizeInt(dst_bits orelse 64, true),
             .zext => {
                 if (src_bits) |bits| {
-                    if (bits < 64) {
-                        try self.emitConst(maskFor(bits));
-                        try self.emitU8(op.OP_AND);
-                    }
+                    if (bits < 64) try self.normalizeInt(bits, false);
                 }
                 try self.normalizeInt(dst_bits orelse 64, true);
             },
             .sext => {
                 if (src_bits) |bits| {
-                    if (bits < 64) {
-                        const shift: i64 = @intCast(64 - bits);
-                        try self.emitConst(shift);
-                        try self.emitU8(op.OP_SHL);
-                        try self.emitConst(shift);
-                        try self.emitU8(op.OP_SHR_S);
-                    }
+                    if (bits < 64) try self.normalizeInt(bits, true);
                 }
                 try self.normalizeInt(dst_bits orelse 64, true);
             },
@@ -2576,10 +2551,7 @@ const Lowerer = struct {
     /// after native/indirect calls).
     fn normalizeLoadedInt(self: *Lowerer, slot: u16, bits: u32) !void {
         try self.emitLoadSlot(slot);
-        try self.emitConst(@intCast(64 - bits));
-        try self.emitU8(op.OP_SHL);
-        try self.emitConst(@intCast(64 - bits));
-        try self.emitU8(op.OP_SHR_S);
+        try self.normalizeInt(bits, true);
         try self.emitStoreSlot(slot);
     }
 
