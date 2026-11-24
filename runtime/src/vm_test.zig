@@ -1459,6 +1459,23 @@ test "LOAD_CONST_POOL fuses narrow ALU and normalizes" {
     try expectFusedResult(buildPoolAluProgram(&code_buf, 200, 0, vm.OP_ADD_N, 0x00), &data, 44);
 }
 
+test "LOAD_CONST_POOL fuses integer comparisons" {
+    var code_buf: [32]u8 = undefined;
+    var data: [8]u8 = undefined;
+    const ref: u32 = @as(u32, 3) << 28;
+
+    std.mem.writeInt(u64, &data, 5, .little);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, 5, ref, vm.OP_CMP_EQ, null), &data, 1);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, 4, ref, vm.OP_CMP_EQ, null), &data, 0);
+
+    std.mem.writeInt(u64, &data, 0, .little);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, -1, ref, vm.OP_CMP_LT, null), &data, 1);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, -1, ref, vm.OP_CMP_LT_U, null), &data, 0);
+
+    std.mem.writeInt(u64, &data, std.math.maxInt(u64), .little);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, 0, ref, vm.OP_CMP_LT_U, null), &data, 1);
+}
+
 test "LOAD_CONST_POOL fusion keeps division-by-zero errors" {
     var code_buf: [32]u8 = undefined;
     const data = [_]u8{0} ** 8;

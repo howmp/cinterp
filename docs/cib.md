@@ -289,7 +289,7 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 | 0xA2 | `FPCLASS` | u8 kind | `value,mask -> 0/1`；LLVM `is.fpclass`，kind 选择分类、mask 是测试位图 |
 | 0xA3 | `CALLBACK_ACQUIRE` | u16 plan,u16 func | 为 `func`/`plan` 分配一个进程级 trampoline 槽并压入地址；池耗尽时压入 NULL |
 | 0xA4 | `CALLBACK_RELEASE` | — | `ptr -> status`；释放该 VM 拥有的槽，返回 0/`CI_E_BUSY`/负值 |
-| 0xA5 | `LOAD_CONST_POOL` | u32 ref | 从 CIPC data 读取常量并压栈；ref bits0..27=offset，bits28..29=width code（0/1/2/3 → 1/2/4/8B），bit30=signed，bit31 必须为 0 |
+| 0xA5 | `LOAD_CONST_POOL` | u32 ref | 从 CIPC data 读取常量并压栈；ref bits0..27=offset，bits28..29=width code（0/1/2/3 → 1/2/4/8B），bit30=signed，bit31 必须为 0。fallthrough 的下一条为整数 ALU 或 `CMP_EQ/LT/LT_U` 时，在同一个 dispatch 内融合执行 |
 | 0xA6 | `NORMALIZE` | u8 param | 就地规约栈顶为 8/16/32 位整数；param bits0..1=width code（0/1/2 → 8/16/32 位，3 非法），bit7=signed（置位做符号扩展，否则零扩展）。替代原先的 `mask/AND/shift/SHL/shift/SHR_S` 序列 |
 | 0xA7 | `FMA` | — | `a,b,c -> fma(a,b,c)`（double）；`llvm.fmuladd.f64` 的融合乘加，避免每次调用 libm `fma` |
 | 0xA8 | `FMA32` | — | 单精度版本的 `FMA`（`llvm.fmuladd.f32`） |

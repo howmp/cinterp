@@ -168,6 +168,37 @@ pub const OP_FSHL_N: u8 = 0xB7;
 pub const OP_FSHR_N: u8 = 0xB8;
 pub const OP_USUB_SAT_N: u8 = 0xB9;
 
+const FusionKind = enum(u8) { none, alu, narrow, cmp };
+
+/// Opcodes the LOAD_CONST_POOL fallthrough can absorb. A table lookup keeps
+/// the hot path uniform as comparison fusion is added.
+const fusion_kinds: [256]FusionKind = blk: {
+    var kinds = [_]FusionKind{.none} ** 256;
+    kinds[OP_ADD] = .alu;
+    kinds[OP_SUB] = .alu;
+    kinds[OP_MUL] = .alu;
+    kinds[OP_AND] = .alu;
+    kinds[OP_OR] = .alu;
+    kinds[OP_XOR] = .alu;
+    kinds[OP_SHL] = .alu;
+    kinds[OP_SHR_S] = .alu;
+    kinds[OP_SHR_U] = .alu;
+    kinds[OP_DIV_S] = .alu;
+    kinds[OP_DIV_U] = .alu;
+    kinds[OP_REM_S] = .alu;
+    kinds[OP_REM_U] = .alu;
+    kinds[OP_ADD_N] = .narrow;
+    kinds[OP_SUB_N] = .narrow;
+    kinds[OP_MUL_N] = .narrow;
+    kinds[OP_AND_N] = .narrow;
+    kinds[OP_OR_N] = .narrow;
+    kinds[OP_XOR_N] = .narrow;
+    kinds[OP_CMP_EQ] = .cmp;
+    kinds[OP_CMP_LT] = .cmp;
+    kinds[OP_CMP_LT_U] = .cmp;
+    break :blk kinds;
+};
+
 /// `--trace` counters. Debug and ReleaseSafe compile the updates in;
 /// ReleaseFast/ReleaseSmall fold `trace_build` to false and skip them, so the
 /// dispatch loop is unchanged there.
@@ -185,7 +216,7 @@ pub const TraceStats = struct {
     /// fusion.
     const_pool_after: [256]u64 = [_]u64{0} ** 256,
     fused_store_load: u64 = 0,
-    /// LOAD_CONST_POOL;ALU dispatches fused at runtime.
+    /// LOAD_CONST_POOL;ALU/CMP dispatches fused at runtime.
     fused_const_alu: u64 = 0,
 };
 
@@ -1591,7 +1622,7 @@ pub const VM = struct {
                 try writer.print("cinterp trace: {d} instructions\n", .{total});
             }
             try writer.print("cinterp trace: fused STORE_LOCAL;LOAD_LOCAL {d}\n", .{self.trace.fused_store_load});
-            try writer.print("cinterp trace: fused LOAD_CONST_POOL;ALU {d}\n", .{self.trace.fused_const_alu});
+            try writer.print("cinterp trace: fused LOAD_CONST_POOL;ALU/CMP {d}\n", .{self.trace.fused_const_alu});
 
             var entries: [256]TraceCount = undefined;
             var n: usize = 0;
@@ -1878,54 +1909,67 @@ pub const VM = struct {
                         if ((bits & sign_bit) != 0) bits |= ~((@as(u64, 1) << @as(u6, @intCast(width * 8))) - 1);
                     }
                     const c: i64 = @bitCast(bits);
-                    // Fuse a fallthrough LOAD_CONST_POOL;integer-ALU pair. Only
-                    // the fallthrough is fused: a jump that lands on the ALU
-                    // still executes it there, and the const load keeps its
-                    // original stack effect when the pair is not fused.
+                    // Fuse a fallthrough LOAD_CONST_POOL;integer-ALU/CMP pair.
+                    // Only the fallthrough is fused: a jump that lands on the
+                    // consumer still executes it there, and the const load
+                    // keeps its original stack effect when the pair is not
+                    // fused.
                     var fused = false;
                     if (ip < code.len) {
                         const next_op = code[ip];
-                        var fused_len: usize = 0;
+                        const kind = fusion_kinds[next_op];
+                        var fused_len: usize = 1;
                         var narrow_param: u8 = 0;
-                        switch (next_op) {
-                            OP_ADD, OP_SUB, OP_MUL, OP_AND, OP_OR, OP_XOR, OP_SHL, OP_SHR_S, OP_SHR_U, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U => fused_len = 1,
-                            OP_ADD_N, OP_SUB_N, OP_MUL_N, OP_AND_N, OP_OR_N, OP_XOR_N => {
-                                if (ip + 1 < code.len) {
-                                    const param = code[ip + 1];
-                                    if ((param & 0x03) != 0x03) {
-                                        fused_len = 2;
-                                        narrow_param = param;
-                                    }
+                        var active = kind != .none;
+                        if (kind == .narrow) {
+                            if (ip + 1 < code.len) {
+                                const param = code[ip + 1];
+                                if ((param & 0x03) != 0x03) {
+                                    fused_len = 2;
+                                    narrow_param = param;
+                                } else {
+                                    active = false;
                                 }
-                            },
-                            else => {},
+                            } else {
+                                active = false;
+                            }
                         }
-                        if (fused_len != 0) {
+                        if (active) {
                             const a = try self.pop();
-                            const cu: u64 = @bitCast(c);
-                            const sh: u6 = @intCast(cu & 63);
-                            if ((next_op == OP_DIV_S or next_op == OP_REM_S) and c == 0)
-                                return error.DivisionByZero;
-                            if ((next_op == OP_DIV_U or next_op == OP_REM_U) and cu == 0)
-                                return error.DivisionByZero;
-                            const result: i64 = switch (next_op) {
-                                OP_ADD, OP_ADD_N => a.i +% c,
-                                OP_SUB, OP_SUB_N => a.i -% c,
-                                OP_MUL, OP_MUL_N => a.i *% c,
-                                OP_AND, OP_AND_N => a.i & c,
-                                OP_OR, OP_OR_N => a.i | c,
-                                OP_XOR, OP_XOR_N => a.i ^ c,
-                                OP_SHL => @bitCast(@as(u64, @bitCast(a.i)) << sh),
-                                OP_SHR_S => a.i >> sh,
-                                OP_SHR_U => @bitCast(@as(u64, @bitCast(a.i)) >> sh),
-                                OP_DIV_S => @divTrunc(a.i, c),
-                                OP_DIV_U => @bitCast(@as(u64, @bitCast(a.i)) / cu),
-                                OP_REM_S => @rem(a.i, c),
-                                OP_REM_U => @bitCast(@as(u64, @bitCast(a.i)) % cu),
-                                else => unreachable,
-                            };
-                            try self.push(.{ .i = result });
-                            if (fused_len == 2) try self.normalizeTop(narrow_param);
+                            if (kind == .cmp) {
+                                const result: i64 = switch (next_op) {
+                                    OP_CMP_EQ => @as(i64, @intFromBool(a.i == c)),
+                                    OP_CMP_LT => @as(i64, @intFromBool(a.i < c)),
+                                    OP_CMP_LT_U => @as(i64, @intFromBool(@as(u64, @bitCast(a.i)) < @as(u64, @bitCast(c)))),
+                                    else => unreachable,
+                                };
+                                try self.push(.{ .i = result });
+                            } else {
+                                const cu: u64 = @bitCast(c);
+                                const sh: u6 = @intCast(cu & 63);
+                                if ((next_op == OP_DIV_S or next_op == OP_REM_S) and c == 0)
+                                    return error.DivisionByZero;
+                                if ((next_op == OP_DIV_U or next_op == OP_REM_U) and cu == 0)
+                                    return error.DivisionByZero;
+                                const result: i64 = switch (next_op) {
+                                    OP_ADD, OP_ADD_N => a.i +% c,
+                                    OP_SUB, OP_SUB_N => a.i -% c,
+                                    OP_MUL, OP_MUL_N => a.i *% c,
+                                    OP_AND, OP_AND_N => a.i & c,
+                                    OP_OR, OP_OR_N => a.i | c,
+                                    OP_XOR, OP_XOR_N => a.i ^ c,
+                                    OP_SHL => @bitCast(@as(u64, @bitCast(a.i)) << sh),
+                                    OP_SHR_S => a.i >> sh,
+                                    OP_SHR_U => @bitCast(@as(u64, @bitCast(a.i)) >> sh),
+                                    OP_DIV_S => @divTrunc(a.i, c),
+                                    OP_DIV_U => @bitCast(@as(u64, @bitCast(a.i)) / cu),
+                                    OP_REM_S => @rem(a.i, c),
+                                    OP_REM_U => @bitCast(@as(u64, @bitCast(a.i)) % cu),
+                                    else => unreachable,
+                                };
+                                try self.push(.{ .i = result });
+                                if (kind == .narrow) try self.normalizeTop(narrow_param);
+                            }
                             ip += fused_len;
                             fused = true;
                             if (comptime trace_build) {

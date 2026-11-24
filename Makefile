@@ -8,6 +8,9 @@ SUITE_RUNNER := scripts/test/test_suites.py
 SUITE_CACHE := $(BUILD)/cib-cache-zig-ast
 SUITE_CC_OPT ?= 2
 SUITE_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+BENCH_LONG_CC_OPT ?= 0,2
+BENCH_LONG_RUNS ?= 3
+BENCH_LONG_JOBS ?= 0
 SUITE_RUN = $(PYTHON) $(SUITE_RUNNER) --compiler-path $(COMPILER) --jobs $(SUITE_JOBS) --cib-cache $(SUITE_CACHE) --cc-opt $(SUITE_CC_OPT)
 CROSS_SUITE_JOBS ?= 4
 CROSS_RUN = $(PYTHON) $(SUITE_RUNNER) --compiler-path $(COMPILER) --jobs $(CROSS_SUITE_JOBS) --cc-opt $(SUITE_CC_OPT)
@@ -43,7 +46,7 @@ help:
 		'test-suites-full    full pinned upstream suite' \
 		'test-suites-opt     csuite + c-testsuite at the default --cc-opt 2' \
 		'bench               benchmark and build/benchmark.json' \
-		'bench-long          long-running benchmarks and build/bench-long.json' \
+		'bench-long          pinned concurrent long benchmarks -> build/bench-long.json' \
 		'release-artifacts   release tarballs + SBOM + SHA256SUMS' \
 		'clean / distclean   remove outputs (clean preserves suite cache)'
 
@@ -222,7 +225,9 @@ bench: compiler runtime
 
 bench-long: compiler runtime
 	mkdir -p $(BUILD)
-	$(PYTHON) scripts/tools/bench_long.py --json $(BUILD)/bench-long.json
+	$(PYTHON) scripts/tools/bench_long.py \
+		--cc-opt $(BENCH_LONG_CC_OPT) --runs $(BENCH_LONG_RUNS) --jobs $(BENCH_LONG_JOBS) \
+		--json $(BUILD)/bench-long.json
 
 release-artifacts:
 	./scripts/release/package_release.sh

@@ -434,8 +434,11 @@ ReleaseSmall 基线约为 **5.24–5.45 ms/run**（median；mean 5.27–5.48 ms�
 `make bench-long` 使用固定的 10 个长用例（CompCert `test/c` 的 9 个
 benchmark 加 c-testsuite `00040`），默认分别以 `--cc-opt 0,2` 各编译一次、
 预热一次、计时 3 次，输出 min/median 和相对 `--cc-opt 0` 的几何平均加速比到
-`build/bench-long.json`。当前 ReleaseSmall 基线：O2 相对 O0 **1.477x**；
-`vmach` 是既有例外（0.948x），其余用例 1.03–2.29x。
+`build/bench-long.json`。它默认按物理核锁核并发：每个用例固定一个物理核，
+O0/O2 在同一核内串行，用例之间并行；`BENCH_LONG_JOBS=1` 回到顺序模式，
+`BENCH_LONG_CC_OPT=2` 只跑 O2。绝对耗时只应与相同 jobs/锁核设置的结果比较。
+顺序基线（1.477x O2/O0；`vmach` 0.948x）记录在
+`build/bench-long-o2-base.json`。
 
 ### 12.1 命令行与构建选项
 
@@ -469,10 +472,13 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 加载/运行失败 1，用法或 I/O 错误 2；C `main` 的返回值只通过 `result:` 输出。
 
 `--trace`（或 `CINTERP_TRACE=1`）在运行结束后向 stderr 打印指令总数、Mops/s、
-`STORE_LOCAL;LOAD_LOCAL` 与 `LOAD_CONST_POOL;ALU` 融合次数、opcode/函数/原生
+`STORE_LOCAL;LOAD_LOCAL` 与 `LOAD_CONST_POOL;ALU/CMP` 融合次数、opcode/函数/原生
 计划直方图，用于定位长用例的热点；`NORMALIZE after` 列出产生归一化的前一条
 opcode，`LOAD_CONST_POOL before` 列出常量加载后紧跟的 opcode，分别用于折叠
-结果归一化和常量操作数融合。
+结果归一化和常量操作数融合。生产 lowering 会把可交换整数算子的常量左操作数
+重排到第二个发射位置，让 `LOAD_CONST_POOL;ALU` 融合生效；`icmp`/`switch` 的
+第二个操作数为常量时由 `LOAD_CONST_POOL;CMP` 融合吸收，取反仍是后续的常量
+XOR（同样被融合）。
 计数只在 `Debug`/`ReleaseSafe` 构建中编译进去；`ReleaseFast`/`ReleaseSmall`
 会提示不可用，dispatch 循环和 VM 布局都没有额外字段。调用 libc `exit()` 的 C 程序
 由 `atexit` 兜底输出（Windows exe 未链接 CRT，只有正常返回时输出）。需要无干扰的

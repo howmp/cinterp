@@ -449,6 +449,21 @@ fn maskFor(bits: u32) i64 {
     return @intCast((@as(u64, 1) << @intCast(bits)) - 1);
 }
 
+fn constIntValue(value: ast.Value) ?i64 {
+    return switch (value) {
+        .int => |lit| intToI64(lit),
+        .zeroinitializer, .undef, .poison, .null_ => 0,
+        else => null,
+    };
+}
+
+fn isCommutativeIntBinary(b: ast.BinaryOp) bool {
+    return switch (b) {
+        .add, .mul, .and_, .or_, .xor => true,
+        else => false,
+    };
+}
+
 // ---------------------------------------------------------------------- layout
 
 const SizeAlign = struct { size: u32, alignment: u32 };
@@ -3155,8 +3170,19 @@ const Lowerer = struct {
                     .shl => op.OP_SHL,
                     else => return error.UnsupportedInstruction,
                 };
-                try self.emitValueOf(b.ty, b.lhs);
-                try self.emitValueOf(b.ty, b.rhs);
+                const reorder = !self.ctx.opts.legacy_codegen and
+                    isCommutativeIntBinary(b.op) and
+                    constIntValue(b.lhs) != null;
+                if (reorder) {
+                    // Emit the constant second so the runtime fuses the
+                    // adjacent LOAD_CONST_POOL;ALU pair. The operation is
+                    // commutative, so the swapped operand order is equivalent.
+                    try self.emitValueOf(b.ty, b.rhs);
+                    try self.emitValueOf(b.ty, b.lhs);
+                } else {
+                    try self.emitValueOf(b.ty, b.lhs);
+                    try self.emitValueOf(b.ty, b.rhs);
+                }
                 const narrow: ?u8 = switch (b.op) {
                     .add => op.OP_ADD_N,
                     .sub => op.OP_SUB_N,
@@ -3369,7 +3395,7 @@ const Lowerer = struct {
         const bits = intBitsOf(call.ret) orelse return error.BadCall;
         const identity_i1 = bits == 1 and
             (startsWith(name, "llvm.bitreverse.") or startsWith(name, "llvm.ctpop.") or
-                startsWith(name, "llvm.bswap."));
+            startsWith(name, "llvm.bswap."));
         if (identity_i1) {
             if (call.args.len < 1) return error.BadCall;
             try self.emitValue(call.args[0]);
@@ -5529,6 +5555,66 @@ test "Win64 variadic lowering duplicates FP args (printf shape)" {
     try testing.expectEqual(@as(u8, 0), plan.args[2].locs[0].kind);
     try testing.expectEqual(@as(u16, 2), plan.args[2].locs[0].index);
     try testing.expectEqual(@as(u8, 1), plan.sse_count);
+}
+
+test "production commutative constants are emitted second" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\define i32 @rhs_const(i32 %x) {
+        \\entry:
+        \\  %a = add i32 %x, 7
+        \\  ret i32 %a
+        \\}
+        \\
+        \\define i32 @lhs_const(i32 %x) {
+        \\entry:
+        \\  %a = add i32 7, %x
+        \\  ret i32 %a
+        \\}
+        \\
+        \\define i32 @sub_lhs(i32 %x) {
+        \\entry:
+        \\  %a = sub i32 3, %x
+        \\  ret i32 %a
+        \\}
+        \\
+        \\define i8 @narrow_lhs(i8 %x) {
+        \\entry:
+        \\  %a = add i8 1, %x
+        \\  ret i8 %a
+        \\}
+        \\
+    );
+    const result = try compileWithOptions(allocator, &module, 1, 8, .{ .legacy_codegen = false });
+
+    const rhs = codeOf(result, "rhs_const");
+    try testing.expect(std.mem.indexOf(u8, rhs, &.{ op.OP_ADD_N, 0x82 }) != null);
+    try testing.expect(std.mem.indexOf(u8, rhs, &.{op.OP_LOAD_LOCAL}).? <
+        std.mem.indexOf(u8, rhs, &.{op.OP_LOAD_CONST_POOL}).?);
+
+    // The lhs constant is emitted second so the runtime can fuse it with the
+    // ALU; without the reorder LOAD_CONST_POOL would come first.
+    const lhs = codeOf(result, "lhs_const");
+    try testing.expect(std.mem.indexOf(u8, lhs, &.{ op.OP_ADD_N, 0x82 }) != null);
+    try testing.expect(std.mem.indexOf(u8, lhs, &.{op.OP_LOAD_LOCAL}).? <
+        std.mem.indexOf(u8, lhs, &.{op.OP_LOAD_CONST_POOL}).?);
+
+    // Non-commutative ops keep the original order and are not reordered.
+    const sub_lhs = codeOf(result, "sub_lhs");
+    try testing.expect(std.mem.indexOf(u8, sub_lhs, &.{ op.OP_SUB_N, 0x82 }) != null);
+    try testing.expect(std.mem.indexOf(u8, sub_lhs, &.{op.OP_LOAD_CONST_POOL}).? <
+        std.mem.indexOf(u8, sub_lhs, &.{op.OP_LOAD_LOCAL}).?);
+
+    const narrow = codeOf(result, "narrow_lhs");
+    try testing.expect(std.mem.indexOf(u8, narrow, &.{ op.OP_ADD_N, 0x80 }) != null);
+    try testing.expect(std.mem.indexOf(u8, narrow, &.{op.OP_LOAD_LOCAL}).? <
+        std.mem.indexOf(u8, narrow, &.{op.OP_LOAD_CONST_POOL}).?);
 }
 
 test "write golden files" {

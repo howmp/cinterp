@@ -46,6 +46,10 @@
 `fneg`、`freeze`、`trunc`、`zext`、`sext`、`fptosi`、`fptoui`、`sitofp`、`uitofp`、
 `fpext`、`fptrunc`、`bitcast`、`inttoptr`、`ptrtoint`、`addrspacecast`。
 
+生产编译会把可交换整数算子的常量左操作数重排到第二个发射位置，使运行时的
+`LOAD_CONST_POOL;ALU` 融合生效；`icmp`/`switch` 的第二个操作数为常量时由
+`LOAD_CONST_POOL;CMP` 融合吸收。`legacy_codegen`（仅 lowering golden 使用）不做重排。
+
 `freeze` 按恒等操作降低（它把操作数存入结果槽）。`insertvalue` 在临时内存块中插入字段，
 `extractelement`/`insertelement` 按内存元素读写；`extractvalue` 对标量字段加载，对聚合/
 宽浮点字段返回地址。向量值在 CIVM 中以数据块地址表示。
