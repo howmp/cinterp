@@ -179,6 +179,85 @@ fn isAggregateLike(ty: *const ast.Type) bool {
     };
 }
 
+fn ptrIsLocal(value: ast.Value, name: []const u8) bool {
+    return switch (value) {
+        .local => |n| eql(n.name, name),
+        else => false,
+    };
+}
+
+/// Conservative use test: true when any operand names the local. Constant
+/// expressions cannot reference SSA locals, and metadata attachments are not
+/// SSA uses.
+fn valueMentions(value: ast.Value, name: []const u8) bool {
+    return switch (value) {
+        .local => |n| eql(n.name, name),
+        .aggregate => |agg| blk: {
+            for (agg.elems) |elem| {
+                if (valueMentions(elem.val, name)) break :blk true;
+            }
+            break :blk false;
+        },
+        .metadata_value => |tv| valueMentions(tv.val, name),
+        else => false,
+    };
+}
+
+fn instrMentions(instr: ast.Instruction, name: []const u8) bool {
+    switch (instr.op) {
+        .alloca => |a| {
+            if (a.count) |count| return valueMentions(count.val, name);
+        },
+        .load => |l| return valueMentions(l.ptr.val, name),
+        .store => |s| return valueMentions(s.value.val, name) or valueMentions(s.ptr.val, name),
+        .gep => |g| {
+            if (valueMentions(g.ptr.val, name)) return true;
+            for (g.indices) |idx| {
+                if (valueMentions(idx.val, name)) return true;
+            }
+        },
+        .phi => |p| {
+            for (p.incoming) |incoming| {
+                if (valueMentions(incoming.value, name)) return true;
+            }
+        },
+        .br => |br| switch (br) {
+            .unconditional => {},
+            .conditional => |c| return valueMentions(c.cond.val, name),
+        },
+        .switch_ => |sw| {
+            if (valueMentions(sw.cond.val, name)) return true;
+            for (sw.cases) |case| {
+                if (valueMentions(case.value.val, name)) return true;
+            }
+        },
+        .ret => |ret| switch (ret) {
+            .void => {},
+            .value => |v| return valueMentions(v.val, name),
+        },
+        .select => |s| return valueMentions(s.cond.val, name) or
+            valueMentions(s.if_true.val, name) or valueMentions(s.if_false.val, name),
+        .extractvalue => |e| return valueMentions(e.aggregate.val, name),
+        .call => |c| {
+            switch (c.callee) {
+                .direct => {},
+                .indirect => |tv| if (valueMentions(tv.val, name)) return true,
+                .asm_ => {},
+            }
+            for (c.args) |arg| {
+                if (valueMentions(arg.val, name)) return true;
+            }
+        },
+        .icmp => |c| return valueMentions(c.lhs, name) or valueMentions(c.rhs, name),
+        .fcmp => |c| return valueMentions(c.lhs, name) or valueMentions(c.rhs, name),
+        .fneg, .freeze => |u| return valueMentions(u.value, name),
+        .binary => |b| return valueMentions(b.lhs, name) or valueMentions(b.rhs, name),
+        .cast => |c| return valueMentions(c.value, name),
+        .unreachable_ => {},
+    }
+    return false;
+}
+
 fn maskFor(bits: u32) i64 {
     return @intCast((@as(u64, 1) << @intCast(bits)) - 1);
 }
@@ -1034,6 +1113,7 @@ fn lowerFunction(ctx: *Context, func_index: usize) !abi.Function {
         .func = &out,
         .params = params,
         .slots = std.StringHashMap(u16).init(ctx.allocator),
+        .promoted = std.StringHashMap(u32).init(ctx.allocator),
         .next_slot = @intCast(params.len),
         .labels = std.StringHashMap(u32).init(ctx.allocator),
         .patches = std.ArrayList(Patch).init(ctx.allocator),
@@ -1046,12 +1126,18 @@ fn lowerFunction(ctx: *Context, func_index: usize) !abi.Function {
 
 // --------------------------------------------------------------------- lowerer
 
+const PromotedRef = struct { name: []const u8, size: u32 };
+
 const Lowerer = struct {
     ctx: *Context,
     allocator: Allocator,
     func: *abi.Function,
     params: []const ParamInfo,
     slots: std.StringHashMap(u16),
+    /// Alloca result name -> storage size for allocas that never escape and
+    /// are only touched by same-sized direct loads/stores. The slot that used
+    /// to hold the pointer holds the value instead.
+    promoted: std.StringHashMap(u32),
     next_slot: u16,
     labels: std.StringHashMap(u32),
     patches: std.ArrayList(Patch),
@@ -1562,6 +1648,7 @@ const Lowerer = struct {
     // -------------------------------------------------------------------- body
 
     fn run(self: *Lowerer, f: *const ast.Function) anyerror!void {
+        try self.collectPromotableAllocas(f);
         try self.emitGlobalsInstall();
         try self.emitWideFloatParamCopies();
         self.current_block = "entry";
@@ -1716,8 +1803,103 @@ const Lowerer = struct {
         }
     }
 
+    fn promotedName(self: *Lowerer, ptr: ast.TypedValue) ?PromotedRef {
+        const name = switch (ptr.val) {
+            .local => |n| n.name,
+            else => return null,
+        };
+        const size = self.promoted.get(name) orelse return null;
+        return .{ .name = name, .size = size };
+    }
+
+    /// Promote scalar, non-escaping allocas to frame slots. clang -O0 gives
+    /// every C local a stack slot, so a direct load/store pair otherwise costs
+    /// an address load plus a bounds-checked memory op. Candidates may only be
+    /// used by same-sized non-volatile loads/stores; debug and lifetime
+    /// intrinsics are ignored, just as the call lowering ignores them.
+    fn collectPromotableAllocas(self: *Lowerer, f: *const ast.Function) !void {
+        for (f.blocks) |block| {
+            for (block.instructions) |instr| {
+                switch (instr.op) {
+                    .alloca => |a| {
+                        const res = instr.result orelse continue;
+                        if (a.count != null or a.inalloca or a.swifterror) continue;
+                        if (a.addr_space) |space| {
+                            if (space != 0) continue;
+                        }
+                        if (isAggregateLike(a.ty) or isF80OrF128(a.ty)) continue;
+                        if (intBitsOf(a.ty)) |bits| {
+                            if (bits == 1) continue;
+                        }
+                        const size = try self.typeStoreSize(a.ty);
+                        if (size == 0 or size > 8) continue;
+                        try self.promoted.put(res.name, size);
+                    },
+                    else => {},
+                }
+            }
+        }
+        if (self.promoted.count() == 0) return;
+
+        var drop = std.ArrayList([]const u8).init(self.allocator);
+        var it = self.promoted.iterator();
+        while (it.next()) |entry| {
+            if (!try self.allocaUsesAllowed(f, entry.key_ptr.*, entry.value_ptr.*))
+                try drop.append(entry.key_ptr.*);
+        }
+        for (drop.items) |name| _ = self.promoted.remove(name);
+    }
+
+    fn allocaUsesAllowed(self: *Lowerer, f: *const ast.Function, name: []const u8, size: u32) !bool {
+        var uses: usize = 0;
+        for (f.blocks) |block| {
+            for (block.instructions) |instr| {
+                switch (instr.op) {
+                    .load => |l| {
+                        if (ptrIsLocal(l.ptr.val, name)) {
+                            if (l.is_volatile or l.is_atomic) return false;
+                            if (isAggregateLike(l.ty) or isF80OrF128(l.ty)) return false;
+                            if (try self.typeStoreSize(l.ty) != size) return false;
+                            uses += 1;
+                            continue;
+                        }
+                    },
+                    .store => |s| {
+                        if (ptrIsLocal(s.ptr.val, name)) {
+                            if (s.is_volatile or s.is_atomic) return false;
+                            if (isAggregateLike(s.ty) or isF80OrF128(s.ty)) return false;
+                            if (try self.typeStoreSize(s.ty) != size) return false;
+                            if (valueMentions(s.value.val, name)) return false;
+                            uses += 1;
+                            continue;
+                        }
+                    },
+                    .call => |c| {
+                        switch (c.callee) {
+                            .direct => |n| {
+                                if (startsWith(n.name, "llvm.dbg") or
+                                    startsWith(n.name, "llvm.lifetime")) continue;
+                            },
+                            else => {},
+                        }
+                    },
+                    else => {},
+                }
+                if (instrMentions(instr, name)) return false;
+            }
+        }
+        return uses > 0;
+    }
+
     fn lowerAlloca(self: *Lowerer, instr: ast.Instruction, a: ast.Alloca) anyerror!void {
         const res = instr.result orelse return error.NoResult;
+        if (self.promoted.contains(res.name)) {
+            // Keep the old zero-on-execute behaviour without consuming linear
+            // memory; the slot already behaves like the alloca's storage.
+            try self.emitConst(0);
+            try self.emitStoreSlot(try self.slotFor(res.name));
+            return;
+        }
         const alloc_align: u32 = a.alignment orelse 8;
         if (a.count) |count| {
             try self.emitValue(count);
@@ -1764,6 +1946,16 @@ const Lowerer = struct {
 
     fn lowerLoad(self: *Lowerer, instr: ast.Instruction, l: ast.Load) anyerror!void {
         const res = instr.result orelse return error.NoResult;
+        if (self.promotedName(l.ptr)) |p| {
+            if (try self.typeStoreSize(l.ty) != p.size) return error.BadLoad;
+            try self.emitLoadSlot(try self.slotFor(p.name));
+            // OP_LOAD_MEM sign-extends sub-word loads; do the same so 32-bit
+            // integer/pointer values keep their canonical representation.
+            const bits: u32 = @intCast(p.size * 8);
+            if (bits > 1 and bits < 64) try self.normalizeInt(bits, true);
+            try self.emitStoreSlot(try self.slotFor(res.name));
+            return;
+        }
         const size = try self.typeStoreSize(l.ty);
         if (size == 0) return error.BadLoad;
         try self.emitValue(l.ptr);
@@ -1775,6 +1967,16 @@ const Lowerer = struct {
     }
 
     fn lowerStore(self: *Lowerer, s: ast.Store) anyerror!void {
+        if (self.promotedName(s.ptr)) |p| {
+            if (try self.typeStoreSize(s.ty) != p.size) return error.BadStore;
+            if (isPlainFloat(s.ty)) {
+                try self.emitFloatValue(s.ty, s.value.val);
+            } else {
+                try self.emitValue(s.value);
+            }
+            try self.emitStoreSlot(try self.slotFor(p.name));
+            return;
+        }
         const size = try self.typeStoreSize(s.ty);
         if (size == 0) return error.BadStore;
         if (isF80OrF128(s.ty) or (size > 8 and isAggregateLike(s.ty))) {

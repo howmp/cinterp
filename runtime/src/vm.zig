@@ -1742,17 +1742,7 @@ pub const VM = struct {
                 },
                 OP_NORMALIZE => {
                     const param = try readU8(code, &ip);
-                    const width_code: u8 = param & 0x03;
-                    if (width_code == 0x03) return error.BadOpcode;
-                    const bits: u32 = @as(u32, 8) << @intCast(width_code);
-                    const shift: u6 = @intCast(64 - bits);
-                    if (self.sp == 0) return error.StackUnderflow;
-                    const top = &self.values[self.sp - 1];
-                    const raw: u64 = @bitCast(top.i);
-                    top.i = if ((param & 0x80) != 0)
-                        @as(i64, @bitCast(raw << shift)) >> shift
-                    else
-                        @bitCast(raw & ((@as(u64, 1) << @intCast(bits)) - 1));
+                    try self.normalizeTop(param);
                 },
                 OP_ADD => {
                     const b = try self.pop();
@@ -2128,6 +2118,16 @@ pub const VM = struct {
                     const local_count: usize = f.local_count;
                     if (slot >= local_count) return error.BadLocal;
                     try self.push(self.values[base + slot]);
+                    // clang -O0 canonicalizes narrow values by loading and then
+                    // immediately normalizing. Fuse the fallthrough pair; a jump
+                    // that targets the NORMALIZE still executes it standalone.
+                    if (ip + 1 < code.len and code[ip] == OP_NORMALIZE) {
+                        const param = code[ip + 1];
+                        if ((param & 0x03) != 0x03) {
+                            try self.normalizeTop(param);
+                            ip += 2;
+                        }
+                    }
                 },
                 OP_STORE_LOCAL => {
                     const idx = try readU16(code, &ip);
@@ -2830,6 +2830,20 @@ pub const VM = struct {
                 },
             }
         }
+    }
+
+    inline fn normalizeTop(self: *VM, param: u8) !void {
+        const width_code: u8 = param & 0x03;
+        if (width_code == 0x03) return error.BadOpcode;
+        const bits: u32 = @as(u32, 8) << @intCast(width_code);
+        const shift: u6 = @intCast(64 - bits);
+        if (self.sp == 0) return error.StackUnderflow;
+        const top = &self.values[self.sp - 1];
+        const raw: u64 = @bitCast(top.i);
+        top.i = if ((param & 0x80) != 0)
+            @as(i64, @bitCast(raw << shift)) >> shift
+        else
+            @bitCast(raw & ((@as(u64, 1) << @intCast(bits)) - 1));
     }
 
     fn push(self: *VM, v: Value) !void {
