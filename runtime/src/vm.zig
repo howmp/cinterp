@@ -499,7 +499,7 @@ fn fpClassValue(v: Value, kind: u8) u16 {
 
 fn peekU16(bytes: []const u8, off: usize) ?u16 {
     if (off + 2 > bytes.len) return null;
-    return @as(u16, bytes[off]) | (@as(u16, bytes[off + 1]) << 8);
+    return std.mem.readInt(u16, bytes[off..][0..2], .little);
 }
 
 fn readU32At(bytes: []const u8, off: usize) u32 {
@@ -2880,12 +2880,23 @@ pub const VM = struct {
                     const addr: usize = addressFromBits(v.i);
                     if (!validMemoryRange(addr, n)) return error.BadAddress;
 
-                    var bits: u64 = 0;
-                    var i: usize = 0;
-                    while (i < n) : (i += 1) {
-                        const p: *align(1) const u8 = @ptrFromInt(addr + i);
-                        bits |= @as(u64, p.*) << @intCast(8 * i);
-                    }
+                    const p: [*]const u8 = @ptrFromInt(addr);
+                    var bits: u64 = switch (n) {
+                        1 => p[0],
+                        2 => std.mem.readInt(u16, p[0..2], .little),
+                        3 => @as(u64, std.mem.readInt(u16, p[0..2], .little)) |
+                            (@as(u64, p[2]) << 16),
+                        4 => std.mem.readInt(u32, p[0..4], .little),
+                        5 => @as(u64, std.mem.readInt(u32, p[0..4], .little)) |
+                            (@as(u64, p[4]) << 32),
+                        6 => @as(u64, std.mem.readInt(u32, p[0..4], .little)) |
+                            (@as(u64, std.mem.readInt(u16, p[4..6], .little)) << 32),
+                        7 => @as(u64, std.mem.readInt(u32, p[0..4], .little)) |
+                            (@as(u64, std.mem.readInt(u16, p[4..6], .little)) << 32) |
+                            (@as(u64, p[6]) << 48),
+                        8 => std.mem.readInt(u64, p[0..8], .little),
+                        else => unreachable,
+                    };
                     if (n < 8) {
                         const sign_bit: u64 = @as(u64, 1) << @intCast(8 * n - 1);
                         if ((bits & sign_bit) != 0) {
@@ -2905,10 +2916,30 @@ pub const VM = struct {
                     if (!validMemoryRange(addr, n)) return error.BadAddress;
 
                     const bits: u64 = @bitCast(vv.i);
-                    var i: usize = 0;
-                    while (i < n) : (i += 1) {
-                        const p: *align(1) u8 = @ptrFromInt(addr + i);
-                        p.* = @truncate(bits >> @intCast(8 * i));
+                    const p: [*]u8 = @ptrFromInt(addr);
+                    switch (n) {
+                        1 => p[0] = @truncate(bits),
+                        2 => std.mem.writeInt(u16, p[0..2], @truncate(bits), .little),
+                        3 => {
+                            std.mem.writeInt(u16, p[0..2], @truncate(bits), .little);
+                            p[2] = @truncate(bits >> 16);
+                        },
+                        4 => std.mem.writeInt(u32, p[0..4], @truncate(bits), .little),
+                        5 => {
+                            std.mem.writeInt(u32, p[0..4], @truncate(bits), .little);
+                            p[4] = @truncate(bits >> 32);
+                        },
+                        6 => {
+                            std.mem.writeInt(u32, p[0..4], @truncate(bits), .little);
+                            std.mem.writeInt(u16, p[4..6], @truncate(bits >> 32), .little);
+                        },
+                        7 => {
+                            std.mem.writeInt(u32, p[0..4], @truncate(bits), .little);
+                            std.mem.writeInt(u16, p[4..6], @truncate(bits >> 32), .little);
+                            p[6] = @truncate(bits >> 48);
+                        },
+                        8 => std.mem.writeInt(u64, p[0..8], bits, .little),
+                        else => unreachable,
                     }
                 },
                 OP_MEMCPY => {
@@ -3198,10 +3229,7 @@ pub const VM = struct {
                     }
                     ip = 0;
                 },
-                else => {
-                    std.debug.print("bad opcode 0x{x} func={d} ip={d}\n", .{ op, current, ip });
-                    return error.BadOpcode;
-                },
+                else => return badOpcode(op, current, ip),
             }
         }
     }
@@ -3606,6 +3634,12 @@ const Reader = struct {
     }
 };
 
+fn badOpcode(op: u8, current: usize, ip: usize) error{BadOpcode} {
+    @setCold(true);
+    std.debug.print("bad opcode 0x{x} func={d} ip={d}\n", .{ op, current, ip });
+    return error.BadOpcode;
+}
+
 fn readU8(code: []const u8, ip: *usize) !u8 {
     if (ip.* + 1 > code.len) return error.TruncatedCode;
     const v = code[ip.*];
@@ -3615,30 +3649,23 @@ fn readU8(code: []const u8, ip: *usize) !u8 {
 
 fn readU16(code: []const u8, ip: *usize) !u16 {
     if (ip.* + 2 > code.len) return error.TruncatedCode;
-    const v = @as(u16, code[ip.*]) | (@as(u16, code[ip.* + 1]) << 8);
+    const v = std.mem.readInt(u16, code[ip.*..][0..2], .little);
     ip.* += 2;
     return v;
 }
 
 fn readU32(code: []const u8, ip: *usize) !u32 {
     if (ip.* + 4 > code.len) return error.TruncatedCode;
-    const v = @as(u32, code[ip.*]) |
-        (@as(u32, code[ip.* + 1]) << 8) |
-        (@as(u32, code[ip.* + 2]) << 16) |
-        (@as(u32, code[ip.* + 3]) << 24);
+    const v = std.mem.readInt(u32, code[ip.*..][0..4], .little);
     ip.* += 4;
     return v;
 }
 
 fn readI64(code: []const u8, ip: *usize) !i64 {
     if (ip.* + 8 > code.len) return error.TruncatedCode;
-    var bits: u64 = 0;
-    var i: usize = 0;
-    while (i < 8) : (i += 1) {
-        bits |= @as(u64, code[ip.* + i]) << @as(u6, @intCast(i * 8));
-    }
+    const v = std.mem.readInt(u64, code[ip.*..][0..8], .little);
     ip.* += 8;
-    return @bitCast(bits);
+    return @bitCast(v);
 }
 
 pub const CI_ABI_VERSION: c_int = 2;
