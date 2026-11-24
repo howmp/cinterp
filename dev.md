@@ -438,7 +438,8 @@ benchmark 加 c-testsuite `00040`），默认分别以 `--cc-opt 0,2` 各编译�
 O0/O2 在同一核内串行，用例之间并行；`BENCH_LONG_JOBS=1` 回到顺序模式，
 `BENCH_LONG_CC_OPT=2` 只跑 O2。绝对耗时只应与相同 jobs/锁核设置的结果比较。
 顺序基线（1.477x O2/O0；`vmach` 0.948x）记录在
-`build/bench-long-o2-base.json`。
+`build/bench-long-o2-base.json`。当前并发基线（10 个物理核）：O2/O0 **1.700x**；
+最终编译器/runtime 相对 Phase 4.2 的 matched A/B 为 **1.149x**（min）。
 
 ### 12.1 命令行与构建选项
 
