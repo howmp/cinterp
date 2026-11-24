@@ -258,6 +258,139 @@ fn instrMentions(instr: ast.Instruction, name: []const u8) bool {
     return false;
 }
 
+fn countValueUses(value: ast.Value, counts: *std.StringHashMap(u32)) !void {
+    switch (value) {
+        .local => |n| {
+            const entry = try counts.getOrPut(n.name);
+            if (!entry.found_existing) entry.value_ptr.* = 0;
+            entry.value_ptr.* += 1;
+        },
+        .aggregate => |agg| {
+            for (agg.elems) |elem| try countValueUses(elem.val, counts);
+        },
+        .metadata_value => |tv| try countValueUses(tv.val, counts),
+        else => {},
+    }
+}
+
+/// Count SSA uses the same way `instrMentions` sees them; debug and lifetime
+/// intrinsics are not lowered and therefore do not count.
+fn countInstrUses(instr: ast.Instruction, counts: *std.StringHashMap(u32)) !void {
+    switch (instr.op) {
+        .alloca => |a| {
+            if (a.count) |count| try countValueUses(count.val, counts);
+        },
+        .load => |l| try countValueUses(l.ptr.val, counts),
+        .store => |s| {
+            try countValueUses(s.value.val, counts);
+            try countValueUses(s.ptr.val, counts);
+        },
+        .gep => |g| {
+            try countValueUses(g.ptr.val, counts);
+            for (g.indices) |idx| try countValueUses(idx.val, counts);
+        },
+        .phi => |p| {
+            for (p.incoming) |incoming| try countValueUses(incoming.value, counts);
+        },
+        .br => |br| switch (br) {
+            .unconditional => {},
+            .conditional => |c| try countValueUses(c.cond.val, counts),
+        },
+        .switch_ => |sw| {
+            try countValueUses(sw.cond.val, counts);
+            for (sw.cases) |case| try countValueUses(case.value.val, counts);
+        },
+        .ret => |ret| switch (ret) {
+            .void => {},
+            .value => |v| try countValueUses(v.val, counts),
+        },
+        .select => |s| {
+            try countValueUses(s.cond.val, counts);
+            try countValueUses(s.if_true.val, counts);
+            try countValueUses(s.if_false.val, counts);
+        },
+        .extractvalue => |e| try countValueUses(e.aggregate.val, counts),
+        .call => |c| {
+            switch (c.callee) {
+                .direct => |n| {
+                    if (startsWith(n.name, "llvm.dbg") or
+                        startsWith(n.name, "llvm.lifetime")) return;
+                },
+                .indirect => |tv| try countValueUses(tv.val, counts),
+                .asm_ => {},
+            }
+            for (c.args) |arg| try countValueUses(arg.val, counts);
+        },
+        .icmp => |c| {
+            try countValueUses(c.lhs, counts);
+            try countValueUses(c.rhs, counts);
+        },
+        .fcmp => |c| {
+            try countValueUses(c.lhs, counts);
+            try countValueUses(c.rhs, counts);
+        },
+        .fneg, .freeze => |u| try countValueUses(u.value, counts),
+        .binary => |b| {
+            try countValueUses(b.lhs, counts);
+            try countValueUses(b.rhs, counts);
+        },
+        .cast => |c| try countValueUses(c.value, counts),
+        .unreachable_ => {},
+    }
+}
+
+fn isTerminator(instr: ast.Instruction) bool {
+    return switch (instr.op) {
+        .br, .switch_, .ret, .unreachable_ => true,
+        else => false,
+    };
+}
+
+/// Calls the lowerer drops without emitting code; they must not break
+/// producer/consumer adjacency.
+fn isIgnoredCall(instr: ast.Instruction) bool {
+    return switch (instr.op) {
+        .call => |c| switch (c.callee) {
+            .direct => |n| c.ret.isVoid() and
+                (startsWith(n.name, "llvm.dbg") or startsWith(n.name, "llvm.lifetime")),
+            else => false,
+        },
+        else => false,
+    };
+}
+
+/// First operand the lowering pushes for `instr`, or null when the consumer is
+/// not supported. `icmp` orders gt/le variants as rhs-then-lhs.
+fn firstOperand(instr: ast.Instruction) ?ast.Value {
+    return switch (instr.op) {
+        .load => |l| l.ptr.val,
+        .store => |s| s.value.val,
+        .gep => |g| g.ptr.val,
+        .br => |br| switch (br) {
+            .unconditional => null,
+            .conditional => |c| c.cond.val,
+        },
+        // lowerSwitch re-emits the condition for every case, so it is not a
+        // single-consumption site.
+        .switch_ => null,
+        .ret => |ret| switch (ret) {
+            .void => null,
+            .value => |v| v.val,
+        },
+        .select => |s| s.cond.val,
+        .extractvalue => |e| e.aggregate.val,
+        .icmp => |c| switch (c.pred) {
+            .sgt, .ugt, .sle, .ule => c.rhs,
+            else => c.lhs,
+        },
+        .fcmp => |c| c.lhs,
+        .fneg, .freeze => |u| u.value,
+        .binary => |b| b.lhs,
+        .cast => |c| c.value,
+        else => null,
+    };
+}
+
 fn maskFor(bits: u32) i64 {
     return @intCast((@as(u64, 1) << @intCast(bits)) - 1);
 }
@@ -1114,6 +1247,7 @@ fn lowerFunction(ctx: *Context, func_index: usize) !abi.Function {
         .params = params,
         .slots = std.StringHashMap(u16).init(ctx.allocator),
         .promoted = std.StringHashMap(u32).init(ctx.allocator),
+        .stack_resident = std.StringHashMap(void).init(ctx.allocator),
         .next_slot = @intCast(params.len),
         .labels = std.StringHashMap(u32).init(ctx.allocator),
         .patches = std.ArrayList(Patch).init(ctx.allocator),
@@ -1138,6 +1272,10 @@ const Lowerer = struct {
     /// are only touched by same-sized direct loads/stores. The slot that used
     /// to hold the pointer holds the value instead.
     promoted: std.StringHashMap(u32),
+    /// SSA results consumed by the immediately following instruction as its
+    /// first operand. Their value stays on the operand stack: the producer
+    /// skips its slot store and the consumer skips the load.
+    stack_resident: std.StringHashMap(void),
     next_slot: u16,
     labels: std.StringHashMap(u32),
     patches: std.ArrayList(Patch),
@@ -1319,7 +1457,11 @@ const Lowerer = struct {
     /// already fixed it.
     fn emitValueOf(self: *Lowerer, ty: ?*const ast.Type, value: ast.Value) anyerror!void {
         switch (value) {
-            .local => |n| try self.emitLoadSlot(try self.slotFor(n.name)),
+            .local => |n| {
+                if (!self.stack_resident.remove(n.name)) {
+                    try self.emitLoadSlot(try self.slotFor(n.name));
+                }
+            },
             .global => |n| try self.emitGlobalRef(n.name),
             .int => |lit| {
                 const v = intToI64(lit) orelse return error.UnsupportedOperand;
@@ -1649,6 +1791,7 @@ const Lowerer = struct {
 
     fn run(self: *Lowerer, f: *const ast.Function) anyerror!void {
         try self.collectPromotableAllocas(f);
+        try self.collectStackResident(f);
         try self.emitGlobalsInstall();
         try self.emitWideFloatParamCopies();
         self.current_block = "entry";
@@ -1769,7 +1912,7 @@ const Lowerer = struct {
             .gep => |g| {
                 const res = instr.result orelse return error.NoResult;
                 try self.emitGep(g);
-                try self.emitStoreSlot(try self.slotFor(res.name));
+                try self.emitResult(res);
             },
             .phi => {
                 const res = instr.result orelse return error.NoResult;
@@ -1785,18 +1928,18 @@ const Lowerer = struct {
             .icmp => |c| {
                 const res = instr.result orelse return error.NoResult;
                 try self.emitIcmp(c.pred, c.ty, c.lhs, c.rhs);
-                try self.emitStoreSlot(try self.slotFor(res.name));
+                try self.emitResult(res);
             },
             .fcmp => |c| {
                 const res = instr.result orelse return error.NoResult;
                 try self.emitFcmp(c.pred, c.ty, c.lhs, c.rhs);
-                try self.emitStoreSlot(try self.slotFor(res.name));
+                try self.emitResult(res);
             },
             .fneg => |u| try self.lowerFneg(instr, u),
             .freeze => |u| {
                 const res = instr.result orelse return error.NoResult;
                 try self.emitValueOf(u.ty, u.value);
-                try self.emitStoreSlot(try self.slotFor(res.name));
+                try self.emitResult(res);
             },
             .binary => |b| try self.lowerBinary(instr, b),
             .cast => |c| try self.lowerCast(instr, c),
@@ -1810,6 +1953,77 @@ const Lowerer = struct {
         };
         const size = self.promoted.get(name) orelse return null;
         return .{ .name = name, .size = size };
+    }
+
+    /// Result value an instruction leaves on top of the stack, when it is a
+    /// scalar that can stay there for the next instruction. Calls, allocas and
+    /// phis keep their existing result handling.
+    fn producerResult(self: *Lowerer, instr: ast.Instruction) !?PromotedRef {
+        const res = instr.result orelse return null;
+        const ty: *const ast.Type = switch (instr.op) {
+            .load => |l| l.ty,
+            .gep => |g| g.ptr.ty,
+            .select => |s| s.if_true.ty,
+            .binary => |b| b.ty,
+            .cast => |c| c.dst,
+            .fneg, .freeze => |u| u.ty,
+            .icmp, .fcmp => return .{ .name = res.name, .size = 1 },
+            else => return null,
+        };
+        if (isAggregateLike(ty) or isF80OrF128(ty)) return null;
+        if (intBitsOf(ty)) |bits| {
+            if (bits == 1) return null;
+        }
+        const size = try self.typeStoreSize(ty);
+        if (size == 0 or size > 8) return null;
+        return .{ .name = res.name, .size = size };
+    }
+
+    /// Mark single-use SSA results whose only consumer is the immediately
+    /// following instruction, with that value as its first emitted operand.
+    /// The operand stack then carries the value across both instructions.
+    fn collectStackResident(self: *Lowerer, f: *const ast.Function) !void {
+        var counts = std.StringHashMap(u32).init(self.allocator);
+        for (f.blocks) |block| {
+            for (block.instructions) |instr| try countInstrUses(instr, &counts);
+        }
+        if (counts.count() == 0) return;
+
+        // A terminator in a block listed by a phi incoming is preceded by
+        // emitPhiAssignments, which would sit between the two instructions.
+        var phi_preds = std.StringHashMap(void).init(self.allocator);
+        for (f.blocks) |block| {
+            for (block.instructions) |instr| {
+                switch (instr.op) {
+                    .phi => |p| {
+                        for (p.incoming) |incoming| try phi_preds.put(incoming.block.name, {});
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        for (f.blocks, 0..) |block, block_index| {
+            const block_name = if (block.label) |l| l.name else if (block_index == 0) "entry" else "";
+            var i: usize = 0;
+            while (i + 1 < block.instructions.len) : (i += 1) {
+                const producer = (try self.producerResult(block.instructions[i])) orelse continue;
+                if ((counts.get(producer.name) orelse 0) != 1) continue;
+                var j = i + 1;
+                while (j < block.instructions.len and isIgnoredCall(block.instructions[j])) : (j += 1) {}
+                if (j >= block.instructions.len) continue;
+                const consumer = block.instructions[j];
+                const first = firstOperand(consumer) orelse continue;
+                if (!ptrIsLocal(first, producer.name)) continue;
+                if (isTerminator(consumer) and phi_preds.contains(block_name)) continue;
+                try self.stack_resident.put(producer.name, {});
+            }
+        }
+    }
+
+    fn emitResult(self: *Lowerer, res: ast.NamedRef) !void {
+        if (self.stack_resident.contains(res.name)) return;
+        try self.emitStoreSlot(try self.slotFor(res.name));
     }
 
     /// Promote scalar, non-escaping allocas to frame slots. clang -O0 gives
@@ -1897,7 +2111,7 @@ const Lowerer = struct {
             // Keep the old zero-on-execute behaviour without consuming linear
             // memory; the slot already behaves like the alloca's storage.
             try self.emitConst(0);
-            try self.emitStoreSlot(try self.slotFor(res.name));
+            try self.emitResult(res);
             return;
         }
         const alloc_align: u32 = a.alignment orelse 8;
@@ -1941,7 +2155,7 @@ const Lowerer = struct {
                 try self.emitU16(@intCast(size));
             }
         }
-        try self.emitStoreSlot(try self.slotFor(res.name));
+        try self.emitResult(res);
     }
 
     fn lowerLoad(self: *Lowerer, instr: ast.Instruction, l: ast.Load) anyerror!void {
@@ -1953,7 +2167,7 @@ const Lowerer = struct {
             // integer/pointer values keep their canonical representation.
             const bits: u32 = @intCast(p.size * 8);
             if (bits > 1 and bits < 64) try self.normalizeInt(bits, true);
-            try self.emitStoreSlot(try self.slotFor(res.name));
+            try self.emitResult(res);
             return;
         }
         const size = try self.typeStoreSize(l.ty);
@@ -1963,7 +2177,7 @@ const Lowerer = struct {
             try self.emitU8(op.OP_LOAD_MEM);
             try self.emitU8(@intCast(size));
         }
-        try self.emitStoreSlot(try self.slotFor(res.name));
+        try self.emitResult(res);
     }
 
     fn lowerStore(self: *Lowerer, s: ast.Store) anyerror!void {
@@ -2060,7 +2274,7 @@ const Lowerer = struct {
         try self.labels.put(else_label, @intCast(self.func.code.items.len));
         try self.emitValue(sel.if_false);
         try self.labels.put(end_label, @intCast(self.func.code.items.len));
-        try self.emitStoreSlot(try self.slotFor(res.name));
+        try self.emitResult(res);
     }
 
     fn lowerExtractValue(self: *Lowerer, instr: ast.Instruction, ev: ast.ExtractValue) anyerror!void {
@@ -2091,7 +2305,7 @@ const Lowerer = struct {
         }
         try self.emitU8(op.OP_LOAD_MEM);
         try self.emitU8(@intCast(try self.typeStoreSize(current)));
-        try self.emitStoreSlot(try self.slotFor(res.name));
+        try self.emitResult(res);
     }
 
     fn lowerFneg(self: *Lowerer, instr: ast.Instruction, u: ast.Unary) anyerror!void {
@@ -2113,7 +2327,7 @@ const Lowerer = struct {
                 try self.emitU8(op.OP_XOR);
             },
         }
-        try self.emitStoreSlot(try self.slotFor(res.name));
+        try self.emitResult(res);
     }
 
     fn lowerBinary(self: *Lowerer, instr: ast.Instruction, b: ast.Binary) anyerror!void {
@@ -2150,7 +2364,7 @@ const Lowerer = struct {
                     },
                 };
                 try self.emitU8(opcode);
-                try self.emitStoreSlot(try self.slotFor(res.name));
+                try self.emitResult(res);
                 return;
             },
             // frem has no CIVM encoding; the legacy path rejects it as well.
@@ -2209,7 +2423,7 @@ const Lowerer = struct {
                 try self.normalizeInt(bits, true);
             },
         }
-        try self.emitStoreSlot(try self.slotFor(res.name));
+        try self.emitResult(res);
     }
 
     fn lowerCast(self: *Lowerer, instr: ast.Instruction, c: ast.Cast) anyerror!void {
@@ -2331,7 +2545,7 @@ const Lowerer = struct {
                 try self.normalizeInt(dst_bits orelse 64, true);
             },
         }
-        try self.emitStoreSlot(try self.slotFor(res.name));
+        try self.emitResult(res);
     }
 
     // ------------------------------------------------------------------- calls
@@ -2391,7 +2605,7 @@ const Lowerer = struct {
         const res = result orelse return error.NoResult;
         for (call.args) |arg| try self.emitFloatValue(arg.ty, arg.val);
         try self.emitU8(opcode);
-        try self.emitStoreSlot(try self.slotFor(res.name));
+        try self.emitResult(res);
     }
 
     fn lowerDirectCall(self: *Lowerer, call: ast.Call, result: ?ast.NamedRef, name: []const u8) anyerror!void {
