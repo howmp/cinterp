@@ -2479,8 +2479,28 @@ const Lowerer = struct {
                 };
                 try self.emitValueOf(b.ty, b.lhs);
                 try self.emitValueOf(b.ty, b.rhs);
-                try self.emitU8(opcode);
-                try self.normalizeInt(bits, true);
+                const narrow: ?u8 = switch (b.op) {
+                    .add => op.OP_ADD_N,
+                    .sub => op.OP_SUB_N,
+                    .mul => op.OP_MUL_N,
+                    .and_ => op.OP_AND_N,
+                    .or_ => op.OP_OR_N,
+                    .xor => op.OP_XOR_N,
+                    else => null,
+                };
+                const width_code: ?u8 = switch (bits) {
+                    8 => 0,
+                    16 => 1,
+                    32 => 2,
+                    else => null,
+                };
+                if (narrow != null and width_code != null) {
+                    try self.emitU8(narrow.?);
+                    try self.emitU8(width_code.? | 0x80);
+                } else {
+                    try self.emitU8(opcode);
+                    try self.normalizeInt(bits, true);
+                }
             },
         }
         try self.emitResult(res);

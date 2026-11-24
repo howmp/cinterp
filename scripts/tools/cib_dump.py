@@ -190,6 +190,12 @@ OPS: dict[int, tuple[str, str]] = {
     0xA6: ("NORMALIZE", "u8"),
     0xA7: ("FMA", NO_ARG),
     0xA8: ("FMA32", NO_ARG),
+    0xA9: ("ADD_N", "u8"),
+    0xAA: ("SUB_N", "u8"),
+    0xAB: ("MUL_N", "u8"),
+    0xAC: ("AND_N", "u8"),
+    0xAD: ("OR_N", "u8"),
+    0xAE: ("XOR_N", "u8"),
 }
 
 

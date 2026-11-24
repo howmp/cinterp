@@ -191,7 +191,7 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 
 ## 4. Opcode
 
-> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xA8 的全部常量，`POP`（0x15）/`SWAP`（0x16）也由运行时解码；`SWAP` 现在用于搬运宽浮点返回值。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。
+> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xAE 的全部常量，`POP`（0x15）/`SWAP`（0x16）也由运行时解码；`SWAP` 现在用于搬运宽浮点返回值。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。
 
 栈效果按“先压入的值在下面”描述，例如 `a, b -> result` 表示先压 `a`、再压 `b`，opcode 弹 `b` 再弹 `a`。
 
@@ -293,6 +293,12 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 | 0xA6 | `NORMALIZE` | u8 param | 就地规约栈顶为 8/16/32 位整数；param bits0..1=width code（0/1/2 → 8/16/32 位，3 非法），bit7=signed（置位做符号扩展，否则零扩展）。替代原先的 `mask/AND/shift/SHL/shift/SHR_S` 序列 |
 | 0xA7 | `FMA` | — | `a,b,c -> fma(a,b,c)`（double）；`llvm.fmuladd.f64` 的融合乘加，避免每次调用 libm `fma` |
 | 0xA8 | `FMA32` | — | 单精度版本的 `FMA`（`llvm.fmuladd.f32`） |
+| 0xA9 | `ADD_N` | u8 param | `a,b -> normalize(a+b)`；narrow 整数加法，param 编码同 `NORMALIZE` |
+| 0xAA | `SUB_N` | u8 param | 窄整数减法，结果在同一 dispatch 内规约 |
+| 0xAB | `MUL_N` | u8 param | 窄整数乘法，结果在同一 dispatch 内规约 |
+| 0xAC | `AND_N` | u8 param | 窄整数按位与，结果在同一 dispatch 内规约 |
+| 0xAD | `OR_N` | u8 param | 窄整数按位或，结果在同一 dispatch 内规约 |
+| 0xAE | `XOR_N` | u8 param | 窄整数按位异或，结果在同一 dispatch 内规约 |
 
 ### 4.1 浮点谓词
 

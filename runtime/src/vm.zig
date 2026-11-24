@@ -150,6 +150,12 @@ pub const OP_LOAD_CONST_POOL: u8 = 0xA5;
 pub const OP_NORMALIZE: u8 = 0xA6;
 pub const OP_FMA: u8 = 0xA7;
 pub const OP_FMA32: u8 = 0xA8;
+pub const OP_ADD_N: u8 = 0xA9;
+pub const OP_SUB_N: u8 = 0xAA;
+pub const OP_MUL_N: u8 = 0xAB;
+pub const OP_AND_N: u8 = 0xAC;
+pub const OP_OR_N: u8 = 0xAD;
+pub const OP_XOR_N: u8 = 0xAE;
 
 /// `--trace` counters. Debug and ReleaseSafe compile the updates in;
 /// ReleaseFast/ReleaseSmall fold `trace_build` to false and skip them, so the
@@ -279,6 +285,12 @@ fn traceOpName(op: u8) []const u8 {
         0xa6 => "NORMALIZE",
         0xa7 => "FMA",
         0xa8 => "FMA32",
+        0xa9 => "ADD_N",
+        0xaa => "SUB_N",
+        0xab => "MUL_N",
+        0xac => "AND_N",
+        0xad => "OR_N",
+        0xae => "XOR_N",
         else => "UNKNOWN",
     };
 }
@@ -1766,6 +1778,48 @@ pub const VM = struct {
                     const param = try readU8(code, &ip);
                     try self.normalizeTop(param);
                     try self.consumeNormals(code, &ip);
+                },
+                OP_ADD_N => {
+                    const param = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.push(.{ .i = a.i +% b.i });
+                    try self.normalizeTop(param);
+                },
+                OP_SUB_N => {
+                    const param = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.push(.{ .i = a.i -% b.i });
+                    try self.normalizeTop(param);
+                },
+                OP_MUL_N => {
+                    const param = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.push(.{ .i = a.i *% b.i });
+                    try self.normalizeTop(param);
+                },
+                OP_AND_N => {
+                    const param = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.push(.{ .i = a.i & b.i });
+                    try self.normalizeTop(param);
+                },
+                OP_OR_N => {
+                    const param = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.push(.{ .i = a.i | b.i });
+                    try self.normalizeTop(param);
+                },
+                OP_XOR_N => {
+                    const param = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.push(.{ .i = a.i ^ b.i });
+                    try self.normalizeTop(param);
                 },
                 OP_ADD => {
                     const b = try self.pop();

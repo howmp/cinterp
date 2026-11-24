@@ -122,3 +122,11 @@ pub const OP_NORMALIZE: u8 = 0xA6;
 pub const OP_FMA: u8 = 0xA7;
 /// `FMA32`: single-precision `llvm.fmuladd.f32`.
 pub const OP_FMA32: u8 = 0xA8;
+/// Narrow integer arithmetic: `u8 param` follows (NORMALIZE encoding) and the
+/// result is reduced to 8/16/32 bits in the same dispatch.
+pub const OP_ADD_N: u8 = 0xA9;
+pub const OP_SUB_N: u8 = 0xAA;
+pub const OP_MUL_N: u8 = 0xAB;
+pub const OP_AND_N: u8 = 0xAC;
+pub const OP_OR_N: u8 = 0xAD;
+pub const OP_XOR_N: u8 = 0xAE;
