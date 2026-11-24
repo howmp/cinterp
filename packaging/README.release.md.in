@@ -17,8 +17,10 @@ libffi，没有 JIT，也没有可执行内存。本 tarball 是 **@TARGET@** �
 | `rust/cinterp-sys/` | 带安全 `Vm` 封装和可运行示例的 Rust FFI crate |
 | `docs/` | CIB 格式、嵌入、多 CIB/线程、ABI 兼容性以及 C/IR 子集文档 |
 | `examples/` | 发布冒烟测试所用的 C 源码 |
-| `debug/` | 分离的调试文件（构建产生这些文件时存在） |
 | `README.md`, `LICENSE`, `VERSION`, `SBOM.spdx.json` | 本文件、许可证、版本、SPDX SBOM |
+
+发布包不包含 `debug/` 分离调试文件；需要调试时请在源码中执行
+`cd runtime && zig build -Doptimize=Debug`。
 
 <!-- compiler-only -->
 **本 tarball 自带编译器（ships the compiler）。** 除上面的运行时文件外，它还包含：

@@ -97,14 +97,14 @@ copy_common() {
 }
 
 split_debug() {
-    local dest="$1" exe="$2" target="$3" oc=""
+    local dest="$1" exe="$2" target="$3" keep_debug="$4" oc=""
     case "$target" in
         aarch64-*) oc="$(command -v aarch64-linux-gnu-objcopy || command -v llvm-objcopy || command -v objcopy || true)" ;;
         *windows*) oc="$(command -v llvm-objcopy || command -v x86_64-w64-mingw32-objcopy || command -v objcopy || true)" ;;
         *) oc="$(command -v objcopy || command -v llvm-objcopy || true)" ;;
     esac
     if [ -z "$oc" ]; then
-        echo "warning: objcopy not found; shipping unstripped $exe" >&2
+        echo "warning: objcopy not found; shipping $exe without post-link stripping" >&2
         return
     fi
     if [[ "$target" == *windows* ]]; then
@@ -115,29 +115,34 @@ split_debug() {
         "$oc" --remove-section=.eh_fram "$dest/$exe" 2>/dev/null || true
         return
     fi
-    mkdir -p "$dest/debug"
-    "$oc" --only-keep-debug "$dest/$exe" "$dest/debug/$exe.debug"
-    if [ ! -s "$dest/debug/$exe.debug" ]; then
-        rm -f "$dest/debug/$exe.debug"
-        rmdir "$dest/debug" 2>/dev/null || true
-        return
+    if [ "$keep_debug" = "true" ]; then
+        mkdir -p "$dest/debug"
+        "$oc" --only-keep-debug "$dest/$exe" "$dest/debug/$exe.debug"
+        if [ -s "$dest/debug/$exe.debug" ]; then
+            "$oc" --strip-all "$dest/$exe" 2>/dev/null || true
+            if file "$dest/$exe" | grep -q ELF; then
+                (cd "$dest" && "$oc" --add-gnu-debuglink="debug/$exe.debug" "$exe") 2>/dev/null || true
+            fi
+        else
+            rm -f "$dest/debug/$exe.debug"
+            rmdir "$dest/debug" 2>/dev/null || true
+        fi
+    else
+        "$oc" --strip-all "$dest/$exe" 2>/dev/null || true
     fi
-    "$oc" --strip-all "$dest/$exe" 2>/dev/null || true
     if file "$dest/$exe" | grep -q ELF; then
-        (cd "$dest" && "$oc" --add-gnu-debuglink="debug/$exe.debug" "$exe") 2>/dev/null || true
         "$oc" --remove-section=.eh_frame --remove-section=.eh_frame_hdr \
             "$dest/$exe" 2>/dev/null || true
     fi
 }
 
 build_one() {
-    local target="$1" name="$2" exe ships="no" runner keep_debug="true"
+    local target="$1" name="$2" exe ships="no" runner keep_debug="false"
     case "$target" in
         *windows*)
             exe="cinterp-run.exe"
             # PE debug sections make lld-link warn about >8-byte names, and
             # the Windows package does not ship a debug sidecar anyway.
-            keep_debug="false"
             ;;
         *) exe="cinterp-run" ;;
     esac
@@ -171,7 +176,7 @@ build_one() {
         if [ -e "$dll" ]; then cp "$dll" "$dest/"; fi
     done
     copy_common "$dest" "$name" "$runner" "$ships" "$target"
-    split_debug "$dest" "$exe" "$target"
+    split_debug "$dest" "$exe" "$target" "$keep_debug"
 
     # gen_sbom.py writes THIRD_PARTY_NOTICES.md into compiler tarballs before
     # hashing, so the notice is part of the SBOM file list and the tarball.
