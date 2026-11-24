@@ -281,6 +281,31 @@ fn countValueUses(value: ast.Value, counts: *std.StringHashMap(u32)) !void {
     }
 }
 
+fn callIsResidencyBarrier(call: ast.Call) bool {
+    if (call.callbr_targets.len != 0) return true;
+    const name = switch (call.callee) {
+        .direct => |n| n.name,
+        else => return false,
+    };
+    return eql(name, "__intrinsic_setjmpex") or eql(name, "__intrinsic_setjmp") or
+        eql(name, "setjmp") or eql(name, "_setjmp") or eql(name, "_setjmp3") or
+        eql(name, "__builtin_setjmp") or eql(name, "llvm.eh.sjlj.setjmp") or
+        eql(name, "llvm.eh.sjlj.longjmp") or eql(name, "longjmp") or
+        eql(name, "_longjmp") or eql(name, "__builtin_longjmp") or
+        eql(name, "llvm.va_start.p0") or eql(name, "llvm.va_start") or
+        eql(name, "llvm.va_copy.p0") or eql(name, "llvm.va_copy") or
+        eql(name, "__va_copy");
+}
+
+/// Calls that change frame or va-list state invalidate the assumption that a
+/// value can stay on the operand stack across them.
+fn isResidencyBarrier(instr: ast.Instruction) bool {
+    return switch (instr.op) {
+        .call => |c| callIsResidencyBarrier(c),
+        else => false,
+    };
+}
+
 /// Count SSA uses the same way `instrMentions` sees them; debug and lifetime
 /// intrinsics are not lowered and therefore do not count.
 fn countInstrUses(instr: ast.Instruction, counts: *std.StringHashMap(u32)) !void {
@@ -336,17 +361,7 @@ fn countInstrUses(instr: ast.Instruction, counts: *std.StringHashMap(u32)) !void
             try countValueUses(sv.rhs.val, counts);
             try countValueUses(sv.mask.val, counts);
         },
-        .call => |c| {
-            switch (c.callee) {
-                .direct => |n| {
-                    if (startsWith(n.name, "llvm.dbg") or
-                        startsWith(n.name, "llvm.lifetime")) return;
-                },
-                .indirect => |tv| try countValueUses(tv.val, counts),
-                .asm_ => {},
-            }
-            for (c.args) |arg| try countValueUses(arg.val, counts);
-        },
+        .call => |c| try countCallUses(c, counts),
         .icmp => |c| {
             try countValueUses(c.lhs, counts);
             try countValueUses(c.rhs, counts);
@@ -374,15 +389,138 @@ fn isTerminator(instr: ast.Instruction) bool {
 
 /// Calls the lowerer drops without emitting code; they must not break
 /// producer/consumer adjacency.
-fn isIgnoredCall(instr: ast.Instruction) bool {
+fn callEmitsNoCode(call: ast.Call, name: []const u8) bool {
+    if (call.ret.isVoid() and
+        (startsWith(name, "llvm.dbg") or startsWith(name, "llvm.lifetime"))) return true;
+    return eql(name, "llvm.va_end.p0") or eql(name, "llvm.va_end") or
+        startsWith(name, "llvm.experimental.noalias.scope.decl") or
+        eql(name, "llvm.sideeffect") or eql(name, "llvm.donothing") or
+        eql(name, "llvm.assume");
+}
+
+fn emitsNoCode(instr: ast.Instruction) bool {
     return switch (instr.op) {
         .call => |c| switch (c.callee) {
-            .direct => |n| c.ret.isVoid() and
-                (startsWith(n.name, "llvm.dbg") or startsWith(n.name, "llvm.lifetime")),
+            .direct => |n| callEmitsNoCode(c, n.name),
             else => false,
         },
         else => false,
     };
+}
+
+fn countArg(call: ast.Call, index: usize, counts: *std.StringHashMap(u32)) !void {
+    if (index < call.args.len) try countValueUses(call.args[index].val, counts);
+}
+
+fn countArgs(call: ast.Call, count: usize, counts: *std.StringHashMap(u32)) !void {
+    for (call.args[0..@min(count, call.args.len)]) |arg| try countValueUses(arg.val, counts);
+}
+
+/// Mirror the emitter: only count arguments that actually reach bytecode.
+fn countCallUses(call: ast.Call, counts: *std.StringHashMap(u32)) !void {
+    switch (call.callee) {
+        .direct => |n| {
+            const name = n.name;
+            if (callEmitsNoCode(call, name)) return;
+            if (startsWith(name, "llvm.memcpy.") or
+                startsWith(name, "llvm.memmove.") or
+                startsWith(name, "llvm.memset."))
+            {
+                try countArgs(call, 3, counts);
+                return;
+            }
+            if (isCallbackBuiltin(name)) {
+                // Acquire uses the function reference at compile time; release
+                // emits its pointer argument.
+                if (eql(name, callback_release_symbol)) try countArg(call, 0, counts);
+                return;
+            }
+            if (startsWith(name, "llvm.fmuladd.") and
+                (std.mem.endsWith(u8, name, ".f32") or std.mem.endsWith(u8, name, ".f64")))
+            {
+                try countArgs(call, 3, counts);
+                return;
+            }
+            if (startsWith(name, "llvm.frameaddress.")) return;
+            if (eql(name, "__intrinsic_setjmpex") or eql(name, "__intrinsic_setjmp") or
+                eql(name, "setjmp") or eql(name, "_setjmp") or eql(name, "_setjmp3") or
+                eql(name, "__builtin_setjmp") or eql(name, "llvm.eh.sjlj.setjmp"))
+            {
+                try countArg(call, 0, counts);
+                return;
+            }
+            if (eql(name, "llvm.eh.sjlj.longjmp") or eql(name, "longjmp") or
+                eql(name, "_longjmp") or eql(name, "__builtin_longjmp"))
+            {
+                try countArg(call, 0, counts);
+                try countArg(call, 1, counts);
+                return;
+            }
+            if (startsWith(name, "llvm.is.fpclass.") or startsWith(name, "llvm.ptrmask.")) {
+                try countArgs(call, 2, counts);
+                return;
+            }
+            if (eql(name, "llvm.va_start.p0") or eql(name, "llvm.va_start")) {
+                try countArg(call, 0, counts);
+                return;
+            }
+            if (eql(name, "llvm.va_copy.p0") or eql(name, "llvm.va_copy") or eql(name, "__va_copy")) {
+                try countArgs(call, 2, counts);
+                return;
+            }
+            if (eql(name, "llvm.va_end.p0") or eql(name, "llvm.va_end")) return;
+            if (eql(name, "llvm.stacksave.p0") or eql(name, "llvm.stacksave")) return;
+            if (eql(name, "llvm.stackrestore.p0") or eql(name, "llvm.stackrestore")) {
+                try countArg(call, 0, counts);
+                return;
+            }
+            if (startsWith(name, "llvm.smax.") or startsWith(name, "llvm.smin.") or
+                startsWith(name, "llvm.umax.") or startsWith(name, "llvm.umin."))
+            {
+                try countArgs(call, 2, counts);
+                return;
+            }
+            if (startsWith(name, "llvm.expect.")) {
+                try countArg(call, 0, counts);
+                return;
+            }
+            if (startsWith(name, "llvm.load.relative.")) {
+                // args[0] is emitted twice (base add + second add).
+                try countArg(call, 0, counts);
+                try countArg(call, 0, counts);
+                try countArg(call, 1, counts);
+                return;
+            }
+            if (startsWith(name, "llvm.cttz.") or startsWith(name, "llvm.ctlz.") or
+                startsWith(name, "llvm.ctpop.") or startsWith(name, "llvm.bswap.") or
+                startsWith(name, "llvm.bitreverse.") or startsWith(name, "llvm.fshl.") or
+                startsWith(name, "llvm.fshr.") or startsWith(name, "llvm.usub.sat."))
+            {
+                const needed: usize = if (startsWith(name, "llvm.fshl.") or startsWith(name, "llvm.fshr."))
+                    3
+                else if (startsWith(name, "llvm.usub.sat."))
+                    2
+                else
+                    1;
+                try countArgs(call, needed, counts);
+                return;
+            }
+            if (startsWith(name, "llvm.abs.")) {
+                try countArg(call, 0, counts);
+                return;
+            }
+            for (call.args) |arg| try countValueUses(arg.val, counts);
+        },
+        .indirect => |tv| {
+            if (isTag(tv.val, .null_)) return;
+            try countValueUses(tv.val, counts);
+            for (call.args) |arg| try countValueUses(arg.val, counts);
+        },
+        .asm_ => |a| {
+            if (a.template.len != 0) return;
+            if (!call.ret.isVoid()) try countArg(call, 0, counts);
+        },
+    }
 }
 
 /// First operand the lowering pushes for `instr`, or null when the consumer is
@@ -1472,6 +1610,7 @@ fn lowerFunction(ctx: *Context, func_index: usize) !abi.Function {
         .slots = std.StringHashMap(u16).init(ctx.allocator),
         .promoted = std.StringHashMap(u32).init(ctx.allocator),
         .stack_resident = std.StringHashMap(void).init(ctx.allocator),
+        .stack_pending = std.ArrayList([]const u8).init(ctx.allocator),
         .next_slot = @intCast(params.len),
         .labels = std.StringHashMap(u32).init(ctx.allocator),
         .patches = std.ArrayList(Patch).init(ctx.allocator),
@@ -1500,6 +1639,9 @@ const Lowerer = struct {
     /// first operand. Their value stays on the operand stack: the producer
     /// skips its slot store and the consumer skips the load.
     stack_resident: std.StringHashMap(void),
+    /// LIFO of resident values currently left on the operand stack.
+    /// Intervals are non-overlapping, so at most one entry is pending.
+    stack_pending: std.ArrayList([]const u8),
     next_slot: u16,
     labels: std.StringHashMap(u32),
     patches: std.ArrayList(Patch),
@@ -1723,7 +1865,11 @@ const Lowerer = struct {
     fn emitValueOf(self: *Lowerer, ty: ?*const ast.Type, value: ast.Value) anyerror!void {
         switch (value) {
             .local => |n| {
-                if (!self.stack_resident.remove(n.name)) {
+                if (self.stack_pending.items.len != 0 and
+                    eql(self.stack_pending.items[self.stack_pending.items.len - 1], n.name))
+                {
+                    _ = self.stack_pending.pop();
+                } else {
                     try self.emitLoadSlot(try self.slotFor(n.name));
                 }
             },
@@ -2112,6 +2258,9 @@ const Lowerer = struct {
             }
         }
 
+        if (@import("builtin").mode == .Debug)
+            std.debug.assert(self.stack_pending.items.len == 0);
+
         for (self.patches.items) |patch| {
             const target = self.labels.get(patch.label) orelse return error.UnknownLabel;
             var buf: [4]u8 = undefined;
@@ -2286,9 +2435,9 @@ const Lowerer = struct {
         return .{ .name = res.name, .size = size };
     }
 
-    /// Mark single-use SSA results whose only consumer is the immediately
-    /// following instruction, with that value as its first emitted operand.
-    /// The operand stack then carries the value across both instructions.
+    /// Mark single-use SSA results whose only consumer is a later instruction
+    /// in the same block, with all instructions in between stack-neutral. The
+    /// operand stack carries the value across the interval.
     fn collectStackResident(self: *Lowerer, f: *const ast.Function) !void {
         var counts = std.StringHashMap(u32).init(self.allocator);
         for (f.blocks) |block| {
@@ -2317,18 +2466,50 @@ const Lowerer = struct {
                 const producer = (try self.producerResult(block.instructions[i])) orelse continue;
                 if ((counts.get(producer.name) orelse 0) != 1) continue;
                 var j = i + 1;
-                while (j < block.instructions.len and isIgnoredCall(block.instructions[j])) : (j += 1) {}
-                if (j >= block.instructions.len) continue;
-                const consumer = block.instructions[j];
-                if (!consumedAsStackOperand(consumer, producer.name)) continue;
-                if (isTerminator(consumer) and phi_preds.contains(block_name)) continue;
+                var consumer_index: ?usize = null;
+                while (j < block.instructions.len) : (j += 1) {
+                    const mid = block.instructions[j];
+                    if (consumedAsStackOperand(mid, producer.name)) {
+                        consumer_index = j;
+                        break;
+                    }
+                    if (isTerminator(mid) or isResidencyBarrier(mid)) break;
+                    // A single-use producer in the interval would get a better
+                    // adjacent interval; do not swallow it.
+                    if (try self.producerResult(mid)) |mid_result| {
+                        if ((counts.get(mid_result.name) orelse 0) == 1) break;
+                    }
+                }
+                const consumer_at = consumer_index orelse continue;
+                const consumer = block.instructions[consumer_at];
+                if (isTerminator(consumer) and phi_preds.contains(block_name)) {
+                    // A conditional branch consumes its condition in JZ before
+                    // the per-edge phi assignments are emitted inside each arm,
+                    // so the value can stay resident even in a phi predecessor.
+                    const cond_br = switch (consumer.op) {
+                        .br => |br| switch (br) {
+                            .conditional => true,
+                            .unconditional => false,
+                        },
+                        else => false,
+                    };
+                    if (!cond_br) continue;
+                }
                 try self.stack_resident.put(producer.name, {});
+                // Skip the interval, but let the consumer itself be considered
+                // as the next producer (adjacent intervals are not nested).
+                i = consumer_at - 1;
             }
         }
     }
 
     fn emitResult(self: *Lowerer, res: ast.NamedRef) !void {
-        if (self.stack_resident.contains(res.name)) return;
+        if (self.stack_resident.contains(res.name)) {
+            if (@import("builtin").mode == .Debug)
+                std.debug.assert(self.stack_pending.items.len == 0);
+            try self.stack_pending.append(res.name);
+            return;
+        }
         try self.emitStoreSlot(try self.slotFor(res.name));
     }
 
@@ -5555,6 +5736,37 @@ test "Win64 variadic lowering duplicates FP args (printf shape)" {
     try testing.expectEqual(@as(u8, 0), plan.args[2].locs[0].kind);
     try testing.expectEqual(@as(u16, 2), plan.args[2].locs[0].index);
     try testing.expectEqual(@as(u8, 1), plan.sse_count);
+}
+
+test "a single-use conditional branch keeps its condition on the stack" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\define i32 @cond(i32 %x) {
+        \\entry:
+        \\  br label %loop
+        \\loop:
+        \\  %i = phi i32 [ 0, %entry ], [ %next, %loop ]
+        \\  %c = icmp slt i32 %i, %x
+        \\  br i1 %c, label %body, label %exit
+        \\body:
+        \\  %next = add i32 %i, 1
+        \\  br label %loop
+        \\exit:
+        \\  ret i32 %i
+        \\}
+        \\
+    );
+    const result = try compileWithOptions(allocator, &module, 1, 8, .{ .legacy_codegen = false });
+    const code = codeOf(result, "cond");
+    // The comparison result is consumed by JZ directly; no STORE_LOCAL/LOAD_LOCAL
+    // pair is emitted between CMP_LT and the branch in a phi predecessor.
+    try testing.expect(std.mem.indexOf(u8, code, &.{ op.OP_CMP_LT, op.OP_JZ }) != null);
 }
 
 test "production commutative constants are emitted second" {
