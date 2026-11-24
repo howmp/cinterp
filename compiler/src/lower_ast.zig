@@ -2165,10 +2165,31 @@ const Lowerer = struct {
                 try self.lowerCallbackBuiltin(call, result, raw_name);
                 return;
             }
+            if (startsWith(raw_name, "llvm.fmuladd.")) {
+                try self.lowerFmuladd(call, result, raw_name);
+                return;
+            }
             try self.lowerDirectCall(call, result, renameIntrinsic(raw_name));
             return;
         }
         try self.lowerIndirectCall(call, result);
+    }
+
+    /// `llvm.fmuladd.f32/f64` gets one fused opcode instead of a native libm
+    /// `fma` call per use; `@mulAdd` in the runtime keeps the fused rounding.
+    /// Wide floats stay on the native path.
+    fn lowerFmuladd(self: *Lowerer, call: ast.Call, result: ?ast.NamedRef, name: []const u8) anyerror!void {
+        const opcode: u8 = if (std.mem.endsWith(u8, name, ".f32"))
+            op.OP_FMA32
+        else if (std.mem.endsWith(u8, name, ".f64"))
+            op.OP_FMA
+        else
+            return self.lowerDirectCall(call, result, renameIntrinsic(name));
+        if (call.args.len != 3) return error.BadCall;
+        const res = result orelse return error.NoResult;
+        for (call.args) |arg| try self.emitFloatValue(arg.ty, arg.val);
+        try self.emitU8(opcode);
+        try self.emitStoreSlot(try self.slotFor(res.name));
     }
 
     fn lowerDirectCall(self: *Lowerer, call: ast.Call, result: ?ast.NamedRef, name: []const u8) anyerror!void {

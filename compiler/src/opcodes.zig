@@ -117,3 +117,8 @@ pub const OP_LOAD_CONST_POOL: u8 = 0xA5;
 /// `param & 3` selects the width (0/1/2 = 8/16/32 bits) and bit 7 selects sign
 /// extension; without it the value is zero-extended.
 pub const OP_NORMALIZE: u8 = 0xA6;
+/// `FMA`: pop `c`, `b`, `a` and push the fused `a*b + c` (double). Emitted for
+/// `llvm.fmuladd.f64`, which otherwise became one native libm call per use.
+pub const OP_FMA: u8 = 0xA7;
+/// `FMA32`: single-precision `llvm.fmuladd.f32`.
+pub const OP_FMA32: u8 = 0xA8;

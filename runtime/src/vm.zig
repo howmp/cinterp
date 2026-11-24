@@ -148,6 +148,8 @@ pub const OP_LOAD_CONST_POOL: u8 = 0xA5;
 /// `mask; and; shift; shl; shift; shr_s` chain the compiler used to emit for
 /// every narrow integer operation.
 pub const OP_NORMALIZE: u8 = 0xA6;
+pub const OP_FMA: u8 = 0xA7;
+pub const OP_FMA32: u8 = 0xA8;
 
 fn floatToI64Safe(x: anytype) !i64 {
     const xf: f64 = @floatCast(x);
@@ -1783,6 +1785,15 @@ pub const VM = struct {
                     const fb: f64 = @bitCast(b.i);
                     try self.push(.{ .i = @bitCast(fa * fb) });
                 },
+                OP_FMA => {
+                    const c = try self.pop();
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const fa: f64 = @bitCast(a.i);
+                    const fb: f64 = @bitCast(b.i);
+                    const fc: f64 = @bitCast(c.i);
+                    try self.push(.{ .i = @bitCast(@mulAdd(f64, fa, fb, fc)) });
+                },
                 OP_FDIV => {
                     const b = try self.pop();
                     const a = try self.pop();
@@ -1812,6 +1823,12 @@ pub const VM = struct {
                     const b = try self.pop();
                     const a = try self.pop();
                     try self.pushF32(f32FromValue(a) * f32FromValue(b));
+                },
+                OP_FMA32 => {
+                    const c = try self.pop();
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    try self.pushF32(@mulAdd(f32, f32FromValue(a), f32FromValue(b), f32FromValue(c)));
                 },
                 OP_FDIV32 => {
                     const b = try self.pop();

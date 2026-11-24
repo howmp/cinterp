@@ -188,6 +188,8 @@ OPS: dict[int, tuple[str, str]] = {
     0xA4: ("CALLBACK_RELEASE", NO_ARG),
     0xA5: ("LOAD_CONST_POOL", "pool"),
     0xA6: ("NORMALIZE", "u8"),
+    0xA7: ("FMA", NO_ARG),
+    0xA8: ("FMA32", NO_ARG),
 }
 
 
