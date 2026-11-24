@@ -168,6 +168,17 @@ pub const OP_FSHL_N: u8 = 0xB7;
 pub const OP_FSHR_N: u8 = 0xB8;
 pub const OP_USUB_SAT_N: u8 = 0xB9;
 
+/// Narrow shift/divide/remainder: `u8 param` uses the `*_N` encoding (width
+/// code 0/1/2 = 8/16/32 bits and bit 7 sign-extends the result). Width code 3
+/// is invalid; 64-bit operations use the base opcodes.
+pub const OP_SHL_N: u8 = 0xBA;
+pub const OP_SHR_U_N: u8 = 0xBB;
+pub const OP_SHR_S_N: u8 = 0xBC;
+pub const OP_DIV_S_N: u8 = 0xBD;
+pub const OP_DIV_U_N: u8 = 0xBE;
+pub const OP_REM_S_N: u8 = 0xBF;
+pub const OP_REM_U_N: u8 = 0xC0;
+
 const FusionKind = enum(u8) { none, alu, narrow, cmp };
 
 /// Opcodes the LOAD_CONST_POOL fallthrough can absorb. A table lookup keeps
@@ -193,6 +204,13 @@ const fusion_kinds: [256]FusionKind = blk: {
     kinds[OP_AND_N] = .narrow;
     kinds[OP_OR_N] = .narrow;
     kinds[OP_XOR_N] = .narrow;
+    kinds[OP_SHL_N] = .narrow;
+    kinds[OP_SHR_U_N] = .narrow;
+    kinds[OP_SHR_S_N] = .narrow;
+    kinds[OP_DIV_S_N] = .narrow;
+    kinds[OP_DIV_U_N] = .narrow;
+    kinds[OP_REM_S_N] = .narrow;
+    kinds[OP_REM_U_N] = .narrow;
     kinds[OP_CMP_EQ] = .cmp;
     kinds[OP_CMP_LT] = .cmp;
     kinds[OP_CMP_LT_U] = .cmp;
@@ -349,6 +367,13 @@ fn traceOpName(op: u8) []const u8 {
         0xb7 => "FSHL_N",
         0xb8 => "FSHR_N",
         0xb9 => "USUB_SAT_N",
+        0xba => "SHL_N",
+        0xbb => "SHR_U_N",
+        0xbc => "SHR_S_N",
+        0xbd => "DIV_S_N",
+        0xbe => "DIV_U_N",
+        0xbf => "REM_S_N",
+        0xc0 => "REM_U_N",
         else => "UNKNOWN",
     };
 }
@@ -1992,6 +2017,12 @@ pub const VM = struct {
                                     return error.DivisionByZero;
                                 if ((next_op == OP_DIV_U or next_op == OP_REM_U) and cu == 0)
                                     return error.DivisionByZero;
+                                if ((next_op == OP_DIV_S_N or next_op == OP_REM_S_N) and
+                                    narrowSignExtend(c, narrow_param) == 0)
+                                    return error.DivisionByZero;
+                                if ((next_op == OP_DIV_U_N or next_op == OP_REM_U_N) and
+                                    narrowLow(c, narrow_param) == 0)
+                                    return error.DivisionByZero;
                                 const result: i64 = switch (next_op) {
                                     OP_ADD, OP_ADD_N => a.i +% c,
                                     OP_SUB, OP_SUB_N => a.i -% c,
@@ -2002,10 +2033,17 @@ pub const VM = struct {
                                     OP_SHL => @bitCast(@as(u64, @bitCast(a.i)) << sh),
                                     OP_SHR_S => a.i >> sh,
                                     OP_SHR_U => @bitCast(@as(u64, @bitCast(a.i)) >> sh),
+                                    OP_SHL_N => narrowCanonical(narrowLow(a.i, narrow_param) << sh, narrow_param),
+                                    OP_SHR_S_N => narrowSignExtend(narrowSignExtend(a.i, narrow_param) >> sh, narrow_param),
+                                    OP_SHR_U_N => narrowCanonical(narrowLow(a.i, narrow_param) >> sh, narrow_param),
                                     OP_DIV_S => @divTrunc(a.i, c),
                                     OP_DIV_U => @bitCast(@as(u64, @bitCast(a.i)) / cu),
                                     OP_REM_S => @rem(a.i, c),
                                     OP_REM_U => @bitCast(@as(u64, @bitCast(a.i)) % cu),
+                                    OP_DIV_S_N => narrowSignExtend(@divTrunc(narrowSignExtend(a.i, narrow_param), narrowSignExtend(c, narrow_param)), narrow_param),
+                                    OP_DIV_U_N => narrowCanonical(narrowLow(a.i, narrow_param) / narrowLow(c, narrow_param), narrow_param),
+                                    OP_REM_S_N => narrowSignExtend(@rem(narrowSignExtend(a.i, narrow_param), narrowSignExtend(c, narrow_param)), narrow_param),
+                                    OP_REM_U_N => narrowCanonical(narrowLow(a.i, narrow_param) % narrowLow(c, narrow_param), narrow_param),
                                     else => unreachable,
                                 };
                                 try pushAt(values, &sp, self.stack_limit, .{ .i = result });
@@ -3282,6 +3320,84 @@ pub const VM = struct {
                         values[callee_base + li] = .{ .i = 0 };
                     }
                     ip = 0;
+                },
+                OP_SHL_N => {
+                    const param = try readU8(code, &ip);
+                    if ((param & 0x03) == 0x03) return error.BadOpcode;
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    const shift: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
+                    try pushAt(values, &sp, self.stack_limit, .{
+                        .i = narrowCanonical(narrowLow(a.i, param) << shift, param),
+                    });
+                },
+                OP_SHR_U_N => {
+                    const param = try readU8(code, &ip);
+                    if ((param & 0x03) == 0x03) return error.BadOpcode;
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    const shift: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
+                    try pushAt(values, &sp, self.stack_limit, .{
+                        .i = narrowCanonical(narrowLow(a.i, param) >> shift, param),
+                    });
+                },
+                OP_SHR_S_N => {
+                    const param = try readU8(code, &ip);
+                    if ((param & 0x03) == 0x03) return error.BadOpcode;
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    const shift: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
+                    try pushAt(values, &sp, self.stack_limit, .{
+                        .i = narrowSignExtend(narrowSignExtend(a.i, param) >> shift, param),
+                    });
+                },
+                OP_DIV_S_N => {
+                    const param = try readU8(code, &ip);
+                    if ((param & 0x03) == 0x03) return error.BadOpcode;
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    const an = narrowSignExtend(a.i, param);
+                    const bn = narrowSignExtend(b.i, param);
+                    if (bn == 0) return error.DivisionByZero;
+                    try pushAt(values, &sp, self.stack_limit, .{
+                        .i = narrowSignExtend(@divTrunc(an, bn), param),
+                    });
+                },
+                OP_DIV_U_N => {
+                    const param = try readU8(code, &ip);
+                    if ((param & 0x03) == 0x03) return error.BadOpcode;
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    const au = narrowLow(a.i, param);
+                    const bu = narrowLow(b.i, param);
+                    if (bu == 0) return error.DivisionByZero;
+                    try pushAt(values, &sp, self.stack_limit, .{
+                        .i = narrowCanonical(au / bu, param),
+                    });
+                },
+                OP_REM_S_N => {
+                    const param = try readU8(code, &ip);
+                    if ((param & 0x03) == 0x03) return error.BadOpcode;
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    const an = narrowSignExtend(a.i, param);
+                    const bn = narrowSignExtend(b.i, param);
+                    if (bn == 0) return error.DivisionByZero;
+                    try pushAt(values, &sp, self.stack_limit, .{
+                        .i = narrowSignExtend(@rem(an, bn), param),
+                    });
+                },
+                OP_REM_U_N => {
+                    const param = try readU8(code, &ip);
+                    if ((param & 0x03) == 0x03) return error.BadOpcode;
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    const au = narrowLow(a.i, param);
+                    const bu = narrowLow(b.i, param);
+                    if (bu == 0) return error.DivisionByZero;
+                    try pushAt(values, &sp, self.stack_limit, .{
+                        .i = narrowCanonical(au % bu, param),
+                    });
                 },
                 else => return badOpcode(op, current, ip),
             }

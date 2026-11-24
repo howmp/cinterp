@@ -195,6 +195,12 @@ fn expectFusedResult(code: []const u8, data: []const u8, expected: i64) !void {
     if (comptime traceEnabled()) try std.testing.expect(run.fused > 0);
 }
 
+fn expectPoolResult(code: []const u8, data: []const u8, expected: i64) !void {
+    const run = try runPoolProgram(code, data);
+    try std.testing.expectEqual(vm.CI_OK, run.status);
+    try std.testing.expectEqual(expected, run.result);
+}
+
 fn expectPoolRuntimeError(code: []const u8, data: []const u8) !void {
     const run = try runPoolProgram(code, data);
     try std.testing.expectEqual(vm.CI_E_RUNTIME, run.status);
@@ -1506,4 +1512,50 @@ test "a jump into the ALU bypasses the const-load fusion" {
     try std.testing.expectEqual(vm.CI_OK, run.status);
     try std.testing.expectEqual(@as(i64, 15), run.result);
     if (comptime traceEnabled()) try std.testing.expectEqual(@as(u64, 0), run.fused);
+}
+
+fn buildNarrowProgram(buf: []u8, lhs: i64, rhs: i64, opcode: u8, param: u8) []const u8 {
+    var a = Asm{ .buf = buf };
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(lhs);
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(rhs);
+    a.u8v(opcode);
+    a.u8v(param);
+    a.u8v(vm.OP_RET);
+    return a.code();
+}
+
+test "narrow shift/div/rem opcodes" {
+    var code_buf: [64]u8 = undefined;
+    const p8: u8 = 0x80;
+    const p32: u8 = 0x82;
+
+    try expectPoolResult(buildNarrowProgram(&code_buf, 1, 1, vm.OP_SHL_N, p8), "", 2);
+    try expectPoolResult(buildNarrowProgram(&code_buf, 1, 9, vm.OP_SHL_N, p8), "", 0);
+    try expectPoolResult(buildNarrowProgram(&code_buf, 1, 64, vm.OP_SHL_N, p8), "", 1);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -1, 1, vm.OP_SHL_N, p8), "", -2);
+    try expectPoolResult(buildNarrowProgram(&code_buf, 1, 31, vm.OP_SHL_N, p32), "", -2147483648);
+
+    try expectPoolResult(buildNarrowProgram(&code_buf, -1, 1, vm.OP_SHR_U_N, p8), "", 127);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -1, 8, vm.OP_SHR_U_N, p8), "", 0);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -1, 1, vm.OP_SHR_S_N, p8), "", -1);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -128, 9, vm.OP_SHR_S_N, p8), "", -1);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -8, 1, vm.OP_SHR_S_N, p32), "", -4);
+
+    try expectPoolResult(buildNarrowProgram(&code_buf, -7, 2, vm.OP_DIV_S_N, p8), "", -3);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -1, 2, vm.OP_DIV_U_N, p8), "", 127);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -7, 2, vm.OP_REM_S_N, p8), "", -1);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -1, 2, vm.OP_REM_U_N, p8), "", 1);
+    try expectPoolResult(buildNarrowProgram(&code_buf, -1, 2, vm.OP_DIV_U_N, p32), "", 0x7FFFFFFF);
+}
+
+test "narrow div/rem reject zero divisors" {
+    var code_buf: [64]u8 = undefined;
+    const p8: u8 = 0x80;
+    try expectPoolRuntimeError(buildNarrowProgram(&code_buf, 7, 0, vm.OP_DIV_S_N, p8), "");
+    try expectPoolRuntimeError(buildNarrowProgram(&code_buf, 7, 0, vm.OP_DIV_U_N, p8), "");
+    try expectPoolRuntimeError(buildNarrowProgram(&code_buf, 7, 0, vm.OP_REM_S_N, p8), "");
+    try expectPoolRuntimeError(buildNarrowProgram(&code_buf, 7, 0, vm.OP_REM_U_N, p8), "");
+    try expectPoolRuntimeError(buildNarrowProgram(&code_buf, 7, 1, vm.OP_SHL_N, 0x03), "");
 }

@@ -587,6 +587,15 @@ fn maskFor(bits: u32) i64 {
     return @intCast((@as(u64, 1) << @intCast(bits)) - 1);
 }
 
+fn narrowWidthCode(bits: u32) ?u8 {
+    return switch (bits) {
+        8 => 0,
+        16 => 1,
+        32 => 2,
+        else => null,
+    };
+}
+
 fn constIntValue(value: ast.Value) ?i64 {
     return switch (value) {
         .int => |lit| intToI64(lit),
@@ -3312,15 +3321,21 @@ const Lowerer = struct {
         const bits: u32 = intBitsOf(b.ty) orelse 64;
         switch (b.op) {
             .udiv, .urem => {
+                const base: u8 = if (b.op == .udiv) op.OP_DIV_U else op.OP_REM_U;
                 if (bits < 64) {
                     try self.emitNormalizedOperand(b.ty, b.lhs, bits, false);
                     try self.emitNormalizedOperand(b.ty, b.rhs, bits, false);
-                    try self.emitU8(if (b.op == .udiv) op.OP_DIV_U else op.OP_REM_U);
-                    try self.normalizeInt(bits, true);
+                    if (narrowWidthCode(bits)) |width_code| {
+                        try self.emitU8(if (b.op == .udiv) op.OP_DIV_U_N else op.OP_REM_U_N);
+                        try self.emitU8(width_code | 0x80);
+                    } else {
+                        try self.emitU8(base);
+                        try self.normalizeInt(bits, true);
+                    }
                 } else {
                     try self.emitValueOf(b.ty, b.lhs);
                     try self.emitValueOf(b.ty, b.rhs);
-                    try self.emitU8(if (b.op == .udiv) op.OP_DIV_U else op.OP_REM_U);
+                    try self.emitU8(base);
                     try self.normalizeInt(bits, true);
                 }
             },
@@ -3329,8 +3344,13 @@ const Lowerer = struct {
                 if (bits < 64) {
                     try self.emitNormalizedOperand(b.ty, b.lhs, bits, shift_signed);
                     try self.emitValueOf(b.ty, b.rhs);
-                    try self.emitU8(if (shift_signed) op.OP_SHR_S else op.OP_SHR_U);
-                    try self.normalizeInt(bits, true);
+                    if (narrowWidthCode(bits)) |width_code| {
+                        try self.emitU8(if (shift_signed) op.OP_SHR_S_N else op.OP_SHR_U_N);
+                        try self.emitU8(width_code | 0x80);
+                    } else {
+                        try self.emitU8(if (shift_signed) op.OP_SHR_S else op.OP_SHR_U);
+                        try self.normalizeInt(bits, true);
+                    }
                 } else {
                     try self.emitValueOf(b.ty, b.lhs);
                     try self.emitValueOf(b.ty, b.rhs);
@@ -3371,14 +3391,12 @@ const Lowerer = struct {
                     .and_ => op.OP_AND_N,
                     .or_ => op.OP_OR_N,
                     .xor => op.OP_XOR_N,
+                    .shl => op.OP_SHL_N,
+                    .sdiv => op.OP_DIV_S_N,
+                    .srem => op.OP_REM_S_N,
                     else => null,
                 };
-                const width_code: ?u8 = switch (bits) {
-                    8 => 0,
-                    16 => 1,
-                    32 => 2,
-                    else => null,
-                };
+                const width_code = narrowWidthCode(bits);
                 if (narrow != null and width_code != null) {
                     try self.emitU8(narrow.?);
                     try self.emitU8(width_code.? | 0x80);
@@ -5767,6 +5785,61 @@ test "a single-use conditional branch keeps its condition on the stack" {
     // The comparison result is consumed by JZ directly; no STORE_LOCAL/LOAD_LOCAL
     // pair is emitted between CMP_LT and the branch in a phi predecessor.
     try testing.expect(std.mem.indexOf(u8, code, &.{ op.OP_CMP_LT, op.OP_JZ }) != null);
+}
+
+test "production narrow shift/div/rem use narrow opcodes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator,
+        \\target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+        \\target triple = "x86_64-unknown-linux-gnu"
+        \\
+        \\define i8 @shl(i8 %x) {
+        \\entry:
+        \\  %a = shl i8 %x, 3
+        \\  ret i8 %a
+        \\}
+        \\define i8 @lshr(i8 %x) {
+        \\entry:
+        \\  %a = lshr i8 %x, 3
+        \\  ret i8 %a
+        \\}
+        \\define i8 @ashr(i8 %x) {
+        \\entry:
+        \\  %a = ashr i8 %x, 3
+        \\  ret i8 %a
+        \\}
+        \\define i8 @sdiv(i8 %x) {
+        \\entry:
+        \\  %a = sdiv i8 %x, 3
+        \\  ret i8 %a
+        \\}
+        \\define i8 @srem(i8 %x) {
+        \\entry:
+        \\  %a = srem i8 %x, 3
+        \\  ret i8 %a
+        \\}
+        \\define i8 @udiv(i8 %x) {
+        \\entry:
+        \\  %a = udiv i8 %x, 3
+        \\  ret i8 %a
+        \\}
+        \\define i8 @urem(i8 %x) {
+        \\entry:
+        \\  %a = urem i8 %x, 3
+        \\  ret i8 %a
+        \\}
+    );
+    const result = try compileWithOptions(allocator, &module, 1, 8, .{ .legacy_codegen = false });
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "shl"), &.{ op.OP_SHL_N, 0x80 }) != null);
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "lshr"), &.{ op.OP_SHR_U_N, 0x80 }) != null);
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "ashr"), &.{ op.OP_SHR_S_N, 0x80 }) != null);
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "sdiv"), &.{ op.OP_DIV_S_N, 0x80 }) != null);
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "srem"), &.{ op.OP_REM_S_N, 0x80 }) != null);
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "udiv"), &.{ op.OP_DIV_U_N, 0x80 }) != null);
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "urem"), &.{ op.OP_REM_U_N, 0x80 }) != null);
 }
 
 test "production commutative constants are emitted second" {

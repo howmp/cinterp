@@ -191,7 +191,7 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 
 ## 4. Opcode
 
-> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xB9 的全部常量，`POP`（0x15）/`SWAP`（0x16）也由运行时解码；`SWAP` 现在用于搬运宽浮点返回值。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。
+> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xC0 的全部常量，`POP`（0x15）/`SWAP`（0x16）也由运行时解码；`SWAP` 现在用于搬运宽浮点返回值。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。新增 opcode 不改变 CIVM v2 容器版本；旧 runtime 解码到未知 opcode 会返回 `BadOpcode`，因此 `.cib` 必须与配套 runtime 一起分发。
 
 栈效果按“先压入的值在下面”描述，例如 `a, b -> result` 表示先压 `a`、再压 `b`，opcode 弹 `b` 再弹 `a`。
 
@@ -310,6 +310,13 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 | 0xB7 | `FSHL_N` | u8 param | 漏斗左移 `(a << s) \| (b >> (w-s))` |
 | 0xB8 | `FSHR_N` | u8 param | 漏斗右移 |
 | 0xB9 | `USUB_SAT_N` | u8 param | 无符号饱和减法 |
+| 0xBA | `SHL_N` | u8 param | `a,b -> normalize((a & mask) << (b & 63))`；窄左移，结果按宽度规范化 |
+| 0xBB | `SHR_U_N` | u8 param | 窄逻辑右移，shift 仍为 `b & 63` |
+| 0xBC | `SHR_S_N` | u8 param | 窄算术右移，先将 `a` 符号扩展到 i64 |
+| 0xBD | `DIV_S_N` | u8 param | 窄有符号除法；两个操作数先按宽度符号扩展，masked 除数为 0 时 `DivisionByZero` |
+| 0xBE | `DIV_U_N` | u8 param | 窄无符号除法；两个操作数先按宽度取低位，masked 除数为 0 时 `DivisionByZero` |
+| 0xBF | `REM_S_N` | u8 param | 窄有符号取余，语义同 `DIV_S_N` |
+| 0xC0 | `REM_U_N` | u8 param | 窄无符号取余，语义同 `DIV_U_N` |
 
 ### 4.1 浮点谓词
 

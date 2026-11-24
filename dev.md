@@ -478,7 +478,9 @@ opcode，`LOAD_CONST_POOL before` 列出常量加载后紧跟的 opcode，分别
 结果归一化和常量操作数融合。生产 lowering 会把可交换整数算子的常量左操作数
 重排到第二个发射位置，让 `LOAD_CONST_POOL;ALU` 融合生效；`icmp`/`switch` 的
 第二个操作数为常量时由 `LOAD_CONST_POOL;CMP` 融合吸收，取反仍是后续的常量
-XOR（同样被融合）。
+XOR（同样被融合）。8/16/32 位的 `shl/lshr/ashr/sdiv/udiv/srem/urem` 使用
+`SHL_N/SHR_U_N/SHR_S_N/DIV_S_N/DIV_U_N/REM_S_N/REM_U_N`（0xBA–0xC0），
+在同一个 dispatch 内完成结果归一化；64 位仍用基础 opcode 加 `NORMALIZE`。
 计数只在 `Debug`/`ReleaseSafe` 构建中编译进去；`ReleaseFast`/`ReleaseSmall`
 会提示不可用，dispatch 循环和 VM 布局都没有额外字段。调用 libc `exit()` 的 C 程序
 由 `atexit` 兜底输出（Windows exe 未链接 CRT，只有正常返回时输出）。需要无干扰的

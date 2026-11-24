@@ -147,3 +147,15 @@ pub const OP_FSHL_N: u8 = 0xB7;
 pub const OP_FSHR_N: u8 = 0xB8;
 /// `u8 param`: unsigned saturating subtract (`llvm.usub.sat.*`).
 pub const OP_USUB_SAT_N: u8 = 0xB9;
+
+// 0xC1+ are reserved for future narrow/constant extensions.
+/// Narrow shift/divide/remainder: `u8 param` uses the `*_N` encoding (width
+/// code 0/1/2 and bit 7 sign-extends the result). Width code 3 is invalid;
+/// 64-bit operations use the base opcodes.
+pub const OP_SHL_N: u8 = 0xBA;
+pub const OP_SHR_U_N: u8 = 0xBB;
+pub const OP_SHR_S_N: u8 = 0xBC;
+pub const OP_DIV_S_N: u8 = 0xBD;
+pub const OP_DIV_U_N: u8 = 0xBE;
+pub const OP_REM_S_N: u8 = 0xBF;
+pub const OP_REM_U_N: u8 = 0xC0;

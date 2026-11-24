@@ -207,6 +207,13 @@ OPS: dict[int, tuple[str, str]] = {
     0xB7: ("FSHL_N", "u8"),
     0xB8: ("FSHR_N", "u8"),
     0xB9: ("USUB_SAT_N", "u8"),
+    0xBA: ("SHL_N", "u8"),
+    0xBB: ("SHR_U_N", "u8"),
+    0xBC: ("SHR_S_N", "u8"),
+    0xBD: ("DIV_S_N", "u8"),
+    0xBE: ("DIV_U_N", "u8"),
+    0xBF: ("REM_S_N", "u8"),
+    0xC0: ("REM_U_N", "u8"),
 }
 
 
