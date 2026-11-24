@@ -161,6 +161,9 @@ pub const TraceStats = struct {
     ops: [256]u64 = [_]u64{0} ** 256,
     funcs: [MAX_FUNCS]u64 = [_]u64{0} ** MAX_FUNCS,
     plans: [plan_loader.MAX_PLANS]u64 = [_]u64{0} ** plan_loader.MAX_PLANS,
+    /// NORMALIZE immediately preceded by this opcode; guides folding the
+    /// result normalization into the producer.
+    norm_after: [256]u64 = [_]u64{0} ** 256,
     fused_store_load: u64 = 0,
 };
 
@@ -1508,6 +1511,21 @@ pub const VM = struct {
         }
         if (n > 24) try writer.print("  ... {d} more opcodes\n", .{n - 24});
 
+        var nentries: [256]TraceCount = undefined;
+        var norm_count: usize = 0;
+        for (0..256) |i| {
+            if (self.trace.norm_after[i] == 0) continue;
+            nentries[norm_count] = .{ .key = @intCast(i), .count = self.trace.norm_after[i] };
+            norm_count += 1;
+        }
+        if (norm_count != 0) {
+            std.mem.sort(TraceCount, nentries[0..norm_count], {}, traceCountDesc);
+            try writer.writeAll("cinterp trace: NORMALIZE after\n");
+            for (nentries[0..@min(norm_count, 12)]) |e| {
+                try writer.print("  {d:>12}  {s}\n", .{ e.count, traceOpName(@intCast(e.key)) });
+            }
+        }
+
         var fentries: [MAX_FUNCS]TraceCount = undefined;
         var fn_count: usize = 0;
         for (0..MAX_FUNCS) |i| {
@@ -1674,6 +1692,7 @@ pub const VM = struct {
         var va_types: [64]u8 = [_]u8{0} ** 64;
         var va_sizes: [64]u16 = [_]u16{0} ** 64;
         var va_type_count: u8 = 0;
+        var prev_op: u8 = 0;
 
         while (true) {
             const f = self.functions[current];
@@ -1683,6 +1702,9 @@ pub const VM = struct {
             ip += 1;
             if (comptime trace_build) {
                 if (self.trace_active) {
+                    if (op == OP_NORMALIZE and prev_op != 0)
+                        self.trace.norm_after[prev_op] += 1;
+                    prev_op = op;
                     self.trace.total += 1;
                     self.trace.ops[op] += 1;
                     self.trace.funcs[current] += 1;
@@ -1743,6 +1765,7 @@ pub const VM = struct {
                 OP_NORMALIZE => {
                     const param = try readU8(code, &ip);
                     try self.normalizeTop(param);
+                    try self.consumeNormals(code, &ip);
                 },
                 OP_ADD => {
                     const b = try self.pop();
@@ -2119,15 +2142,9 @@ pub const VM = struct {
                     if (slot >= local_count) return error.BadLocal;
                     try self.push(self.values[base + slot]);
                     // clang -O0 canonicalizes narrow values by loading and then
-                    // immediately normalizing. Fuse the fallthrough pair; a jump
-                    // that targets the NORMALIZE still executes it standalone.
-                    if (ip + 1 < code.len and code[ip] == OP_NORMALIZE) {
-                        const param = code[ip + 1];
-                        if ((param & 0x03) != 0x03) {
-                            try self.normalizeTop(param);
-                            ip += 2;
-                        }
-                    }
+                    // immediately normalizing. Fuse the fallthrough run; a jump
+                    // that targets a NORMALIZE still executes it standalone.
+                    try self.consumeNormals(code, &ip);
                 },
                 OP_STORE_LOCAL => {
                     const idx = try readU16(code, &ip);
@@ -2158,6 +2175,10 @@ pub const VM = struct {
                         }
                     }
                     if (!fused) self.sp -= 1;
+                    // Only the fused load leaves a value whose canonicalizing
+                    // NORMALIZE we can absorb; checking every plain store costs
+                    // more than the skipped dispatch.
+                    if (fused) try self.consumeNormals(code, &ip);
                 },
                 OP_CMP_EQ => {
                     const b = try self.pop();
@@ -2844,6 +2865,17 @@ pub const VM = struct {
             @as(i64, @bitCast(raw << shift)) >> shift
         else
             @bitCast(raw & ((@as(u64, 1) << @intCast(bits)) - 1));
+    }
+
+    /// Apply a fallthrough run of NORMALIZE instructions. Jumps into the
+    /// middle still execute the instruction from the dispatcher.
+    inline fn consumeNormals(self: *VM, code: []const u8, ip: *usize) !void {
+        while (ip.* + 1 < code.len and code[ip.*] == OP_NORMALIZE) {
+            const param = code[ip.* + 1];
+            if ((param & 0x03) == 0x03) return;
+            try self.normalizeTop(param);
+            ip.* += 2;
+        }
     }
 
     fn push(self: *VM, v: Value) !void {

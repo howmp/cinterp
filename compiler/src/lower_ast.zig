@@ -1417,6 +1417,47 @@ const Lowerer = struct {
         try self.emitU8(width_code | (if (signed) @as(u8, 0x80) else 0));
     }
 
+    /// Fold `emitConst; normalizeInt` for a literal into one normalized
+    /// constant, using the narrowest pool width the runtime can extend.
+    fn emitNormalizedConst(self: *Lowerer, v: i64, bits: u32, signed: bool) !void {
+        const raw: u64 = @bitCast(v);
+        const normalized: i64 = if (bits == 0 or bits >= 64) v else blk: {
+            const mask: u64 = (@as(u64, 1) << @intCast(bits)) - 1;
+            const low = raw & mask;
+            if (signed and (low & (@as(u64, 1) << @intCast(bits - 1))) != 0)
+                break :blk @bitCast(low | ~mask);
+            break :blk @bitCast(low);
+        };
+        const width: u8 = switch (bits) {
+            8 => 1,
+            16 => 2,
+            32 => 4,
+            64 => 8,
+            else => 0,
+        };
+        if (width == 0) return self.emitConst(normalized);
+        try self.emitConstWidth(@bitCast(normalized), width, signed);
+    }
+
+    fn emitNormalizedOperand(
+        self: *Lowerer,
+        ty: ?*const ast.Type,
+        value: ast.Value,
+        bits: u32,
+        signed: bool,
+    ) anyerror!void {
+        switch (value) {
+            .int => |lit| {
+                const v = intToI64(lit) orelse return error.UnsupportedOperand;
+                try self.emitNormalizedConst(v, bits, signed);
+            },
+            else => {
+                try self.emitValueOf(ty, value);
+                try self.normalizeInt(bits, signed);
+            },
+        }
+    }
+
     fn emitSignShift(self: *Lowerer, bits: u32) !void {
         const shift: i64 = @intCast(64 - bits);
         try self.emitConst(shift);
@@ -1636,8 +1677,7 @@ const Lowerer = struct {
     /// Same as the legacy `emitIntOperand`: operand followed by truncation to
     /// the instruction's integer width (and sign extension when signed).
     fn emitIntOperand(self: *Lowerer, value: ast.Value, bits: u32, signed: bool) anyerror!void {
-        try self.emitValueOf(null, value);
-        try self.normalizeInt(bits, signed);
+        try self.emitNormalizedOperand(null, value, bits, signed);
     }
 
     // --------------------------------------------------------------- float cmp
@@ -2251,8 +2291,7 @@ const Lowerer = struct {
                 if (isPlainFloat(v.ty)) {
                     try self.emitFloatValue(v.ty, v.val);
                 } else if (intBitsOf(v.ty)) |bits| {
-                    try self.emitValue(v);
-                    try self.normalizeInt(bits, true);
+                    try self.emitNormalizedOperand(v.ty, v.val, bits, true);
                 } else {
                     try self.emitValue(v);
                 }
@@ -2376,10 +2415,8 @@ const Lowerer = struct {
         switch (b.op) {
             .udiv, .urem => {
                 if (bits < 64) {
-                    try self.emitValueOf(b.ty, b.lhs);
-                    try self.normalizeInt(bits, false);
-                    try self.emitValueOf(b.ty, b.rhs);
-                    try self.normalizeInt(bits, false);
+                    try self.emitNormalizedOperand(b.ty, b.lhs, bits, false);
+                    try self.emitNormalizedOperand(b.ty, b.rhs, bits, false);
                     try self.emitU8(if (b.op == .udiv) op.OP_DIV_U else op.OP_REM_U);
                     try self.normalizeInt(bits, true);
                 } else {
@@ -2392,8 +2429,7 @@ const Lowerer = struct {
             .lshr, .ashr => {
                 const shift_signed = b.op == .ashr;
                 if (bits < 64) {
-                    try self.emitValueOf(b.ty, b.lhs);
-                    try self.normalizeInt(bits, shift_signed);
+                    try self.emitNormalizedOperand(b.ty, b.lhs, bits, shift_signed);
                     try self.emitValueOf(b.ty, b.rhs);
                     try self.emitU8(if (shift_signed) op.OP_SHR_S else op.OP_SHR_U);
                     try self.normalizeInt(bits, true);
