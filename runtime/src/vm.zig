@@ -1591,6 +1591,7 @@ pub const VM = struct {
                 try writer.print("cinterp trace: {d} instructions\n", .{total});
             }
             try writer.print("cinterp trace: fused STORE_LOCAL;LOAD_LOCAL {d}\n", .{self.trace.fused_store_load});
+            try writer.print("cinterp trace: fused LOAD_CONST_POOL;ALU {d}\n", .{self.trace.fused_const_alu});
 
             var entries: [256]TraceCount = undefined;
             var n: usize = 0;
@@ -1876,7 +1877,66 @@ pub const VM = struct {
                         const sign_bit = @as(u64, 1) << @as(u6, @intCast(width * 8 - 1));
                         if ((bits & sign_bit) != 0) bits |= ~((@as(u64, 1) << @as(u6, @intCast(width * 8))) - 1);
                     }
-                    try self.push(.{ .i = @bitCast(bits) });
+                    const c: i64 = @bitCast(bits);
+                    // Fuse a fallthrough LOAD_CONST_POOL;integer-ALU pair. Only
+                    // the fallthrough is fused: a jump that lands on the ALU
+                    // still executes it there, and the const load keeps its
+                    // original stack effect when the pair is not fused.
+                    var fused = false;
+                    if (ip < code.len) {
+                        const next_op = code[ip];
+                        var fused_len: usize = 0;
+                        var narrow_param: u8 = 0;
+                        switch (next_op) {
+                            OP_ADD, OP_SUB, OP_MUL, OP_AND, OP_OR, OP_XOR, OP_SHL, OP_SHR_S, OP_SHR_U, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U => fused_len = 1,
+                            OP_ADD_N, OP_SUB_N, OP_MUL_N, OP_AND_N, OP_OR_N, OP_XOR_N => {
+                                if (ip + 1 < code.len) {
+                                    const param = code[ip + 1];
+                                    if ((param & 0x03) != 0x03) {
+                                        fused_len = 2;
+                                        narrow_param = param;
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                        if (fused_len != 0) {
+                            const a = try self.pop();
+                            const cu: u64 = @bitCast(c);
+                            const sh: u6 = @intCast(cu & 63);
+                            if ((next_op == OP_DIV_S or next_op == OP_REM_S) and c == 0)
+                                return error.DivisionByZero;
+                            if ((next_op == OP_DIV_U or next_op == OP_REM_U) and cu == 0)
+                                return error.DivisionByZero;
+                            const result: i64 = switch (next_op) {
+                                OP_ADD, OP_ADD_N => a.i +% c,
+                                OP_SUB, OP_SUB_N => a.i -% c,
+                                OP_MUL, OP_MUL_N => a.i *% c,
+                                OP_AND, OP_AND_N => a.i & c,
+                                OP_OR, OP_OR_N => a.i | c,
+                                OP_XOR, OP_XOR_N => a.i ^ c,
+                                OP_SHL => @bitCast(@as(u64, @bitCast(a.i)) << sh),
+                                OP_SHR_S => a.i >> sh,
+                                OP_SHR_U => @bitCast(@as(u64, @bitCast(a.i)) >> sh),
+                                OP_DIV_S => @divTrunc(a.i, c),
+                                OP_DIV_U => @bitCast(@as(u64, @bitCast(a.i)) / cu),
+                                OP_REM_S => @rem(a.i, c),
+                                OP_REM_U => @bitCast(@as(u64, @bitCast(a.i)) % cu),
+                                else => unreachable,
+                            };
+                            try self.push(.{ .i = result });
+                            if (fused_len == 2) try self.normalizeTop(narrow_param);
+                            ip += fused_len;
+                            fused = true;
+                            if (comptime trace_build) {
+                                if (self.trace_active) {
+                                    self.trace.fused_const_alu += 1;
+                                    prev_op = next_op;
+                                }
+                            }
+                        }
+                    }
+                    if (!fused) try self.push(.{ .i = c });
                 },
                 OP_NORMALIZE => {
                     const param = try readU8(code, &ip);

@@ -140,6 +140,66 @@ fn buildCipcWithData(buf: []u8, data: []const u8, key_opt: ?[cipc.key_len]u8) []
     return a.code();
 }
 
+const PoolRun = struct {
+    status: c_int,
+    result: i64,
+    fused: u64,
+};
+
+fn traceEnabled() bool {
+    const mode = @import("builtin").mode;
+    return mode == .Debug or mode == .ReleaseSafe;
+}
+
+/// `lhs; LOAD_CONST_POOL ref; op [param]; RET` so a test can exercise the
+/// constant-load fusion path.
+fn buildPoolAluProgram(buf: []u8, lhs: i64, ref: u32, op: u8, param: ?u8) []const u8 {
+    var a = Asm{ .buf = buf };
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(lhs);
+    a.u8v(vm.OP_LOAD_CONST_POOL);
+    a.u32v(ref);
+    a.u8v(op);
+    if (param) |p| a.u8v(p);
+    a.u8v(vm.OP_RET);
+    return a.code();
+}
+
+fn runPoolProgram(code: []const u8, data: []const u8) !PoolRun {
+    const funcs = [_]FunctionSpec{
+        .{ .name = "main", .params = 0, .locals = 0, .code = code },
+    };
+    var module_buf: [512]u8 = undefined;
+    const module = buildModule(&module_buf, &funcs);
+    var plans_buf: [32]u8 = undefined;
+    const plans = buildEmptyPlans(&plans_buf);
+    var cipc_buf: [256]u8 = undefined;
+    const cipc_bytes = buildCipcWithData(&cipc_buf, data, null);
+    var package_buf: [1024]u8 = undefined;
+    const package = buildPackageWithCipc(&package_buf, module, plans, cipc_bytes);
+
+    const machine = vm.ci_vm_create(0) orelse return error.OutOfMemory;
+    defer vm.ci_vm_destroy(machine);
+    machine.setTrace(true);
+    try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_load_package(machine, package.ptr, package.len));
+    const status = vm.ci_vm_run(machine, "main");
+    const result = vm.ci_vm_result(machine);
+    const fused = if (comptime traceEnabled()) machine.trace.fused_const_alu else 0;
+    return .{ .status = status, .result = result, .fused = fused };
+}
+
+fn expectFusedResult(code: []const u8, data: []const u8, expected: i64) !void {
+    const run = try runPoolProgram(code, data);
+    try std.testing.expectEqual(vm.CI_OK, run.status);
+    try std.testing.expectEqual(expected, run.result);
+    if (comptime traceEnabled()) try std.testing.expect(run.fused > 0);
+}
+
+fn expectPoolRuntimeError(code: []const u8, data: []const u8) !void {
+    const run = try runPoolProgram(code, data);
+    try std.testing.expectEqual(vm.CI_E_RUNTIME, run.status);
+}
+
 /// `main` with one local that counts down `iterations` and returns `result`.
 /// Long counts are used to keep a VM busy while another thread probes it.
 fn loopMain(buf: []u8, iterations: i64, result: i64) []const u8 {
@@ -1357,4 +1417,76 @@ test "CIPC v2 encrypted data is decrypted on every run" {
         try std.testing.expectEqual(vm.CI_OK, vm.ci_vm_run(machine, "main"));
         try std.testing.expectEqual(@as(i64, 42), vm.ci_vm_result(machine));
     }
+}
+
+test "LOAD_CONST_POOL fuses fallthrough integer ALU" {
+    var code_buf: [32]u8 = undefined;
+    var data: [8]u8 = undefined;
+    const ref_u64: u32 = @as(u32, 3) << 28;
+
+    std.mem.writeInt(u64, &data, 7, .little);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, 5, ref_u64, vm.OP_ADD, null), &data, 12);
+
+    std.mem.writeInt(u64, &data, 3, .little);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, 10, ref_u64, vm.OP_SUB, null), &data, 7);
+
+    std.mem.writeInt(u64, &data, 7, .little);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, 6, ref_u64, vm.OP_MUL, null), &data, 42);
+
+    std.mem.writeInt(u64, &data, 5, .little);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, 1, ref_u64, vm.OP_SHL, null), &data, 32);
+
+    std.mem.writeInt(u64, &data, 3, .little);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, -7, ref_u64, vm.OP_DIV_S, null), &data, -2);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, -7, ref_u64, vm.OP_REM_S, null), &data, -1);
+
+    var data32: [4]u8 = undefined;
+    std.mem.writeInt(u32, &data32, @bitCast(@as(i32, -2)), .little);
+    const ref_s32: u32 = (@as(u32, 2) << 28) | (1 << 30);
+    try expectFusedResult(buildPoolAluProgram(&code_buf, -7, ref_s32, vm.OP_DIV_S, null), &data32, 3);
+}
+
+test "LOAD_CONST_POOL fuses narrow ALU and normalizes" {
+    var code_buf: [32]u8 = undefined;
+    var data: [1]u8 = .{1};
+    try expectFusedResult(
+        buildPoolAluProgram(&code_buf, 127, @as(u32, 1) << 30, vm.OP_ADD_N, 0x80),
+        &data,
+        -128,
+    );
+
+    data[0] = 100;
+    try expectFusedResult(buildPoolAluProgram(&code_buf, 200, 0, vm.OP_ADD_N, 0x00), &data, 44);
+}
+
+test "LOAD_CONST_POOL fusion keeps division-by-zero errors" {
+    var code_buf: [32]u8 = undefined;
+    const data = [_]u8{0} ** 8;
+    const ref: u32 = @as(u32, 3) << 28;
+    try expectPoolRuntimeError(buildPoolAluProgram(&code_buf, 10, ref, vm.OP_DIV_S, null), &data);
+    try expectPoolRuntimeError(buildPoolAluProgram(&code_buf, 10, ref, vm.OP_REM_U, null), &data);
+}
+
+test "a jump into the ALU bypasses the const-load fusion" {
+    var code_buf: [48]u8 = undefined;
+    var data: [8]u8 = undefined;
+    std.mem.writeInt(u64, &data, 7, .little);
+
+    var code = Asm{ .buf = &code_buf };
+    code.u8v(vm.OP_LOAD_CONST_I64);
+    code.i64v(5);
+    code.u8v(vm.OP_LOAD_CONST_I64);
+    code.i64v(10);
+    code.u8v(vm.OP_JMP);
+    // Skip the 4-byte operand plus LOAD_CONST_POOL and its 4-byte ref.
+    code.u32v(@intCast(code.pos + 4 + 1 + 4));
+    code.u8v(vm.OP_LOAD_CONST_POOL);
+    code.u32v(@as(u32, 3) << 28);
+    code.u8v(vm.OP_ADD);
+    code.u8v(vm.OP_RET);
+
+    const run = try runPoolProgram(code.code(), &data);
+    try std.testing.expectEqual(vm.CI_OK, run.status);
+    try std.testing.expectEqual(@as(i64, 15), run.result);
+    if (comptime traceEnabled()) try std.testing.expectEqual(@as(u64, 0), run.fused);
 }

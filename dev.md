@@ -469,9 +469,10 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 加载/运行失败 1，用法或 I/O 错误 2；C `main` 的返回值只通过 `result:` 输出。
 
 `--trace`（或 `CINTERP_TRACE=1`）在运行结束后向 stderr 打印指令总数、Mops/s、
-`STORE_LOCAL;LOAD_LOCAL` 融合次数、opcode/函数/原生计划直方图，用于定位长用例的
-热点；`NORMALIZE after` 列出产生归一化的前一条 opcode，`LOAD_CONST_POOL before`
-列出常量加载后紧跟的 opcode，分别用于折叠结果归一化和常量操作数融合。
+`STORE_LOCAL;LOAD_LOCAL` 与 `LOAD_CONST_POOL;ALU` 融合次数、opcode/函数/原生
+计划直方图，用于定位长用例的热点；`NORMALIZE after` 列出产生归一化的前一条
+opcode，`LOAD_CONST_POOL before` 列出常量加载后紧跟的 opcode，分别用于折叠
+结果归一化和常量操作数融合。
 计数只在 `Debug`/`ReleaseSafe` 构建中编译进去；`ReleaseFast`/`ReleaseSmall`
 会提示不可用，dispatch 循环和 VM 布局都没有额外字段。调用 libc `exit()` 的 C 程序
 由 `atexit` 兜底输出（Windows exe 未链接 CRT，只有正常返回时输出）。需要无干扰的
