@@ -173,7 +173,10 @@ build_one() {
     cp runtime/zig-out/include/cinterp.h "$dest/include/"
     cp -a runtime/zig-out/lib/. "$dest/lib/"
     if [ "$target" = "x86_64-linux-gnu" ]; then
-        (cd compiler && zig build -Doptimize=ReleaseSmall >/dev/null)
+        # The compiler is a host tool that users run; build it for the generic
+        # x86-64 Linux target instead of the CI runner's native CPU so it
+        # cannot require AVX/AVX-512 instructions that older machines lack.
+        (cd compiler && zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSmall >/dev/null)
         mkdir -p "$dest/bin"
         cp compiler/zig-out/bin/cinterp-cc "$dest/bin/cinterp-cc"
         if [ ! -x "$dest/bin/cinterp-cc" ]; then

@@ -99,6 +99,10 @@ jobs:
           grep -q 'ships the compiler' "$D/README.md"
           ! grep -q 'This is a runtime-only tarball' "$D/README.md"
           test -x "$D/bin/cinterp-cc"
+          if objdump -d "$D/bin/cinterp-cc" | grep -qE '%[yz]mm'; then
+            echo "error: cinterp-cc requires AVX/AVX-512" >&2
+            exit 1
+          fi
           test -s "$D/THIRD_PARTY_NOTICES.md"
           test -s "$D/cmake/cinterpConfigVersion.cmake"
           test -s "$D/lib/cmake/cinterp/cinterpConfig.cmake"
