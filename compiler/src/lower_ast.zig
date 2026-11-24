@@ -391,6 +391,31 @@ fn firstOperand(instr: ast.Instruction) ?ast.Value {
     };
 }
 
+/// True when `instr` consumes `name` from the operand stack under the
+/// stack-resident rules. Besides the first emitted operand, an adjacent
+/// producer may be the right operand of an integer commutative operation: the
+/// value stays on the stack, the other operand is pushed on top, and the
+/// operation sees the same pair in swapped order.
+fn consumedAsStackOperand(instr: ast.Instruction, name: []const u8) bool {
+    if (firstOperand(instr)) |first| {
+        if (ptrIsLocal(first, name)) return true;
+    }
+    switch (instr.op) {
+        .binary => |b| {
+            if (intBitsOf(b.ty) == null) return false;
+            const commutative = switch (b.op) {
+                .add, .mul, .and_, .or_, .xor => true,
+                else => false,
+            };
+            if (!commutative) return false;
+            return ptrIsLocal(b.rhs, name) and !ptrIsLocal(b.lhs, name);
+        },
+        // Comparisons normalize each operand for their width; a skipped load
+        // would also skip that normalization, so they stay first-operand only.
+        else => return false,
+    }
+}
+
 fn maskFor(bits: u32) i64 {
     return @intCast((@as(u64, 1) << @intCast(bits)) - 1);
 }
@@ -2053,8 +2078,7 @@ const Lowerer = struct {
                 while (j < block.instructions.len and isIgnoredCall(block.instructions[j])) : (j += 1) {}
                 if (j >= block.instructions.len) continue;
                 const consumer = block.instructions[j];
-                const first = firstOperand(consumer) orelse continue;
-                if (!ptrIsLocal(first, producer.name)) continue;
+                if (!consumedAsStackOperand(consumer, producer.name)) continue;
                 if (isTerminator(consumer) and phi_preds.contains(block_name)) continue;
                 try self.stack_resident.put(producer.name, {});
             }
