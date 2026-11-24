@@ -1,4 +1,4 @@
-.PHONY: all help test compiler runtime debug-runtime cross-runtimes-win compiler-test integration lint size keygenme release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean distclean test-suites-smoke test-suites test-suites-full test-suites-nightly test-suites-nightly-serial test-suites-report test-suites-cross test-winapi fetch-suites generate-diff generate-diff-nightly generate-diff-csmith release-artifacts evidence check-version
+.PHONY: all help test compiler runtime debug-runtime cross-runtimes-win compiler-test integration lint size keygenme release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean distclean test-suites-smoke test-suites test-suites-full test-suites-opt test-suites-nightly test-suites-nightly-serial test-suites-report test-suites-cross test-winapi fetch-suites generate-diff generate-diff-nightly generate-diff-csmith release-artifacts evidence check-version
 
 PYTHON ?= python3
 BUILD := build
@@ -6,10 +6,11 @@ COMPILER := build/cinterp-cc
 RUNTIME := runtime/zig-out/bin/cinterp-run
 SUITE_RUNNER := scripts/test/test_suites.py
 SUITE_CACHE := $(BUILD)/cib-cache-zig-ast
+SUITE_CC_OPT ?= 2
 SUITE_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
-SUITE_RUN = $(PYTHON) $(SUITE_RUNNER) --compiler-path $(COMPILER) --jobs $(SUITE_JOBS) --cib-cache $(SUITE_CACHE)
+SUITE_RUN = $(PYTHON) $(SUITE_RUNNER) --compiler-path $(COMPILER) --jobs $(SUITE_JOBS) --cib-cache $(SUITE_CACHE) --cc-opt $(SUITE_CC_OPT)
 CROSS_SUITE_JOBS ?= 4
-CROSS_RUN = $(PYTHON) $(SUITE_RUNNER) --compiler-path $(COMPILER) --jobs $(CROSS_SUITE_JOBS)
+CROSS_RUN = $(PYTHON) $(SUITE_RUNNER) --compiler-path $(COMPILER) --jobs $(CROSS_SUITE_JOBS) --cc-opt $(SUITE_CC_OPT)
 
 # Fuzz seeds: CI runs the fuzz targets once per seed (1 and 2).
 FUZZ_SEED ?= 1
@@ -40,6 +41,7 @@ help:
 		'keygenme            embedded keygenme binaries for four targets' \
 		'cross-test          Win64/Win32/ARM64 example runs' \
 		'test-suites-full    full pinned upstream suite' \
+		'test-suites-opt     csuite + c-testsuite at the default --cc-opt 2' \
 		'bench               benchmark and build/benchmark.json' \
 		'release-artifacts   release tarballs + SBOM + SHA256SUMS' \
 		'clean / distclean   remove outputs (clean preserves suite cache)'
@@ -117,6 +119,13 @@ test-suites: compiler runtime
 
 test-suites-full: compiler runtime
 	$(SUITE_RUN) --tier full --report $(BUILD)/test-suites-full.json
+
+# Fast default-optimization smoke (--cc-opt 2): csuite + c-testsuite.
+# Use --cc-opt 0 to run the legacy -O0 contract.
+test-suites-opt: compiler runtime
+	$(PYTHON) $(SUITE_RUNNER) --compiler-path $(COMPILER) --jobs $(SUITE_JOBS) \
+		--cib-cache $(SUITE_CACHE) --cc-opt 2 \
+		--suite csuite --suite c-testsuite --report $(BUILD)/test-suites-opt.json
 
 # Run the suite and generated-diff phases concurrently. Each phase writes its
 # own report/log; the suite pool is global across suites.

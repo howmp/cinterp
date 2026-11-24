@@ -18,6 +18,10 @@
     "pr60822": "compiler limit: CIVM module larger than 2 MiB",
     "20020107-1": "unsupported: inline asm"
   },
+  "case_cc_opt": {
+    "bfill": 0,
+    "bzero": 0
+  },
   "cases": [
     {
       "id": "20000121-1",

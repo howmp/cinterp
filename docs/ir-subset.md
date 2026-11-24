@@ -1,7 +1,12 @@
 # LLVM IR 子集契约
 
-`cinterp-cc` 接受由 `zig cc -S -emit-llvm -O0` 发出的 LLVM IR **文本**
-（Zig 0.13 → clang 18.1.x）。类型化解析器/校验器只接受 CIVM 降低器已实现的子集：
+`cinterp-cc` 默认接受由 `zig cc -S -emit-llvm -O2` 发出的 LLVM IR **文本**
+（Zig 0.13 → clang 18.1.x）。`--cc-opt 0` 保留旧的 `-O0` 兼容模式。非 0 级别会关闭向量化
+（`-fno-vectorize -fno-slp-vectorize`），并默认追加 `-fno-strict-aliasing -fwrapv
+-fno-jump-tables -fno-builtin-printf`，以匹配 gcc-torture 依赖的别名/回绕语义并减少跳转表；仍出现的相对查找表初始化器会折叠为相对偏移。降低器实现
+按边处理的 phi 并行拷贝、`llvm.smax/smin/umax/umin`、`llvm.abs`、整数位内建函数
+（cttz/ctlz/ctpop/bswap/bitreverse/fshl/fshr/usub.sat）、`llvm.load.relative`、
+`llvm.expect`、`llvm.assume` 等 lowering。类型化解析器/校验器只接受 CIVM 降低器已实现的子集：
 解析器未实现的指令会变成 `line:column` 编译期诊断，而不是静默回退（少数部分建模的
 例外列在下面）。类型化 AST（`compiler/src/ir/{lexer,ast,parser,verify}.zig`）是唯一
 的 IR 前端；不存在 `--ir-parser` 选项，也没有第二套/旧式解析器。
@@ -35,15 +40,15 @@
 ## 指令
 
 `alloca`、`load`、`store`、`getelementptr`、`phi`、`br`、`switch`、`ret`、
-`unreachable`、`select`、`extractvalue`、直接/间接/尾调用 `call`（`call`、`tail`、
-`musttail`、`notail`）、`icmp`、`fcmp`、整数/浮点二元运算
+`unreachable`、`select`、`extractvalue`、`insertvalue`、`extractelement`、`insertelement`、
+直接/间接/尾调用 `call`（`call`、`tail`、`musttail`、`notail`）、`icmp`、`fcmp`、整数/浮点二元运算
 （`add sub mul sdiv udiv srem urem and or xor shl lshr ashr fadd fsub fmul fdiv`）、
 `fneg`、`freeze`、`trunc`、`zext`、`sext`、`fptosi`、`fptoui`、`sitofp`、`uitofp`、
 `fpext`、`fptrunc`、`bitcast`、`inttoptr`、`ptrtoint`、`addrspacecast`。
 
-`freeze` 按恒等操作降低（它把操作数存入结果槽）。`select`/`extractvalue`/`fneg` 已
-作为指令实现；只有当它们作为*常量表达式*操作数出现时才会被拒绝，而 clang 对 C 不会
-产生这种形式。
+`freeze` 按恒等操作降低（它把操作数存入结果槽）。`insertvalue` 在临时内存块中插入字段，
+`extractelement`/`insertelement` 按内存元素读写；`extractvalue` 对标量字段加载，对聚合/
+宽浮点字段返回地址。向量值在 CIVM 中以数据块地址表示。
 
 受支持的 `llvm.*` 内建函数就是降低器已实现的那些：
 
@@ -56,21 +61,34 @@
 | `llvm.frameaddress` | 常量 `0` |
 | `llvm.ptrmask` | `and` |
 | `llvm.is.fpclass` | `OP_FPCLASS` |
-| `llvm.fmuladd.{f32,f64,f80,f128}` | `fmaf` / `fma` / `fmal` |
+| `llvm.fmuladd.{f32,f64,f80,f128}` | `OP_FMA` / `OP_FMA32`（f32/f64）或 libm `fmal`（宽浮点） |
+| `llvm.smax/smin/umax/umin.{i8,i16,i32,i64}` | `OP_MAX_N` / `OP_MIN_N`，param 携带宽度与 signedness |
+| `llvm.abs.{i8,i16,i32,i64}` | `OP_ABS_N`（忽略 is_int_min_poison） |
+| `llvm.cttz/ctlz.{i8,i16,i32,i64}` | `OP_CTTZ_N` / `OP_CTLZ_N`，零输入返回位宽 |
+| `llvm.ctpop.{i8,i16,i32,i64}` | `OP_CTPOP_N` |
+| `llvm.bswap.{i16,i32,i64}` | `OP_BSWAP_N` |
+| `llvm.bitreverse.{i8,i16,i32,i64}` | `OP_BITREV_N`；i1 为恒等 |
+| `llvm.fshl/fshr.{i8,i16,i32,i64}` | `OP_FSHL_N` / `OP_FSHR_N` |
+| `llvm.usub.sat.{i8,i16,i32,i64}` | `OP_USUB_SAT_N` |
+| `llvm.load.relative.{i32,i64}` | 读 i32 相对偏移并加基址 |
+| `llvm.eh.sjlj.setjmp` / `llvm.eh.sjlj.longjmp` | `OP_SETJMP` / `OP_LONGJMP` |
+| `llvm.experimental.noalias.scope.decl`, `llvm.sideeffect` | 无操作 |
+| `llvm.expect.*` | 恒等（取值参数） |
+| `llvm.assume`, `llvm.donothing` | 无操作 |
 | `llvm.fabs`, `llvm.sqrt`, `round`, `ceil`, `floor`, `trunc`, `nearbyint`, `rint` | 对应的 libm 条目（`fabsf`/`fabs`/`fabsl` 等） |
 | `llvm.sin`, `llvm.cos`, `llvm.exp2`, `llvm.log2`, `llvm.pow`, `llvm.fmin`, `llvm.fmax` | 对应的 libm 条目 |
 | `llvm.copysign` | `copysignf` / `copysign` / `copysignl` |
 
-只有 `llvm.fmuladd` 被映射（映射到 `fmaf`/`fma`/`fmal`）。没有 `llvm.fma.*` 条目，
-因此它会走下面描述的未知内建函数路径。
+只有 FMA 类内建函数中 `llvm.fmuladd` 被映射（映射到 `fmaf`/`fma`/`fmal`）。没有
+`llvm.fma.*` 条目，因此它会走下面描述的未知内建函数路径。
 
-在解析期被拒绝（编译期错误，`line:column` 诊断）：`insertvalue`、`extractelement`、
-`insertelement`、`shufflevector`、作为指令的 `va_arg`、`atomicrmw`、`cmpxchg`、
-`fence`、`invoke`、`resume`、`landingpad`、`indirectbr`，以及任何未在上文列出的
-助记符（`compiler/src/ir/parser.zig`，`parseInstruction`）。
+在解析期被拒绝（编译期错误，`line:column` 诊断）：`shufflevector`、作为指令的
+`va_arg`、`atomicrmw`、`cmpxchg`、`fence`、`invoke`、`resume`、`landingpad`、
+`indirectbr`，以及任何未在上文列出的助记符（`compiler/src/ir/parser.zig`，
+`parseInstruction`）。
 
-稍后由降低器拒绝：`frem`（可以解析，但没有 CIVM opcode）、`asm` 被调者调用
-（`error.UnsupportedInstruction`）。
+稍后由降低器拒绝：`frem`（可以解析，但没有 CIVM opcode），非空模板的内联汇编调用
+（`error.UnsupportedInstruction`）。空模板 `asm` 视为恒等/编译器屏障。
 
 已接受但只是部分建模，因此值得了解：
 
@@ -79,12 +97,13 @@
   `callbr`。
 - 未知的 `llvm.*` 内建函数不做特殊处理：它们保留自己的名字，成为普通的外部调用
   计划，并在运行期（未解析符号）而不是编译期失败。
-- GNU 向量扩展不在该子集内。向量类型的值只作为数据块搬运（store 路径用
-  `OP_MEMCPY` 复制它们，与数组和结构体一样），并且 `getelementptr` 只接受进入向量
-  的字面索引 `0`；向量算术以及元素/混洗指令均未实现。
+- GNU 向量扩展不在该子集内。向量值在 CIVM 中以数据块地址表示；`extractelement`/
+  `insertelement` 按元素大小读写，向量常量和 `zeroinitializer` 会实体化到临时内存。
+  向量算术、`shufflevector`、`getelementptr` 进入向量的非零字面索引仍未实现。
 - 全局 `fp128` 初始化器会写入 16 字节真实数据。`ppc_fp128`、`half`、`bfloat` 和
   全局向量初始化器没有 runtime 值路径，会返回 `UnsupportedGlobalInitializer`，
-  不再静默保持为零。
+  不再静默保持为零。相对查找表的 `trunc(sub(ptrtoint, ptrtoint))` 初始化器会在
+  布局完成后折叠为相对偏移；普通的外部/内部地址仍走 relocation。
 
 ## 校验
 

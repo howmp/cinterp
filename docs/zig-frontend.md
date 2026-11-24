@@ -34,9 +34,13 @@ compiler/src/ir/dump.zig     `zig build ir-dump -- file.ll` (debug aid, not inst
 ## 传给 `zig cc` 的编译选项
 
 ```text
--S -emit-llvm -O0 -g0 -fno-discard-value-names
+-S -emit-llvm -O{cc_opt} -g0 -fno-discard-value-names
 -fno-sanitize=all -fno-stack-protector -ffine-grained-bitfield-accesses
+-fno-strict-aliasing -fno-jump-tables -fwrapv -fno-builtin-printf
 ```
+
+`cc_opt` 由 `--cc-opt` 选择，默认 2；`--cc-opt 0` 保留旧的 -O0 契约。非 0 级别会额外
+关闭两个向量化 pass（`-fno-vectorize -fno-slp-vectorize`）；lowerer 已支持 HFA 所需的向量元素/简单算术/shuffle，但自动向量化产生的完整向量 IR 仍超出子集。
 
 Windows 目标会额外加上 `-fms-extensions -fdeclspec`；除原生 x86-64 Linux
 宿主机之外，每个目标都会传入一个 `--target=`（`compiler/src/main.zig`、
@@ -52,7 +56,7 @@ lowering 约定的一部分。`-fno-stack-protector` 去掉了编译器插入的
 
 ```text
 cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig]
-                    [--cc-flag FLAG]... [--keep-ir]
+                    [--cc-flag FLAG]... [--cc-opt 0|1|2|3] [--keep-ir]
                     [--dump] [--dump-ast] [--dump-imports]
                     [--no-auto-link]
 cinterp-cc --version

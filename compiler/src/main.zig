@@ -167,6 +167,9 @@ const Options = struct {
     /// Extra flags forwarded to the C frontend. Kept explicit so arbitrary
     /// user input cannot silently alter the compiler invocation.
     cc_flags: []const []const u8 = &.{},
+    /// C frontend optimization level. 2 is the default; 0 keeps the legacy
+    /// alloca/load/store contract used by the original test baselines.
+    cc_opt: u8 = 2,
     keep_ir: bool = false,
     dump: bool = false,
     dump_ast: bool = false,
@@ -433,9 +436,16 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8, callbacks_
         try argv.append(try std.fmt.allocPrint(allocator, "--target={s}", .{opts.target.zig_triple}));
     }
     try argv.appendSlice(&.{
-        "-S",                "-emit-llvm",           "-O0",                              "-g0", "-fno-discard-value-names",
+        "-S",                "-emit-llvm",           "-g0", "-fno-discard-value-names",
         "-fno-sanitize=all", "-fno-stack-protector", "-ffine-grained-bitfield-accesses",
+        "-fno-strict-aliasing", "-fno-jump-tables", "-fwrapv",
+        "-fno-builtin-printf",
     });
+    try argv.append(try std.fmt.allocPrint(allocator, "-O{d}", .{opts.cc_opt}));
+    if (opts.cc_opt > 0) {
+        // The lowering has no vector IR support; keep the scalar pipeline.
+        try argv.appendSlice(&.{ "-fno-vectorize", "-fno-slp-vectorize" });
+    }
     try argv.appendSlice(opts.cc_flags);
     if (opts.target.os == 2) {
         try argv.appendSlice(&.{ "-fms-extensions", "-fdeclspec" });
@@ -469,7 +479,7 @@ fn runZigCc(allocator: Allocator, opts: Options, ll_path: []const u8, callbacks_
 }
 
 fn usage() void {
-    std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--cc-flag FLAG]... [--keep-ir]\n" ++
+    std.debug.print("usage: cinterp-cc compile <source.c> [-o out.cib] [--target T] [--cc-path zig] [--cc-flag FLAG]... [--cc-opt 0|1|2|3] [--keep-ir]\n" ++
         "                      [--dump] [--dump-ast] [--dump-imports] [--no-auto-link] [--no-xor-const-pool]\n", .{});
 }
 
@@ -532,6 +542,7 @@ pub fn main() !void {
     var target: Target = findTarget("x86_64-linux").?;
     var cc_path: []const u8 = "zig";
     var cc_flags = std.ArrayList([]const u8).init(allocator);
+    var cc_opt: u8 = 2;
     var keep_ir = false;
     var dump = false;
     var dump_ast = false;
@@ -583,6 +594,20 @@ pub fn main() !void {
                 std.process.exit(2);
             }
             try cc_flags.append(argv[i]);
+        } else if (std.mem.eql(u8, a, "--cc-opt")) {
+            i += 1;
+            if (i >= argv.len) {
+                usage();
+                std.process.exit(2);
+            }
+            cc_opt = std.fmt.parseInt(u8, argv[i], 10) catch {
+                usage();
+                std.process.exit(2);
+            };
+            if (cc_opt > 3) {
+                usage();
+                std.process.exit(2);
+            }
         } else if (std.mem.eql(u8, a, "--keep-ir")) {
             keep_ir = true;
         } else if (std.mem.eql(u8, a, "--dump")) {
@@ -627,6 +652,7 @@ pub fn main() !void {
         .target = target,
         .cc_path = cc_path,
         .cc_flags = cc_flags.items,
+        .cc_opt = cc_opt,
         .keep_ir = keep_ir,
     }, ll_path, callbacks_header_path);
     const ir_text = try std.fs.cwd().readFileAlloc(allocator, ll_path, 64 * 1024 * 1024);

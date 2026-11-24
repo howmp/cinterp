@@ -35,7 +35,7 @@
 ```text
 C 源码
   → cinterp-cc（构建期）
-       → zig cc -S -emit-llvm -O0
+       → zig cc -S -emit-llvm -O2
        → typed LLVM IR parser / AST / 子集校验
        → CIVM 字节码 + CIPL FFI 调用计划 + CIPC 常量/名称池
        → CIPKG v4（CIVM + CIPL + CIPI + CIPC）

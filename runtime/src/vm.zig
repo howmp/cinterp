@@ -156,6 +156,17 @@ pub const OP_MUL_N: u8 = 0xAB;
 pub const OP_AND_N: u8 = 0xAC;
 pub const OP_OR_N: u8 = 0xAD;
 pub const OP_XOR_N: u8 = 0xAE;
+pub const OP_MAX_N: u8 = 0xAF;
+pub const OP_MIN_N: u8 = 0xB0;
+pub const OP_ABS_N: u8 = 0xB1;
+pub const OP_CTTZ_N: u8 = 0xB2;
+pub const OP_CTLZ_N: u8 = 0xB3;
+pub const OP_CTPOP_N: u8 = 0xB4;
+pub const OP_BSWAP_N: u8 = 0xB5;
+pub const OP_BITREV_N: u8 = 0xB6;
+pub const OP_FSHL_N: u8 = 0xB7;
+pub const OP_FSHR_N: u8 = 0xB8;
+pub const OP_USUB_SAT_N: u8 = 0xB9;
 
 /// `--trace` counters. Debug and ReleaseSafe compile the updates in;
 /// ReleaseFast/ReleaseSmall fold `trace_build` to false and skip them, so the
@@ -291,6 +302,17 @@ fn traceOpName(op: u8) []const u8 {
         0xac => "AND_N",
         0xad => "OR_N",
         0xae => "XOR_N",
+        0xaf => "MAX_N",
+        0xb0 => "MIN_N",
+        0xb1 => "ABS_N",
+        0xb2 => "CTTZ_N",
+        0xb3 => "CTLZ_N",
+        0xb4 => "CTPOP_N",
+        0xb5 => "BSWAP_N",
+        0xb6 => "BITREV_N",
+        0xb7 => "FSHL_N",
+        0xb8 => "FSHR_N",
+        0xb9 => "USUB_SAT_N",
         else => "UNKNOWN",
     };
 }
@@ -312,6 +334,64 @@ fn traceCountDesc(_: void, a: TraceCount, b: TraceCount) bool {
 fn tracePercent(count: u64, total: u64) f64 {
     if (total == 0) return 0;
     return 100.0 * @as(f64, @floatFromInt(count)) / @as(f64, @floatFromInt(total));
+}
+
+/// Width/signedness param shared by MAX_N/MIN_N: bits0..1 = 8/16/32/64,
+/// bit7 = signed. Zero-extend unsigned values for comparison, sign-extend
+/// signed ones.
+fn narrowForCompare(raw: i64, param: u8) i64 {
+    const width_code: u8 = param & 0x03;
+    if (width_code == 0x03) return raw;
+    const bits: u6 = switch (width_code) {
+        0 => 8,
+        1 => 16,
+        2 => 32,
+        else => unreachable,
+    };
+    const mask: u64 = (@as(u64, 1) << bits) - 1;
+    const low = @as(u64, @bitCast(raw)) & mask;
+    if ((param & 0x80) != 0 and (low & (@as(u64, 1) << (bits - 1))) != 0)
+        return @bitCast(low | ~mask);
+    return @bitCast(low);
+}
+
+/// Canonical frame-slot representation: sign-extend the low width bits.
+fn narrowSignExtend(raw: i64, param: u8) i64 {
+    const width_code: u8 = param & 0x03;
+    if (width_code == 0x03) return raw;
+    const bits: u6 = switch (width_code) {
+        0 => 8,
+        1 => 16,
+        2 => 32,
+        else => unreachable,
+    };
+    const mask: u64 = (@as(u64, 1) << bits) - 1;
+    const low = @as(u64, @bitCast(raw)) & mask;
+    if ((low & (@as(u64, 1) << (bits - 1))) != 0) return @bitCast(low | ~mask);
+    return @bitCast(low);
+}
+
+fn narrowWidthBits(param: u8) u32 {
+    return switch (param & 0x03) {
+        0 => 8,
+        1 => 16,
+        2 => 32,
+        else => 64,
+    };
+}
+
+fn narrowMask(param: u8) u64 {
+    const bits = narrowWidthBits(param);
+    if (bits == 64) return std.math.maxInt(u64);
+    return (@as(u64, 1) << @intCast(bits)) - 1;
+}
+
+fn narrowLow(raw: i64, param: u8) u64 {
+    return @as(u64, @bitCast(raw)) & narrowMask(param);
+}
+
+fn narrowCanonical(raw: u64, param: u8) i64 {
+    return narrowSignExtend(@bitCast(raw), param);
 }
 
 fn floatToI64Safe(x: anytype) !i64 {
@@ -1820,6 +1900,97 @@ pub const VM = struct {
                     const a = try self.pop();
                     try self.push(.{ .i = a.i ^ b.i });
                     try self.normalizeTop(param);
+                },
+                OP_MAX_N, OP_MIN_N => {
+                    const param = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const an = narrowForCompare(a.i, param);
+                    const bn = narrowForCompare(b.i, param);
+                    const take_a = if (op == OP_MAX_N)
+                        (if ((param & 0x80) != 0) an >= bn else @as(u64, @bitCast(an)) >= @as(u64, @bitCast(bn)))
+                    else
+                        (if ((param & 0x80) != 0) an <= bn else @as(u64, @bitCast(an)) <= @as(u64, @bitCast(bn)));
+                    try self.push(.{ .i = narrowSignExtend(if (take_a) an else bn, param) });
+                },
+                OP_ABS_N => {
+                    const param = try readU8(code, &ip);
+                    const v = try self.pop();
+                    const n = narrowForCompare(v.i, param | 0x80);
+                    try self.push(.{ .i = narrowSignExtend(if (n < 0) 0 -% n else n, param) });
+                },
+                OP_CTTZ_N => {
+                    const param = try readU8(code, &ip);
+                    const v = try self.pop();
+                    const u = narrowLow(v.i, param);
+                    const bits = narrowWidthBits(param);
+                    const r: u64 = if (u == 0) bits else @ctz(u);
+                    try self.push(.{ .i = narrowCanonical(r, param) });
+                },
+                OP_CTLZ_N => {
+                    const param = try readU8(code, &ip);
+                    const v = try self.pop();
+                    const u = narrowLow(v.i, param);
+                    const bits = narrowWidthBits(param);
+                    const lz: u32 = @intCast(@clz(u));
+                    const r: u64 = if (u == 0) bits else bits - (64 - lz);
+                    try self.push(.{ .i = narrowCanonical(r, param) });
+                },
+                OP_CTPOP_N => {
+                    const param = try readU8(code, &ip);
+                    const v = try self.pop();
+                    const r: u64 = @popCount(narrowLow(v.i, param));
+                    try self.push(.{ .i = narrowCanonical(r, param) });
+                },
+                OP_BSWAP_N => {
+                    const param = try readU8(code, &ip);
+                    const v = try self.pop();
+                    const u = narrowLow(v.i, param);
+                    const r: u64 = switch (narrowWidthBits(param)) {
+                        8 => @as(u8, @truncate(u)),
+                        16 => @byteSwap(@as(u16, @truncate(u))),
+                        32 => @byteSwap(@as(u32, @truncate(u))),
+                        else => @byteSwap(u),
+                    };
+                    try self.push(.{ .i = narrowCanonical(r, param) });
+                },
+                OP_BITREV_N => {
+                    const param = try readU8(code, &ip);
+                    const v = try self.pop();
+                    const u = narrowLow(v.i, param);
+                    const r: u64 = switch (narrowWidthBits(param)) {
+                        8 => @as(u8, @bitReverse(@as(u8, @truncate(u)))),
+                        16 => @as(u16, @bitReverse(@as(u16, @truncate(u)))),
+                        32 => @as(u32, @bitReverse(@as(u32, @truncate(u)))),
+                        else => @bitReverse(u),
+                    };
+                    try self.push(.{ .i = narrowCanonical(r, param) });
+                },
+                OP_FSHL_N, OP_FSHR_N => {
+                    const param = try readU8(code, &ip);
+                    const sv = try self.pop();
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const width = narrowWidthBits(param);
+                    const mask = narrowMask(param);
+                    const au = narrowLow(a.i, param);
+                    const bu = narrowLow(b.i, param);
+                    const shift: u32 = @intCast(@as(u64, @bitCast(sv.i)) % width);
+                    const r: u64 = if (shift == 0)
+                        (if (op == OP_FSHL_N) au else bu)
+                    else if (op == OP_FSHL_N)
+                        ((au << @intCast(shift)) | (bu >> @intCast(width - shift))) & mask
+                    else
+                        ((au << @intCast(width - shift)) | (bu >> @intCast(shift))) & mask;
+                    try self.push(.{ .i = narrowCanonical(r, param) });
+                },
+                OP_USUB_SAT_N => {
+                    const param = try readU8(code, &ip);
+                    const b = try self.pop();
+                    const a = try self.pop();
+                    const au = narrowLow(a.i, param);
+                    const bu = narrowLow(b.i, param);
+                    try self.push(.{ .i = narrowCanonical(if (au > bu) au - bu else 0, param) });
                 },
                 OP_ADD => {
                     const b = try self.pop();

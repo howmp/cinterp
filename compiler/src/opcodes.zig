@@ -130,3 +130,20 @@ pub const OP_MUL_N: u8 = 0xAB;
 pub const OP_AND_N: u8 = 0xAC;
 pub const OP_OR_N: u8 = 0xAD;
 pub const OP_XOR_N: u8 = 0xAE;
+/// `MAX_N`/`MIN_N`: `u8 param` encodes width (0/1/2/3 = 8/16/32/64) and
+/// signedness (bit 7). Used for `llvm.smax/smin/umax/umin`.
+pub const OP_MAX_N: u8 = 0xAF;
+pub const OP_MIN_N: u8 = 0xB0;
+/// `ABS_N`: integer absolute value; `u8 param` encodes width 8/16/32/64.
+/// Used for `llvm.abs.*` instead of a native call.
+pub const OP_ABS_N: u8 = 0xB1;
+/// Bit intrinsics; each takes `u8 param` with width code 0/1/2/3 = 8/16/32/64.
+pub const OP_CTTZ_N: u8 = 0xB2;
+pub const OP_CTLZ_N: u8 = 0xB3;
+pub const OP_CTPOP_N: u8 = 0xB4;
+pub const OP_BSWAP_N: u8 = 0xB5;
+pub const OP_BITREV_N: u8 = 0xB6;
+pub const OP_FSHL_N: u8 = 0xB7;
+pub const OP_FSHR_N: u8 = 0xB8;
+/// `u8 param`: unsigned saturating subtract (`llvm.usub.sat.*`).
+pub const OP_USUB_SAT_N: u8 = 0xB9;

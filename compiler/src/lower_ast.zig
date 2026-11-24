@@ -238,6 +238,14 @@ fn instrMentions(instr: ast.Instruction, name: []const u8) bool {
         .select => |s| return valueMentions(s.cond.val, name) or
             valueMentions(s.if_true.val, name) or valueMentions(s.if_false.val, name),
         .extractvalue => |e| return valueMentions(e.aggregate.val, name),
+        .insertvalue => |iv| return valueMentions(iv.aggregate.val, name) or
+            valueMentions(iv.value.val, name),
+        .extractelement => |ee| return valueMentions(ee.vector.val, name) or
+            valueMentions(ee.index.val, name),
+        .insertelement => |ie| return valueMentions(ie.vector.val, name) or
+            valueMentions(ie.value.val, name) or valueMentions(ie.index.val, name),
+        .shufflevector => |sv| return valueMentions(sv.lhs.val, name) or
+            valueMentions(sv.rhs.val, name) or valueMentions(sv.mask.val, name),
         .call => |c| {
             switch (c.callee) {
                 .direct => {},
@@ -310,6 +318,24 @@ fn countInstrUses(instr: ast.Instruction, counts: *std.StringHashMap(u32)) !void
             try countValueUses(s.if_false.val, counts);
         },
         .extractvalue => |e| try countValueUses(e.aggregate.val, counts),
+        .insertvalue => |iv| {
+            try countValueUses(iv.aggregate.val, counts);
+            try countValueUses(iv.value.val, counts);
+        },
+        .extractelement => |ee| {
+            try countValueUses(ee.vector.val, counts);
+            try countValueUses(ee.index.val, counts);
+        },
+        .insertelement => |ie| {
+            try countValueUses(ie.vector.val, counts);
+            try countValueUses(ie.value.val, counts);
+            try countValueUses(ie.index.val, counts);
+        },
+        .shufflevector => |sv| {
+            try countValueUses(sv.lhs.val, counts);
+            try countValueUses(sv.rhs.val, counts);
+            try countValueUses(sv.mask.val, counts);
+        },
         .call => |c| {
             switch (c.callee) {
                 .direct => |n| {
@@ -379,6 +405,9 @@ fn firstOperand(instr: ast.Instruction) ?ast.Value {
         },
         .select => |s| s.cond.val,
         .extractvalue => |e| e.aggregate.val,
+        .extractelement => |ee| ee.vector.val,
+        .insertvalue, .insertelement => null,
+        .shufflevector => null,
         .icmp => |c| switch (c.pred) {
             .sgt, .ugt, .sle, .ule => c.rhs,
             else => c.lhs,
@@ -652,6 +681,9 @@ const GlobalWriter = struct {
     layout: *const Layout,
     ptr_size: u32,
     mode: GepConstMode,
+    /// Global name -> absolute VM image offset, available once all objects
+    /// have been laid out. Enables folding relative address constants.
+    map: ?*const std.StringHashMap(u32) = null,
 
     const AddressRef = struct { target: []const u8, addend: i64 };
 
@@ -678,6 +710,145 @@ const GlobalWriter = struct {
                 else => return null,
             },
             else => return null,
+        }
+    }
+
+    fn constMask(bits: u32) u64 {
+        if (bits >= 64) return std.math.maxInt(u64);
+        return (@as(u64, 1) << @intCast(bits)) - 1;
+    }
+
+    fn maskToBits(v: i64, bits: u32) i64 {
+        if (bits >= 64) return v;
+        const m = constMask(bits);
+        const low = @as(u64, @bitCast(v)) & m;
+        if ((low & (@as(u64, 1) << @intCast(bits - 1))) != 0) return @bitCast(low | ~m);
+        return @bitCast(low);
+    }
+
+    /// Resolve a pointer-valued constant expression to an absolute image
+    /// offset. Only internal globals can be folded; relocations still handle
+    /// external symbols.
+    fn evalPtrConst(self: *GlobalWriter, value: ast.Value) ?i64 {
+        switch (value) {
+            .global => |n| {
+                const map = self.map orelse return null;
+                const addr = map.get(n.name) orelse return null;
+                return @intCast(addr);
+            },
+            .null_ => return 0,
+            .const_expr => |expr| switch (expr.*) {
+                .gep => |g| {
+                    const base_name = gepBaseName(g) orelse return null;
+                    const map = self.map orelse return null;
+                    const base = map.get(base_name) orelse return null;
+                    const addend = self.gepAddend(g) orelse 0;
+                    return @as(i64, @intCast(base)) + addend;
+                },
+                .cast => |c| switch (c.op) {
+                    .bitcast, .addrspacecast, .ptrtoint => return self.evalPtrConst(c.value),
+                    .inttoptr => return self.evalIntConst(c.value),
+                    else => return null,
+                },
+                else => return null,
+            },
+            else => return null,
+        }
+    }
+
+    /// Fold integer constant expressions that occur in global initializers,
+    /// including the `trunc(sub(ptrtoint, ptrtoint))` form emitted for
+    /// relative lookup tables.
+    fn evalIntConst(self: *GlobalWriter, value: ast.Value) ?i64 {
+        switch (value) {
+            .int => |lit| {
+                if (intToI64(lit)) |n| return n;
+                if (!lit.overflow and lit.magnitude <= std.math.maxInt(u64)) {
+                    return @bitCast(@as(u64, @intCast(lit.magnitude)));
+                }
+                return null;
+            },
+            .global => return self.evalPtrConst(value),
+            .const_expr => |expr| switch (expr.*) {
+                .cast => |c| {
+                    const dst_bits = intBitsOf(self.layout.resolveNamed(c.dst)) orelse
+                        @as(u32, self.ptr_size * 8);
+                    switch (c.op) {
+                        .ptrtoint => {
+                            const v = self.evalPtrConst(c.value) orelse return null;
+                            return maskToBits(v, dst_bits);
+                        },
+                        .inttoptr, .bitcast, .addrspacecast => {
+                            if (intBitsOf(self.layout.resolveNamed(c.src)) != null) {
+                                const v = self.evalIntConst(c.value) orelse return null;
+                                return maskToBits(v, dst_bits);
+                            }
+                            return self.evalPtrConst(c.value);
+                        },
+                        .trunc => {
+                            const v = self.evalIntConst(c.value) orelse return null;
+                            return maskToBits(v, dst_bits);
+                        },
+                        .zext => {
+                            const src_bits = intBitsOf(self.layout.resolveNamed(c.src)) orelse return null;
+                            const v = self.evalIntConst(c.value) orelse return null;
+                            return @bitCast(@as(u64, @bitCast(v)) & constMask(src_bits));
+                        },
+                        .sext => {
+                            const src_bits = intBitsOf(self.layout.resolveNamed(c.src)) orelse return null;
+                            const v = self.evalIntConst(c.value) orelse return null;
+                            return maskToBits(v, src_bits);
+                        },
+                        else => return null,
+                    }
+                },
+                .binary => |b| {
+                    const a = self.evalIntConst(b.lhs) orelse return null;
+                    const rhs = self.evalIntConst(b.rhs) orelse return null;
+                    const bits = intBitsOf(self.layout.resolveNamed(b.ty)) orelse return null;
+                    const shift: u6 = @intCast(@as(u64, @bitCast(rhs)) & 63);
+                    const r: i64 = switch (b.op) {
+                        .add => a +% rhs,
+                        .sub => a -% rhs,
+                        .mul => a *% rhs,
+                        .and_ => a & rhs,
+                        .or_ => a | rhs,
+                        .xor => a ^ rhs,
+                        .shl => @bitCast(@as(u64, @bitCast(a)) << shift),
+                        .lshr => @bitCast((@as(u64, @bitCast(a)) & constMask(bits)) >> shift),
+                        .ashr => a >> shift,
+                        else => return null,
+                    };
+                    return maskToBits(r, bits);
+                },
+                .gep => return self.evalPtrConst(value),
+                else => return null,
+            },
+            else => return null,
+        }
+    }
+
+    /// True when `value` mentions the address of an internal object. Used to
+    /// keep ordinary integer constant expressions unsupported while folding
+    /// relative address tables.
+    fn containsInternalAddress(self: *GlobalWriter, value: ast.Value) bool {
+        if (self.map == null) return false;
+        switch (value) {
+            .global => |n| return self.map.?.contains(n.name),
+            .const_expr => |expr| switch (expr.*) {
+                .cast => |c| switch (c.op) {
+                    .ptrtoint, .inttoptr, .bitcast, .addrspacecast => {
+                        if (self.evalPtrConst(c.value) != null) return true;
+                        return self.containsInternalAddress(c.value);
+                    },
+                    else => return self.containsInternalAddress(c.value),
+                },
+                .binary => |b| return self.containsInternalAddress(b.lhs) or
+                    self.containsInternalAddress(b.rhs),
+                .gep => return self.evalPtrConst(value) != null,
+                else => return false,
+            },
+            else => return false,
         }
     }
 
@@ -773,6 +944,14 @@ const GlobalWriter = struct {
                     return;
                 }
                 if (try self.addressRef(value) != null) return;
+                if (intBitsOf(resolved) != null and self.containsInternalAddress(value)) {
+                    if (self.evalIntConst(value)) |v| {
+                        const bits = intBitsOf(resolved).?;
+                        const size: u32 = @max(1, (bits + 7) / 8);
+                        writeIntLE(out, @bitCast(v), size);
+                        return;
+                    }
+                }
                 return error.UnsupportedGlobalInitializer;
             },
             .global => {
@@ -864,6 +1043,9 @@ const GlobalWriter = struct {
                         .addend = ref.addend,
                         .size = @min(store_size, self.ptr_size),
                     });
+                } else if (self.containsInternalAddress(value)) {
+                    // Folded into the image by `writeConstant`; no relocation.
+                    return;
                 }
             },
             else => {},
@@ -998,7 +1180,7 @@ fn buildGlobals(allocator: Allocator, module: *const ast.Module, layout: *const 
         try map.put(spec.global.name, abs);
     }
 
-    var writer = GlobalWriter{ .allocator = allocator, .layout = layout, .ptr_size = ptr_size, .mode = mode };
+    var writer = GlobalWriter{ .allocator = allocator, .layout = layout, .ptr_size = ptr_size, .mode = mode, .map = &map };
     for (specs.items) |spec| {
         const init = spec.global.init.?;
         const image = if (spec.readonly) readonly_data.items else data.items;
@@ -1076,6 +1258,8 @@ const Patch = struct { pos: u32, label: []const u8 };
 
 const PhiAssign = struct {
     pred: []const u8,
+    /// Block containing the phi instruction (the edge target).
+    succ: []const u8,
     result: []const u8,
     ty: *const ast.Type,
     value: ast.Value,
@@ -1537,7 +1721,24 @@ const Lowerer = struct {
                 const t = ty orelse return error.UnsupportedOperand;
                 try self.emitFloatConstant(t, lit);
             },
-            .null_, .undef, .poison, .zeroinitializer => try self.emitConst(0),
+            .aggregate => |agg| {
+                const t = ty orelse return error.UnsupportedOperand;
+                try self.emitAggregateValue(t, agg);
+            },
+            .string => |lit| {
+                const t = ty orelse return error.UnsupportedOperand;
+                try self.emitStringValue(t, lit);
+            },
+            .zeroinitializer, .undef, .poison => {
+                if (ty) |t| {
+                    if (isAggregateLike(t) or isF80OrF128(t)) {
+                        try self.emitZeroAggregate(t);
+                        return;
+                    }
+                }
+                try self.emitConst(0);
+            },
+            .null_ => try self.emitConst(0),
             .const_expr => |expr| try self.emitConstExpr(expr),
             else => return error.UnsupportedOperand,
         }
@@ -1823,15 +2024,14 @@ const Lowerer = struct {
         try self.patches.append(.{ .pos = pos, .label = label });
     }
 
-    fn emitPhiAssignments(self: *Lowerer, block: []const u8) !void {
+    fn emitPhiAssignments(self: *Lowerer, pred: []const u8, succ: []const u8) !void {
         // Phi incoming edges are parallel copies: every source must be read
         // before any destination is written. Stage the values on the operand
-        // stack, then store them in reverse order. This matters for -O1+ IR
-        // (e.g. `%p = phi [..., %a]` next to `%a = phi [..., %add]`), which
-        // -O0 clang never produces.
+        // stack, then store them in reverse order. Copies are edge-specific:
+        // each successor can have its own phi group.
         var count: usize = 0;
         for (self.phi_assigns.items) |assign| {
-            if (!eql(assign.pred, block)) continue;
+            if (!eql(assign.pred, pred) or !eql(assign.succ, succ)) continue;
             try self.emitValueOf(assign.ty, assign.value);
             count += 1;
         }
@@ -1841,14 +2041,15 @@ const Lowerer = struct {
         while (i > 0 and remaining > 0) {
             i -= 1;
             const assign = self.phi_assigns.items[i];
-            if (!eql(assign.pred, block)) continue;
+            if (!eql(assign.pred, pred) or !eql(assign.succ, succ)) continue;
             try self.emitStoreSlot(try self.slotFor(assign.result));
             remaining -= 1;
         }
     }
 
     fn collectPhiAssignments(self: *Lowerer, f: *const ast.Function) !void {
-        for (f.blocks) |block| {
+        for (f.blocks, 0..) |block, block_index| {
+            const succ = if (block.label) |l| l.name else if (block_index == 0) "entry" else "";
             for (block.instructions) |instr| {
                 switch (instr.op) {
                     .phi => |p| {
@@ -1856,6 +2057,7 @@ const Lowerer = struct {
                         for (p.incoming) |incoming| {
                             try self.phi_assigns.append(.{
                                 .pred = incoming.block.name,
+                                .succ = succ,
                                 .result = res.name,
                                 .ty = p.ty,
                                 .value = incoming.value,
@@ -1886,11 +2088,12 @@ const Lowerer = struct {
                 self.current_block = "entry";
             }
             for (block.instructions) |instr| {
-                switch (instr.op) {
-                    .br, .switch_, .ret, .unreachable_ => try self.emitPhiAssignments(self.current_block),
-                    else => {},
-                }
-                try self.lowerInstr(instr);
+                self.lowerInstr(instr) catch |err| {
+                    std.debug.print("cinterp-cc: {s} at {d}:{d}: {s}\n", .{
+                        instr.mnemonic(), instr.span.line, instr.span.column, @errorName(err),
+                    });
+                    return err;
+                };
             }
         }
 
@@ -2005,6 +2208,10 @@ const Lowerer = struct {
             .unreachable_ => try self.emitU8(op.OP_RET_VOID),
             .select => |sel| try self.lowerSelect(instr, sel),
             .extractvalue => |ev| try self.lowerExtractValue(instr, ev),
+            .insertvalue => |iv| try self.lowerInsertValue(instr, iv),
+            .extractelement => |ee| try self.lowerExtractElement(instr, ee),
+            .insertelement => |ie| try self.lowerInsertElement(instr, ie),
+            .shufflevector => |sv| try self.lowerShuffleVector(instr, sv),
             .call => |call| try self.lowerCall(call, instr.result),
             .icmp => |c| {
                 const res = instr.result orelse return error.NoResult;
@@ -2048,6 +2255,10 @@ const Lowerer = struct {
             .binary => |b| b.ty,
             .cast => |c| c.dst,
             .fneg, .freeze => |u| u.ty,
+            .extractelement => |e| switch (e.vector.ty.*) {
+                .vector => |v| v.elem,
+                else => return null,
+            },
             .icmp, .fcmp => return .{ .name = res.name, .size = 1 },
             else => return null,
         };
@@ -2293,34 +2504,77 @@ const Lowerer = struct {
 
     fn lowerBr(self: *Lowerer, br: ast.Br) anyerror!void {
         switch (br) {
-            .unconditional => |u| try self.jump(op.OP_JMP, u.target.name),
+            .unconditional => |u| {
+                try self.emitPhiAssignments(self.current_block, u.target.name);
+                try self.jump(op.OP_JMP, u.target.name);
+            },
             .conditional => |c| {
                 switch (c.cond.val) {
                     .int => |lit| {
                         const v = intToI64(lit) orelse 0;
-                        try self.jump(op.OP_JMP, if (v != 0) c.if_true.name else c.if_false.name);
+                        const target = if (v != 0) c.if_true.name else c.if_false.name;
+                        try self.emitPhiAssignments(self.current_block, target);
+                        try self.jump(op.OP_JMP, target);
                         return;
                     },
                     else => {},
                 }
+                // Each edge may carry a different phi group, so the copies
+                // must live inside the corresponding branch arm.
                 try self.emitValue(c.cond);
-                try self.jump(op.OP_JNZ, c.if_true.name);
+                const n = self.select_id;
+                self.select_id += 1;
+                const else_label = try std.fmt.allocPrint(self.allocator, "__br_else_{d}", .{n});
+                try self.jump(op.OP_JZ, else_label);
+                try self.emitPhiAssignments(self.current_block, c.if_true.name);
+                try self.jump(op.OP_JMP, c.if_true.name);
+                try self.labels.put(else_label, @intCast(self.func.code.items.len));
+                try self.emitPhiAssignments(self.current_block, c.if_false.name);
                 try self.jump(op.OP_JMP, c.if_false.name);
             },
         }
     }
 
     fn lowerSwitch(self: *Lowerer, sw: ast.Switch) anyerror!void {
+        if (sw.cases.len == 0) {
+            try self.emitPhiAssignments(self.current_block, sw.default.name);
+            try self.jump(op.OP_JMP, sw.default.name);
+            return;
+        }
+        const cond_bits = intBitsOf(sw.cond.ty);
+        const cond_slot = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__switch_cond_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitValue(sw.cond);
+        if (cond_bits) |bits| {
+            if (bits > 1 and bits < 64) try self.normalizeInt(bits, true);
+        }
+        try self.emitStoreSlot(cond_slot);
         for (sw.cases) |case| {
             const val = switch (case.value.val) {
                 .int => |lit| intToI64(lit) orelse 0,
                 else => 0,
             };
-            try self.emitValue(sw.cond);
-            try self.emitConst(val);
+            const n = self.select_id;
+            self.select_id += 1;
+            const next_label = try std.fmt.allocPrint(self.allocator, "__switch_next_{d}", .{n});
+            try self.emitLoadSlot(cond_slot);
+            if (cond_bits) |bits| {
+                if (bits > 0 and bits < 64) {
+                    try self.emitNormalizedConst(val, bits, true);
+                } else {
+                    try self.emitConst(val);
+                }
+            } else {
+                try self.emitConst(val);
+            }
             try self.emitU8(op.OP_CMP_EQ);
-            try self.jump(op.OP_JNZ, case.target.name);
+            try self.jump(op.OP_JZ, next_label);
+            try self.emitPhiAssignments(self.current_block, case.target.name);
+            try self.jump(op.OP_JMP, case.target.name);
+            try self.labels.put(next_label, @intCast(self.func.code.items.len));
         }
+        try self.emitPhiAssignments(self.current_block, sw.default.name);
         try self.jump(op.OP_JMP, sw.default.name);
     }
 
@@ -2356,34 +2610,245 @@ const Lowerer = struct {
         try self.emitResult(res);
     }
 
-    fn lowerExtractValue(self: *Lowerer, instr: ast.Instruction, ev: ast.ExtractValue) anyerror!void {
+    fn lowerInsertValue(self: *Lowerer, instr: ast.Instruction, iv: ast.InsertValue) anyerror!void {
         const res = instr.result orelse return error.NoResult;
-        var current = ev.aggregate.ty;
+        const sa = try self.ctx.layout.sizeAlign(iv.aggregate.ty);
+        try self.emitAllocTemp(sa.size, sa.alignment);
+        try self.emitU8(op.OP_DUP);
+        try self.emitValue(iv.aggregate);
+        try self.emitConst(sa.size);
+        try self.emitU8(op.OP_MEMCPY);
+        const slot = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__insval_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(slot);
+        const field = try self.aggregateField(iv.aggregate.ty, iv.indices);
+        try self.emitAggregateStore(slot, field.offset, field.ty, iv.value);
+        try self.emitLoadSlot(slot);
+        try self.emitResult(res);
+    }
+
+    fn lowerExtractElement(self: *Lowerer, instr: ast.Instruction, ee: ast.ExtractElement) anyerror!void {
+        const res = instr.result orelse return error.NoResult;
+        const v = switch (ee.vector.ty.*) {
+            .vector => |v| v,
+            else => return error.BadExtract,
+        };
+        const elem_size = try self.typeStoreSize(v.elem);
+        try self.emitValue(ee.vector);
+        try self.emitValue(ee.index);
+        if (elem_size != 1) {
+            try self.emitConst(elem_size);
+            try self.emitU8(op.OP_MUL);
+        }
+        try self.emitU8(op.OP_ADD);
+        try self.emitU8(op.OP_LOAD_MEM);
+        try self.emitU8(@intCast(elem_size));
+        try self.emitResult(res);
+    }
+
+    fn lowerInsertElement(self: *Lowerer, instr: ast.Instruction, ie: ast.InsertElement) anyerror!void {
+        const res = instr.result orelse return error.NoResult;
+        const v = switch (ie.vector.ty.*) {
+            .vector => |v| v,
+            else => return error.BadStore,
+        };
+        const sa = try self.ctx.layout.sizeAlign(ie.vector.ty);
+        try self.emitAllocTemp(sa.size, sa.alignment);
+        try self.emitU8(op.OP_DUP);
+        try self.emitValue(ie.vector);
+        try self.emitConst(sa.size);
+        try self.emitU8(op.OP_MEMCPY);
+        const slot = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__inselm_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(slot);
+        const elem_size = try self.typeStoreSize(v.elem);
+        try self.emitLoadSlot(slot);
+        try self.emitValue(ie.index);
+        if (elem_size != 1) {
+            try self.emitConst(elem_size);
+            try self.emitU8(op.OP_MUL);
+        }
+        try self.emitU8(op.OP_ADD);
+        const addr_slot = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__inselm_addr_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(addr_slot);
+        if (isF80OrF128(v.elem) or isAggregateLike(v.elem)) {
+            try self.emitLoadSlot(addr_slot);
+            try self.emitValue(ie.value);
+            try self.emitConst(elem_size);
+            try self.emitU8(op.OP_MEMCPY);
+        } else {
+            try self.emitValue(ie.value);
+            try self.emitLoadSlot(addr_slot);
+            try self.emitU8(op.OP_STORE_MEM);
+            try self.emitU8(@intCast(elem_size));
+        }
+        try self.emitLoadSlot(slot);
+        try self.emitResult(res);
+    }
+
+    /// Allocate a zeroed temp block in linear memory and push its address.
+    fn emitAllocTemp(self: *Lowerer, size: u32, alignment: u32) !void {
+        const al: u32 = @max(1, @min(alignment, 255));
+        if (size > 0xFFFF) {
+            try self.emitConst(size);
+            if (al > 8) {
+                try self.emitU8(op.OP_ALLOCA_DYN_ALIGN);
+                try self.emitU8(@intCast(al));
+            } else {
+                try self.emitU8(op.OP_ALLOCA_DYN);
+            }
+        } else if (al > 8 or (!self.ctx.opts.legacy_codegen and al < 8)) {
+            try self.emitU8(op.OP_ALLOCA_ALIGNED);
+            try self.emitU16(@intCast(size));
+            try self.emitU8(@intCast(al));
+        } else {
+            try self.emitU8(op.OP_ALLOCA);
+            try self.emitU16(@intCast(size));
+        }
+    }
+
+    const AggField = struct { offset: u32, ty: *const ast.Type };
+
+    fn aggregateField(self: *Lowerer, ty: *const ast.Type, indices: []const u32) !AggField {
+        var current = ty;
         var offset: u32 = 0;
-        for (ev.indices) |idx| {
+        for (indices) |idx| {
             switch (current.*) {
                 .struct_, .named => {
                     const s = self.ctx.layout.asStruct(current) orelse return error.BadExtract;
                     const layout = self.ctx.layout.structLayout(current) catch return error.BadExtract;
-                    if (idx >= layout.offsets.len or idx >= s.fields.len) return error.BadExtract;
-                    offset += layout.offsets[idx];
-                    current = s.fields[idx];
+                    const i: usize = idx;
+                    if (i >= layout.offsets.len or i >= s.fields.len) return error.BadExtract;
+                    offset += layout.offsets[i];
+                    current = s.fields[i];
                 },
                 .array => |a| {
-                    const elem = try self.typeSize(a.elem);
-                    offset += @as(u32, @intCast(idx)) * elem;
+                    const esa = try self.ctx.layout.sizeAlign(a.elem);
+                    const stride = alignUp(esa.size, esa.alignment);
+                    offset += @as(u32, @intCast(idx)) * stride;
                     current = a.elem;
+                },
+                .vector => |v| {
+                    const esa = try self.ctx.layout.sizeAlign(v.elem);
+                    offset += @as(u32, @intCast(idx)) * esa.size;
+                    current = v.elem;
                 },
                 else => return error.BadExtract,
             }
         }
+        return .{ .offset = offset, .ty = current };
+    }
+
+    /// Store one aggregate element into the temp block held in `slot`.
+    fn emitAggregateStore(
+        self: *Lowerer,
+        slot: u16,
+        offset: u32,
+        ty: *const ast.Type,
+        value: ast.TypedValue,
+    ) !void {
+        const size = try self.typeStoreSize(ty);
+        if (isF80OrF128(ty) or isAggregateLike(ty)) {
+            try self.emitLoadSlot(slot);
+            if (offset != 0) {
+                try self.emitConst(offset);
+                try self.emitU8(op.OP_ADD);
+            }
+            try self.emitValueOf(ty, value.val);
+            try self.emitConst(size);
+            try self.emitU8(op.OP_MEMCPY);
+        } else {
+            try self.emitValueOf(ty, value.val);
+            try self.emitLoadSlot(slot);
+            if (offset != 0) {
+                try self.emitConst(offset);
+                try self.emitU8(op.OP_ADD);
+            }
+            try self.emitU8(op.OP_STORE_MEM);
+            try self.emitU8(@intCast(size));
+        }
+    }
+
+    /// Materialize an inline aggregate/vector constant and push its address.
+    fn emitAggregateValue(self: *Lowerer, ty: *const ast.Type, agg: ast.Aggregate) anyerror!void {
+        const sa = try self.ctx.layout.sizeAlign(ty);
+        try self.emitAllocTemp(sa.size, sa.alignment);
+        const slot = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__agg_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(slot);
+
+        var offsets: ?[]const u32 = null;
+        var fields: ?[]const *const ast.Type = null;
+        var elem_ty: *const ast.Type = undefined;
+        var stride: u32 = 0;
+        var count: usize = 0;
+        switch (ty.*) {
+            .struct_, .named => {
+                const s = self.ctx.layout.asStruct(ty) orelse return error.BadType;
+                const layout = self.ctx.layout.structLayout(ty) catch return error.BadType;
+                offsets = layout.offsets;
+                fields = s.fields;
+                count = @min(agg.elems.len, s.fields.len);
+            },
+            .array => |a| {
+                const esa = try self.ctx.layout.sizeAlign(a.elem);
+                elem_ty = a.elem;
+                stride = alignUp(esa.size, esa.alignment);
+                count = @min(agg.elems.len, @as(usize, @intCast(a.count)));
+            },
+            .vector => |v| {
+                const esa = try self.ctx.layout.sizeAlign(v.elem);
+                elem_ty = v.elem;
+                stride = esa.size;
+                count = @min(agg.elems.len, @as(usize, @intCast(v.count)));
+            },
+            else => return error.BadType,
+        }
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            const ety = if (fields) |f| f[i] else elem_ty;
+            const off = if (offsets) |o| o[i] else @as(u32, @intCast(i)) * stride;
+            try self.emitAggregateStore(slot, off, ety, agg.elems[i]);
+        }
+        try self.emitLoadSlot(slot);
+    }
+
+    fn emitZeroAggregate(self: *Lowerer, ty: *const ast.Type) !void {
+        const sa = try self.ctx.layout.sizeAlign(ty);
+        try self.emitAllocTemp(sa.size, sa.alignment);
+    }
+
+    fn emitStringValue(self: *Lowerer, ty: *const ast.Type, lit: ast.StringLiteral) !void {
+        const size = try self.typeStoreSize(ty);
+        const decoded = try lit.decode(self.allocator);
+        const bytes = try self.allocator.alloc(u8, size);
+        @memset(bytes, 0);
+        @memcpy(bytes[0..@min(decoded.len, size)], decoded[0..@min(decoded.len, size)]);
+        const off = try self.internBlob(bytes, 1);
+        const abs = std.math.add(u32, self.ctx.data_base, off) catch return error.ConstPoolTooLarge;
+        try self.emitU8(op.OP_ADDR_CONST);
+        try self.emitU32(abs);
+    }
+
+    fn lowerExtractValue(self: *Lowerer, instr: ast.Instruction, ev: ast.ExtractValue) anyerror!void {
+        const res = instr.result orelse return error.NoResult;
+        const field = try self.aggregateField(ev.aggregate.ty, ev.indices);
         try self.emitValue(ev.aggregate);
-        if (offset != 0) {
-            try self.emitConst(offset);
+        if (field.offset != 0) {
+            try self.emitConst(field.offset);
             try self.emitU8(op.OP_ADD);
         }
-        try self.emitU8(op.OP_LOAD_MEM);
-        try self.emitU8(@intCast(try self.typeStoreSize(current)));
+        // Aggregate/wide fields are represented by their address; scalar
+        // fields are loaded into a value slot.
+        if (!(isF80OrF128(field.ty) or isAggregateLike(field.ty))) {
+            try self.emitU8(op.OP_LOAD_MEM);
+            try self.emitU8(@intCast(try self.typeStoreSize(field.ty)));
+        }
         try self.emitResult(res);
     }
 
@@ -2409,8 +2874,205 @@ const Lowerer = struct {
         try self.emitResult(res);
     }
 
+    /// Element-wise vector arithmetic. Vectors are memory blocks, so each
+    /// element is loaded, combined with the scalar opcode, and stored back.
+    fn lowerVectorBinary(self: *Lowerer, instr: ast.Instruction, b: ast.Binary) anyerror!void {
+        const res = instr.result orelse return error.NoResult;
+        const v = switch (b.ty.*) {
+            .vector => |v| v,
+            else => return error.BadVector,
+        };
+        const elem = v.elem;
+        const elems_kind = floatKindOf(elem);
+        const opcode: u8 = switch (b.op) {
+            .fadd => switch (elems_kind orelse return error.BadVector) {
+                .float => op.OP_FADD32,
+                .double => op.OP_FADD,
+                else => return error.UnsupportedInstruction,
+            },
+            .fsub => switch (elems_kind orelse return error.BadVector) {
+                .float => op.OP_FSUB32,
+                .double => op.OP_FSUB,
+                else => return error.UnsupportedInstruction,
+            },
+            .fmul => switch (elems_kind orelse return error.BadVector) {
+                .float => op.OP_FMUL32,
+                .double => op.OP_FMUL,
+                else => return error.UnsupportedInstruction,
+            },
+            .fdiv => switch (elems_kind orelse return error.BadVector) {
+                .float => op.OP_FDIV32,
+                .double => op.OP_FDIV,
+                else => return error.UnsupportedInstruction,
+            },
+            .add => op.OP_ADD,
+            .sub => op.OP_SUB,
+            .mul => op.OP_MUL,
+            .and_ => op.OP_AND,
+            .or_ => op.OP_OR,
+            .xor => op.OP_XOR,
+            else => return error.UnsupportedInstruction,
+        };
+        if (isF80OrF128(elem) or isAggregateLike(elem)) return error.UnsupportedInstruction;
+        const elem_size = try self.typeStoreSize(elem);
+        const elem_stride = (try self.ctx.layout.sizeAlign(elem)).size;
+        const vec_sa = try self.ctx.layout.sizeAlign(b.ty);
+        try self.emitAllocTemp(vec_sa.size, vec_sa.alignment);
+        const dest = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__vecbin_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(dest);
+        try self.emitValueOf(b.ty, b.lhs);
+        const lhs = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__vecbin_l_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(lhs);
+        try self.emitValueOf(b.ty, b.rhs);
+        const rhs = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__vecbin_r_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(rhs);
+
+        var i: u64 = 0;
+        while (i < v.count) : (i += 1) {
+            const off: u32 = @intCast(i * elem_stride);
+            try self.emitLoadSlot(lhs);
+            if (off != 0) {
+                try self.emitConst(off);
+                try self.emitU8(op.OP_ADD);
+            }
+            try self.emitU8(op.OP_LOAD_MEM);
+            try self.emitU8(@intCast(elem_size));
+            try self.emitLoadSlot(rhs);
+            if (off != 0) {
+                try self.emitConst(off);
+                try self.emitU8(op.OP_ADD);
+            }
+            try self.emitU8(op.OP_LOAD_MEM);
+            try self.emitU8(@intCast(elem_size));
+            try self.emitU8(opcode);
+            try self.emitLoadSlot(dest);
+            if (off != 0) {
+                try self.emitConst(off);
+                try self.emitU8(op.OP_ADD);
+            }
+            try self.emitU8(op.OP_STORE_MEM);
+            try self.emitU8(@intCast(elem_size));
+        }
+        try self.emitLoadSlot(dest);
+        try self.emitResult(res);
+    }
+
+    /// `shufflevector` with a constant mask. Undefined/poison lanes are left
+    /// zeroed; all other lanes are copied from the selected input lane.
+    fn lowerShuffleVector(self: *Lowerer, instr: ast.Instruction, s: ast.ShuffleVector) anyerror!void {
+        const res = instr.result orelse return error.NoResult;
+        const v = switch (s.mask.ty.*) {
+            .vector => |v| v,
+            else => return error.BadVector,
+        };
+        const lhs_v = switch (s.lhs.ty.*) {
+            .vector => |x| x,
+            else => return error.BadVector,
+        };
+        const rhs_v = switch (s.rhs.ty.*) {
+            .vector => |x| x,
+            else => return error.BadVector,
+        };
+        const elem = v.elem;
+        const elem_size = try self.typeStoreSize(elem);
+        const elem_stride = (try self.ctx.layout.sizeAlign(elem)).size;
+        const vec_sa = try self.ctx.layout.sizeAlign(s.mask.ty);
+        try self.emitAllocTemp(vec_sa.size, vec_sa.alignment);
+        const dest = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__shuffle_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(dest);
+        try self.emitValue(s.lhs);
+        const lhs = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__shuffle_l_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(lhs);
+        try self.emitValue(s.rhs);
+        const rhs = try self.slotFor(
+            try std.fmt.allocPrint(self.allocator, "__shuffle_r_{d}", .{self.func.code.items.len}),
+        );
+        try self.emitStoreSlot(rhs);
+
+        const mask_elems: []const ast.TypedValue = switch (s.mask.val) {
+            .aggregate => |a| a.elems,
+            else => &.{},
+        };
+        const all_zero = switch (s.mask.val) {
+            .zeroinitializer => true,
+            else => false,
+        };
+        var i: u64 = 0;
+        while (i < v.count) : (i += 1) {
+            var source: ?u16 = null;
+            var src_index: u64 = 0;
+            if (all_zero) {
+                source = lhs;
+                src_index = 0;
+            } else if (i < mask_elems.len) {
+                switch (mask_elems[i].val) {
+                    .int => |lit| {
+                        if (intToI64(lit)) |mi| {
+                            if (mi >= 0) {
+                                const idx: u64 = @intCast(mi);
+                                if (idx < lhs_v.count) {
+                                    source = lhs;
+                                    src_index = idx;
+                                } else if (idx < lhs_v.count + rhs_v.count) {
+                                    source = rhs;
+                                    src_index = idx - lhs_v.count;
+                                }
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+            const slot = source orelse continue;
+            const doff: u32 = @intCast(i * elem_stride);
+            const soff: u32 = @intCast(src_index * elem_stride);
+            if (!(isF80OrF128(elem) or isAggregateLike(elem))) {
+                try self.emitLoadSlot(slot);
+                if (soff != 0) {
+                    try self.emitConst(soff);
+                    try self.emitU8(op.OP_ADD);
+                }
+                try self.emitU8(op.OP_LOAD_MEM);
+                try self.emitU8(@intCast(elem_size));
+                try self.emitLoadSlot(dest);
+                if (doff != 0) {
+                    try self.emitConst(doff);
+                    try self.emitU8(op.OP_ADD);
+                }
+                try self.emitU8(op.OP_STORE_MEM);
+                try self.emitU8(@intCast(elem_size));
+            } else {
+                try self.emitLoadSlot(dest);
+                if (doff != 0) {
+                    try self.emitConst(doff);
+                    try self.emitU8(op.OP_ADD);
+                }
+                try self.emitLoadSlot(slot);
+                if (soff != 0) {
+                    try self.emitConst(soff);
+                    try self.emitU8(op.OP_ADD);
+                }
+                try self.emitConst(elem_size);
+                try self.emitU8(op.OP_MEMCPY);
+            }
+        }
+        try self.emitLoadSlot(dest);
+        try self.emitResult(res);
+    }
+
     fn lowerBinary(self: *Lowerer, instr: ast.Instruction, b: ast.Binary) anyerror!void {
         const res = instr.result orelse return error.NoResult;
+        if (b.ty.* == .vector) return self.lowerVectorBinary(instr, b);
         switch (b.op) {
             .fadd, .fsub, .fmul, .fdiv => {
                 const kind = floatKindOf(b.ty) orelse return error.BadFloat;
@@ -2653,7 +3315,20 @@ const Lowerer = struct {
             .indirect => |tv| {
                 if (isTag(tv.val, .null_)) return;
             },
-            .asm_ => return error.UnsupportedInstruction,
+            .asm_ => |a| {
+                // Empty inline asm is a compiler barrier; with no template it
+                // is an identity (tied output) or a pure memory fence.
+                if (a.template.len != 0) return error.UnsupportedInstruction;
+                if (call.ret.isVoid()) return;
+                const res = result orelse return error.NoResult;
+                if (call.args.len > 0) {
+                    try self.emitValue(call.args[0]);
+                } else {
+                    try self.emitConst(0);
+                }
+                try self.emitStoreSlot(try self.slotFor(res.name));
+                return;
+            },
         }
 
         if (direct_name) |raw_name| {
@@ -2687,6 +3362,79 @@ const Lowerer = struct {
         try self.lowerIndirectCall(call, result);
     }
 
+    /// Integer bit intrinsics with a width parameter. Counts (cttz/ctlz)
+    /// ignore the second `is_zero_undef` argument.
+    fn lowerBitIntrinsic(self: *Lowerer, call: ast.Call, result: ?ast.NamedRef, name: []const u8) anyerror!void {
+        const res = result orelse return error.NoResult;
+        const bits = intBitsOf(call.ret) orelse return error.BadCall;
+        const identity_i1 = bits == 1 and
+            (startsWith(name, "llvm.bitreverse.") or startsWith(name, "llvm.ctpop.") or
+                startsWith(name, "llvm.bswap."));
+        if (identity_i1) {
+            if (call.args.len < 1) return error.BadCall;
+            try self.emitValue(call.args[0]);
+            try self.emitResult(res);
+            return;
+        }
+        const width_code: u8 = switch (bits) {
+            8 => 0,
+            16 => 1,
+            32 => 2,
+            64 => 3,
+            else => return error.UnsupportedInstruction,
+        };
+        const opcode: u8 = if (startsWith(name, "llvm.cttz."))
+            op.OP_CTTZ_N
+        else if (startsWith(name, "llvm.ctlz."))
+            op.OP_CTLZ_N
+        else if (startsWith(name, "llvm.ctpop."))
+            op.OP_CTPOP_N
+        else if (startsWith(name, "llvm.bswap."))
+            op.OP_BSWAP_N
+        else if (startsWith(name, "llvm.bitreverse."))
+            op.OP_BITREV_N
+        else if (startsWith(name, "llvm.fshl."))
+            op.OP_FSHL_N
+        else if (startsWith(name, "llvm.fshr."))
+            op.OP_FSHR_N
+        else
+            op.OP_USUB_SAT_N;
+        const needed: usize = if (startsWith(name, "llvm.fshl.") or startsWith(name, "llvm.fshr."))
+            3
+        else if (startsWith(name, "llvm.usub.sat."))
+            2
+        else
+            1;
+        if (call.args.len < needed) return error.BadCall;
+        for (call.args[0..needed]) |arg| try self.emitValue(arg);
+        try self.emitU8(opcode);
+        try self.emitU8(width_code);
+        try self.emitResult(res);
+    }
+
+    /// `llvm.smax/smin/umax/umin` in one opcode; the param carries the width
+    /// (8/16/32/64) and signedness, and the runtime canonicalizes the result
+    /// back to a sign-extended frame value.
+    fn lowerMinMax(self: *Lowerer, call: ast.Call, result: ?ast.NamedRef, name: []const u8) anyerror!void {
+        if (call.args.len != 2) return error.BadCall;
+        const res = result orelse return error.NoResult;
+        const bits = intBitsOf(call.ret) orelse return error.BadCall;
+        const width_code: u8 = switch (bits) {
+            8 => 0,
+            16 => 1,
+            32 => 2,
+            64 => 3,
+            else => return error.UnsupportedInstruction,
+        };
+        const is_max = startsWith(name, "llvm.smax.") or startsWith(name, "llvm.umax.");
+        const is_signed = startsWith(name, "llvm.smax.") or startsWith(name, "llvm.smin.");
+        try self.emitValueOf(call.args[0].ty, call.args[0].val);
+        try self.emitValueOf(call.args[1].ty, call.args[1].val);
+        try self.emitU8(if (is_max) op.OP_MAX_N else op.OP_MIN_N);
+        try self.emitU8(width_code | (if (is_signed) @as(u8, 0x80) else 0));
+        try self.emitResult(res);
+    }
+
     /// `llvm.fmuladd.f32/f64` gets one fused opcode instead of a native libm
     /// `fma` call per use; `@mulAdd` in the runtime keeps the fused rounding.
     /// Wide floats stay on the native path.
@@ -2713,12 +3461,23 @@ const Lowerer = struct {
         }
         if (eql(name, "__intrinsic_setjmpex") or eql(name, "__intrinsic_setjmp") or
             eql(name, "setjmp") or eql(name, "_setjmp") or eql(name, "_setjmp3") or
-            eql(name, "__builtin_setjmp"))
+            eql(name, "__builtin_setjmp") or eql(name, "llvm.eh.sjlj.setjmp"))
         {
             if (call.args.len < 1 or result == null) return error.BadCall;
             try self.emitValue(call.args[0]);
             try self.emitU8(op.OP_SETJMP);
             try self.emitU16(try self.slotFor(result.?.name));
+            return;
+        }
+        if (eql(name, "llvm.eh.sjlj.longjmp")) {
+            if (call.args.len < 1) return error.BadCall;
+            try self.emitValue(call.args[0]);
+            if (call.args.len >= 2) {
+                try self.emitValue(call.args[1]);
+            } else {
+                try self.emitConst(1);
+            }
+            try self.emitU8(op.OP_LONGJMP);
             return;
         }
         if (eql(name, "longjmp") or eql(name, "_longjmp") or eql(name, "__builtin_longjmp")) {
@@ -2771,19 +3530,56 @@ const Lowerer = struct {
             try self.emitU8(op.OP_STACKRESTORE);
             return;
         }
-        if (startsWith(name, "llvm.abs.")) {
-            const mapped = if (std.mem.endsWith(u8, name, ".i32"))
-                "abs"
-            else if (std.mem.endsWith(u8, name, ".i64"))
-                "llabs"
-            else
-                return error.UnsupportedInstruction;
+        if (startsWith(name, "llvm.experimental.noalias.scope.decl") or
+            eql(name, "llvm.sideeffect") or eql(name, "llvm.donothing")) return;
+        if (startsWith(name, "llvm.smax.") or startsWith(name, "llvm.smin.") or
+            startsWith(name, "llvm.umax.") or startsWith(name, "llvm.umin."))
+        {
+            try self.lowerMinMax(call, result, name);
+            return;
+        }
+        // `llvm.expect` is a branch hint: its value is the first argument.
+        if (startsWith(name, "llvm.expect.")) {
             if (call.args.len < 1 or result == null) return error.BadCall;
-            // The second operand is LLVM's is_int_min_poison flag, not a
-            // native argument.
-            var trimmed = call;
-            trimmed.args = call.args[0..1];
-            try self.lowerNativeCall(trimmed, result, mapped);
+            try self.emitValue(call.args[0]);
+            try self.emitStoreSlot(try self.slotFor(result.?.name));
+            return;
+        }
+        if (eql(name, "llvm.assume") or eql(name, "llvm.donothing")) return;
+        if (startsWith(name, "llvm.load.relative.")) {
+            if (call.args.len < 2 or result == null) return error.BadCall;
+            try self.emitValue(call.args[0]);
+            try self.emitValue(call.args[1]);
+            try self.emitU8(op.OP_ADD);
+            try self.emitU8(op.OP_LOAD_MEM);
+            try self.emitU8(4);
+            try self.emitValue(call.args[0]);
+            try self.emitU8(op.OP_ADD);
+            try self.emitResult(result.?);
+            return;
+        }
+        if (startsWith(name, "llvm.cttz.") or startsWith(name, "llvm.ctlz.") or
+            startsWith(name, "llvm.ctpop.") or startsWith(name, "llvm.bswap.") or
+            startsWith(name, "llvm.bitreverse.") or startsWith(name, "llvm.fshl.") or
+            startsWith(name, "llvm.fshr.") or startsWith(name, "llvm.usub.sat."))
+        {
+            try self.lowerBitIntrinsic(call, result, name);
+            return;
+        }
+        if (startsWith(name, "llvm.abs.")) {
+            if (call.args.len < 1 or result == null) return error.BadCall;
+            const bits = intBitsOf(call.ret) orelse return error.BadCall;
+            const width_code: u8 = switch (bits) {
+                8 => 0,
+                16 => 1,
+                32 => 2,
+                64 => 3,
+                else => return error.UnsupportedInstruction,
+            };
+            try self.emitValue(call.args[0]);
+            try self.emitU8(op.OP_ABS_N);
+            try self.emitU8(width_code);
+            try self.emitResult(result.?);
             return;
         }
 
@@ -3989,10 +4785,16 @@ test "llvm.abs maps to abs/llabs and drops the poison flag" {
     );
 
     const result = try compile(allocator, &module, 1, 8);
-    const abs_plan = planIndexByName(result, "abs").?;
-    const llabs_plan = planIndexByName(result, "llabs").?;
-    try testing.expectEqual(@as(usize, 1), result.plans[abs_plan].args.len);
-    try testing.expectEqual(@as(usize, 1), result.plans[llabs_plan].args.len);
+    try testing.expect(planIndexByName(result, "abs") == null);
+    try testing.expect(planIndexByName(result, "llabs") == null);
+    var saw_i32 = false;
+    var saw_i64 = false;
+    for (result.functions) |f| {
+        if (std.mem.indexOf(u8, f.code.items, &.{ op.OP_ABS_N, 0x02 }) != null) saw_i32 = true;
+        if (std.mem.indexOf(u8, f.code.items, &.{ op.OP_ABS_N, 0x03 }) != null) saw_i64 = true;
+    }
+    try testing.expect(saw_i32);
+    try testing.expect(saw_i64);
 }
 
 test "CI_NATIVE_PLAN marks indirect plans native-callable" {

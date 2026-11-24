@@ -499,10 +499,11 @@ def source_cc_flags(source: Path) -> list[str]:
 
 
 def cib_cache_key(source: Path, case: dict, target: str, env: dict, manifest: dict,
-                  compiler_path: Path, cc_flags: list[str]) -> str:
+                  compiler_path: Path, cc_flags: list[str], cc_opt: int) -> str:
     h = hashlib.sha256()
     h.update(compiler_fingerprint(compiler_path).encode())
     h.update(target.encode())
+    h.update(str(cc_opt).encode())
     h.update(str(case.get("source", "")).encode())
     h.update(source.read_bytes())
     h.update(env.get("CPATH", "").encode())
@@ -575,7 +576,9 @@ def run_case(
     compile_timeout = float(manifest.get("compile_timeout", 300))
     compiler_path = Path(runner["compiler_path"])
     cc_flags = source_cc_flags(source)
-    cmd = [str(compiler_path), "compile", str(source), "-o", str(cib)]
+    cc_opt = int(manifest.get("case_cc_opt", {}).get(cid, runner.get("cc_opt", 0)))
+    result["cc_opt"] = cc_opt
+    cmd = [str(compiler_path), "compile", str(source), "-o", str(cib), "--cc-opt", str(cc_opt)]
     for flag in cc_flags:
         cmd += ["--cc-flag", flag]
     if target != "x86_64-linux" or manifest.get("force_target"):
@@ -586,7 +589,7 @@ def run_case(
         cache_dir = runner["cib_cache"]
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = cache_dir / (
-            cib_cache_key(source, case, target, env, manifest, compiler_path, cc_flags) + ".cib"
+            cib_cache_key(source, case, target, env, manifest, compiler_path, cc_flags, cc_opt) + ".cib"
         )
         if cache_path.is_file():
             shutil.copyfile(cache_path, cib)
@@ -676,6 +679,8 @@ def main() -> int:
     ap.add_argument("--cib-cache", default="", help="directory for content-addressed CIB cache")
     ap.add_argument("--compiler-path", default=str(DEFAULT_COMPILER),
                     help="path to the cinterp-cc executable")
+    ap.add_argument("--cc-opt", type=int, default=2, choices=range(0, 4),
+                    help="C frontend optimization level (default 2; 0 keeps the legacy baseline)")
     ap.add_argument("--include-excluded", action="store_true", help="include .excluded cases for re-triage")
     ap.add_argument("--allow-duplicate-ids", action="store_true",
                     help="warn about duplicate manifest case IDs and keep the first occurrence "
@@ -719,6 +724,7 @@ def main() -> int:
         "include_skipped": args.include_skipped,
         "cib_cache": Path(args.cib_cache) if args.cib_cache else None,
         "compiler_path": str(compiler_path),
+        "cc_opt": args.cc_opt,
     }
     if args.target in WINDOWS_TARGETS:
         exe = "cinterp-run64.exe" if args.target == "x86_64-windows" else "cinterp-run32.exe"

@@ -30,6 +30,7 @@
 | `tiers` | `smoke`、`standard`、`full`、`nightly` |
 | `repo_skip_file` | 已提交到仓库的 `ID<TAB>reason` 跳过列表 |
 | `skip` | 内联的 `id: reason` 映射 |
+| `case_cc_opt` | 每个用例的 C 前端优化级别覆盖（只在 -O0 语义下有效的上游用例仍会运行，不跳过） |
 | `skip_by_target` | 跨 ABI 套件中每个用例的 `target: reason` 映射 |
 | `repo_exclude_file` | 已提交到仓库的 `ID<TAB>reason` 排除列表（完全不运行） |
 | `timeout`、`compile_timeout` | 每个用例的实际耗时上限（秒） |

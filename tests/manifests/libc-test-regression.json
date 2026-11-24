@@ -18,5 +18,8 @@
   "expected_exit": 0,
   "timeout": 30,
   "skip": {},
+  "case_cc_opt": {
+    "malloc-oom": 0
+  },
   "repo_skip_file": "tests/manifests/libc-test-regression.skip"
 }

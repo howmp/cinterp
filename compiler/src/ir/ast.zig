@@ -989,6 +989,33 @@ pub const ExtractValue = struct {
     span: Span = .{},
 };
 
+pub const InsertValue = struct {
+    aggregate: TypedValue,
+    value: TypedValue,
+    indices: []const u32 = &.{},
+    span: Span = .{},
+};
+
+pub const ExtractElement = struct {
+    vector: TypedValue,
+    index: TypedValue,
+    span: Span = .{},
+};
+
+pub const InsertElement = struct {
+    vector: TypedValue,
+    value: TypedValue,
+    index: TypedValue,
+    span: Span = .{},
+};
+
+pub const ShuffleVector = struct {
+    lhs: TypedValue,
+    rhs: TypedValue,
+    mask: TypedValue,
+    span: Span = .{},
+};
+
 pub const Call = struct {
     pub const Callee = union(enum) {
         direct: NamedRef,
@@ -1081,6 +1108,10 @@ pub const Op = union(enum) {
     unreachable_: Span,
     select: Select,
     extractvalue: ExtractValue,
+    insertvalue: InsertValue,
+    extractelement: ExtractElement,
+    insertelement: InsertElement,
+    shufflevector: ShuffleVector,
     call: Call,
     icmp: Icmp,
     fcmp: Fcmp,
@@ -1102,6 +1133,10 @@ pub const Op = union(enum) {
             .unreachable_ => "unreachable",
             .select => "select",
             .extractvalue => "extractvalue",
+            .insertvalue => "insertvalue",
+            .extractelement => "extractelement",
+            .insertelement => "insertelement",
+            .shufflevector => "shufflevector",
             .call => |c| if (c.is_callbr) "callbr" else "call",
             .icmp => "icmp",
             .fcmp => "fcmp",

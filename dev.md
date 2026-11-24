@@ -15,8 +15,8 @@ cinterp 是一个 C 解释器系统：
 ## 2. 已确认决策
 
 - **运行时语言**：Zig 0.13（pin；0.14 的 `CallingConvention` 语法变化，暂不升级）。
-- **编译器**：Zig + `zig cc`（Zig 捆绑 clang 18），中间表示固定为 LLVM IR 文本（`-O0 -S -emit-llvm`）；typed AST 是唯一 IR 前端，不使用 libclang/LLVM 进程内 API。
-- **C 范围**：核心 C17 + C11 常用特性 + 结构体 FFI；以 clang `-O0` IR 的实际输出为契约。
+- **编译器**：Zig + `zig cc`（Zig 捆绑 clang 18），中间表示固定为 LLVM IR 文本（默认 `-O2 -S -emit-llvm`，`--cc-opt 0` 保留旧契约）；typed AST 是唯一 IR 前端，不使用 libclang/LLVM 进程内 API。
+- **C 范围**：核心 C17 + C11 常用特性 + 结构体 FFI；默认以 clang `-O2` IR 的实际输出为契约；`--cc-opt 0` 仍支持原有的 `-O0` 模式。
 - **FFI**：编译期生成 ABI 计划，运行时用固定汇编引擎执行；callback 用静态 trampoline 池 + 反向计划。
 - **Callback 池**：进程级固定 256 个静态槽，不生成可执行内存。自动 `@cb`/`OP_CREATE_CALLBACK` 槽在 VM 生命周期内保留并跨重复运行复用，VM 销毁或 plan 重载后退休；`ci_callback_acquire`/`ci_callback_release` 允许 CIB 显式归还槽位以便复用，release 后旧指针不得再调用。
 - **发布方式**：编译器只在构建期使用；发布物是运行时库/可执行文件 + 字节码。Linux x86-64 tarball 额外包含 `cinterp-cc`，其余 tarball 为 runtime-only。
@@ -39,7 +39,7 @@ Linux i386/ARM32、macOS、Windows ARM64 不在目标；macOS/musl/未知 OS 在
 
 ```text
 C 源码
-  → zig cc -S -emit-llvm -O0
+  → zig cc -S -emit-llvm -O2
   → compiler/src/ir（typed lexer/parser/AST/verifier）
   → lower_ast.zig（CIVM 字节码 + FFI 计划）
   → main.zig（CIPKG v4：CIVM v2 + CIPL + CIPI + CIPC）
@@ -65,16 +65,19 @@ CIPKG loader（事务性）
 固定参数：
 
 ```bash
-zig cc -S -emit-llvm -O0 -fno-discard-value-names \
+zig cc -S -emit-llvm -O2 -fno-discard-value-names \
   -fno-sanitize=all -fno-stack-protector \
-  -ffine-grained-bitfield-accesses program.c
+  -ffine-grained-bitfield-accesses -fno-strict-aliasing \
+  -fno-jump-tables -fwrapv -fno-builtin-printf program.c
 ```
 
-Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量以 alloca/load/store 形式出现，避免在 VM 中实现 SSA 构造和优化 pass；phi 仍按分支/栈槽降级。
+Windows 目标按需加 `-fms-extensions -fdeclspec`。默认为 `-O2`，并追加 `-fno-vectorize -fno-slp-vectorize`（向量 IR 支持仍限于 HFA/元素级，自动向量化暂不启用）。`--cc-opt 0` 保留旧的 `-O0` 兼容模式：局部变量以 alloca/load/store 出现。`-fno-strict-aliasing`/`-fwrapv` 让 gcc-torture 依赖的别名与回绕语义与 VM 的无符号回绕算术一致；`-fno-jump-tables` 减少跳转表；仍出现的相对查找表初始化器会在布局后折叠。`-fno-builtin-printf` 禁止 `printf`→`puts` 转换，保持与运行时/FFI 输出路径一致的缓冲顺序。优化 IR 的 phi 按边做并行拷贝降级。
 
-`compiler/src/ir/` 解析并校验支持的 LLVM IR 子集：标量/指针/数组/结构体、alloca/load/store/GEP、整数/浮点/位运算/比较/转换、br/switch/select/phi、直接/间接/tail call、常用 `llvm.*` intrinsic、byval/sret、f80/fp128、varargs、VLA 和 setjmp/longjmp。完整契约见 [`docs/ir-subset.md`](./docs/ir-subset.md)。
+上游用例若只在 `-O0` 语义下有效（例如 `#ifdef __OPTIMIZE__` 守卫、悬空 VLA 地址、malloc OOM 行为），manifest 可用 `case_cc_opt: 0` 为该用例单独指定前端级别；这些用例仍会运行并通过，不进入 skip。
 
-明确拒绝：`insertvalue`、extractelement/insertelement/shufflevector、atomicrmw/cmpxchg/fence、invoke/resume/landingpad、indirectbr，以及作为指令的 `va_arg`。`freeze` 按恒等操作降低；`callbr` 可以解析并按普通 call 降低（标签列表忽略）；未知 `llvm.*` intrinsic 作为外部调用计划在运行期失败；内联汇编调用由 lowering 拒绝。
+`compiler/src/ir/` 解析并校验支持的 LLVM IR 子集：标量/指针/数组/结构体、alloca/load/store/GEP、整数/浮点/位运算/比较/转换、br/switch/select/phi、insertvalue/extractelement/insertelement、直接/间接/tail call、常用 `llvm.*` intrinsic（含 cttz/ctlz/ctpop/bswap/bitreverse/fshl/fshr/usub.sat/abs/load.relative）、byval/sret、f80/fp128、varargs、VLA 和 setjmp/longjmp。完整契约见 [`docs/ir-subset.md`](./docs/ir-subset.md)。
+
+明确拒绝：shufflevector、atomicrmw/cmpxchg/fence、invoke/resume/landingpad、indirectbr，以及作为指令的 `va_arg`；非空内联汇编仍拒绝，空模板 `asm` 按恒等/编译器屏障降低。`freeze` 按恒等操作降低；`callbr` 可以解析并按普通 call 降低（标签列表忽略）；未知 `llvm.*` intrinsic 作为外部调用计划在运行期失败。
 
 ### 5.2 Lowering
 
@@ -102,7 +105,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。`-O0` 保证局部变量�
 ### 6.1 值与 opcode
 
 - 栈槽固定 8 字节；`Value` 为 `extern union { i: i64, u: u64 }`，浮点按位存放，f32 仅在低 32 位有效，f80/f128 通过线性内存按指针传递。
-- **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xAE）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
+- **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xB0）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
 - 当前实现覆盖常量/局部变量、内存、整数/浮点/位运算/比较/转换、控制流、指针/GEP、varargs、setjmp/longjmp、VLA、f80/f128、`llvm.is.fpclass`、`MEMCPY/MEMSET`、原生调用/callback 等。
 - 操作数使用固定小端 `u8/u16/u32/u64` 编码；跳转目标是加载后的字节码偏移。CIVM/CIPL 的逐字节布局见 [`docs/cib.md`](./docs/cib.md)。
 - 窄整数规约用单条 `NORMALIZE`（`0xA6`）完成，取代旧的 `常量掩码 + AND [+ SHL + SHR_S]` 序列。运行时还会在顺序执行时融合 `STORE_LOCAL; LOAD_LOCAL` 对：-O0 IR 对几乎每次局部变量读取都会生成这一对，同槽位时等价于空操作，异槽位时只需替换栈顶；跳转落到 `LOAD_LOCAL` 时仍按独立指令执行，语义不变。
@@ -400,6 +403,7 @@ make differential         # native vs cinterp 返回值
 make test-suites-smoke    # csuite 18/18
 make test-suites          # standard
 make test-suites-full     # full
+make test-suites-opt      # csuite + c-testsuite at --cc-opt 2
 make test-suites-nightly  # nightly + 100-seed 生成式差分
 make fuzz                 # load-only 变异；CI 门禁，必须严格通过
 make fuzz-exec            # 执行变异；仅本地，需 --tolerate-faults 才常绿
@@ -433,12 +437,16 @@ ReleaseSmall 基线约为 **5.24–5.45 ms/run**（median；mean 5.27–5.48 ms�
 ```bash
 ./build/cinterp-cc compile source.c -o out.cib \
   [--dump] [--dump-ast] [--dump-imports] [--keep-ir] [--target TARGET] \
-  [--cc zig] [--cc-path PATH] [--cc-flag FLAG]... [--no-auto-link]
+  [--cc zig] [--cc-path PATH] [--cc-flag FLAG]... [--cc-opt 0|1|2|3] [--no-auto-link]
 ```
 
 `--dump` 打印函数和 FFI 计划（包括 `conv`）；`--dump-ast` 打印解析后的 typed AST；
 `--dump-imports` 打印 CIB provider 绑定；`--keep-ir` 保留生成的 LLVM IR。
 `--cc-path` 选择作为 C 前端的 `zig`，`--cc` 目前只接受 `zig`；输出固定为 CIPKG v4 trusted 包，`--no-auto-link` 关闭 C 标准库/Windows API 自动绑定。
+`--cc-opt` 选择 C 前端优化级别，默认 **2**；`--cc-opt 0` 保留旧的 `-O0` 契约。
+非 0 级别会自动追加 `-fno-vectorize -fno-slp-vectorize`，因为 CIVM 还没有向量 IR 支持。
+优化 IR 会大量使用 phi，lowering 已按边做并行拷贝，并支持
+`llvm.smax/smin/umax/umin`、`llvm.expect`、`llvm.assume` 等常见 intrinsic。
 目标为 `x86_64-linux`（默认）、`x86_64-windows`、`i686-windows`、`aarch64-linux`。
 Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖；Windows exe 使用
 `WinStartup`/TLS 入口而不链接 MinGW CRT，静态库/共享库仍保留 CRT。
@@ -468,9 +476,13 @@ ReleaseSafe/ReleaseSmall/ReleaseFast 只用 `CI_E_*` 状态码表示错误。Rel
 
 ### 12.2 当前基线
 
-- `make test-suites-full`：**4331/4522 通过，191 skip**；当前 skip 全部为 `unsupported`，没有 `known-failure`。
+- `make test-suites-full`：**4331/4522 通过，191 skip，0 failure**；skip 全部为 `unsupported`，没有 `known-failure`。其中 `case_cc_opt: 0` 的上游用例仍在 -O0 下执行并通过，不是 skip。
 - 通过用例中 gcc-torture-compile 1403 + llvm-regression-c 933 + compcert-compile 30 = 2366 个是仅编译（另有 llvm-singlesource 85 个也是 `mode: compile`，所有编译模式合计 2451）；可执行基线是其余 1880 个通过用例。
 - `make test-suites` / `make test-suites-nightly` 的数字随 manifest 和当次 report 变化；请以对应 `build/test-suites*.json` 为准，不在本文固定易漂移的总数。
+- `--cc-opt N`（默认 2）是 C 前端优化级别，非 0 级别自动关闭向量化；`--cc-opt 0`
+  保留旧的 -O0 契约。`make test-suites-opt`（csuite + c-testsuite）在默认级别为
+  **236/238（2 skip，0 mismatch）**。长用例相对 -O0：perlin 2.44x、fannkuch 1.98x、
+  fftsp 1.97x、fft 1.86x、00040 1.68x、qsort 1.51x、mandelbrot 1.19x；vmach 略慢（0.92x）。
 - 最近一次 nightly 的已知结果：YARPGen 100 seeds 为 93 通过 / 7 skip / 0 failure（空闲快速机器）；CI 上 seed 24 超时后计入 known_skip，变为 92 通过 / 8 skip / 1 known_skip / 0 failure。nightly 固定 suite 的通过/跳过数以当次 report 为准。
 - 并发：`test_suites.py --jobs` 默认 CPU 核数，且所有选中 suite 共用一个全局 worker 池；`SUITE_JOBS` 可覆盖。nightly 由 `scripts/test/test_nightly.sh` 并行执行 suite 与 `generate_diff`，`GEN_JOBS`/`MINIMIZE_JOBS` 控制差分并发，日志为 `build/nightly-suite.log` 和 `build/nightly-diff.log`；顺序模式为 `make test-suites-nightly-serial`，`NIGHTLY_MINIMIZE=0` 跳过最小化。
 - `scripts/test/test_cross.sh`：62 个示例用例（Win64 20 / Win32 23 / ARM64 19），Wine、真实 Windows 和 qemu 均可运行；`make test-winapi` 另外在 Win64/Win32 下运行 4 个 `<windows.h>` 示例（共 8 次）。
@@ -554,7 +566,7 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 ## 15. 参考资料
 
 - chibicc / c-testsuite：C 测试用例和编译器结构参考。
-- LLVM IR 指令语义与 clang `-O0` 输出模式。
+- LLVM IR 指令语义与 clang `-O2` 输出模式（`--cc-opt 0` 保留 `-O0`）。
 - System V AMD64、Microsoft x64/x86 调用约定、AArch64 AAPCS64。
 - libffi / dyncall：ABI 分类和栈布局参考（不引入依赖）。
 - [`docs/multi-cib.md`](./docs/multi-cib.md)：进程/VM 模型、每 VM 线程和 callback acquire/release 的完整说明；CLI 只运行单包一次。

@@ -313,6 +313,13 @@ pub const Parser = struct {
             self.fail(tok, "integer '{s}' does not fit in 64 bits", .{self.text(tok)});
     }
 
+    /// Alignment operands are metadata for this lowering; accept values that
+    /// exceed 32 bits and clamp them instead of rejecting valid -O2 IR.
+    fn parseAlignU32(self: *Parser) Error!u32 {
+        const value = try self.parseU64();
+        return @intCast(@min(value, std.math.maxInt(u32)));
+    }
+
     /// Parse a `%name`, `@name`, `$name` or metadata name token.
     fn parseNamed(self: *Parser, kind: Kind) Error!ast.NamedRef {
         if (self.cur.kind != kind) {
@@ -618,7 +625,7 @@ pub const Parser = struct {
                 if (std.mem.eql(u8, word, "align")) {
                     try self.advance();
                     try self.advance();
-                    alignment = try self.parseU32();
+                    alignment = try self.parseAlignU32();
                     continue;
                 }
                 if (std.mem.eql(u8, word, "section")) {
@@ -849,7 +856,7 @@ pub const Parser = struct {
                     const word = self.curText();
                     if (std.mem.eql(u8, word, "align")) {
                         try self.advance();
-                        out.alignment = try self.parseU32();
+                        out.alignment = try self.parseAlignU32();
                         continue;
                     }
                     if (std.mem.eql(u8, word, "section")) {
@@ -1039,6 +1046,14 @@ pub const Parser = struct {
             op = .{ .select = try self.parseSelect(tok.span) };
         } else if (std.mem.eql(u8, word, "extractvalue")) {
             op = .{ .extractvalue = try self.parseExtractValue(tok.span) };
+        } else if (std.mem.eql(u8, word, "insertvalue")) {
+            op = .{ .insertvalue = try self.parseInsertValue(tok.span) };
+        } else if (std.mem.eql(u8, word, "extractelement")) {
+            op = .{ .extractelement = try self.parseExtractElement(tok.span) };
+        } else if (std.mem.eql(u8, word, "insertelement")) {
+            op = .{ .insertelement = try self.parseInsertElement(tok.span) };
+        } else if (std.mem.eql(u8, word, "shufflevector")) {
+            op = .{ .shufflevector = try self.parseShuffleVector(tok.span) };
         } else if (std.mem.eql(u8, word, "icmp")) {
             op = .{ .icmp = try self.parseIcmp(tok.span) };
         } else if (std.mem.eql(u8, word, "fcmp")) {
@@ -1075,7 +1090,10 @@ pub const Parser = struct {
 
     fn validateResult(self: *Parser, instr: *const ast.Instruction, mnemonic_tok: Token) Error!void {
         const needs_result = switch (instr.op) {
-            .alloca, .load, .gep, .phi, .select, .extractvalue, .icmp, .fcmp, .fneg, .freeze, .binary, .cast => true,
+            .alloca, .load, .gep, .phi, .select, .extractvalue, .insertvalue,
+            .extractelement, .insertelement, .shufflevector, .icmp, .fcmp, .fneg, .freeze,
+            .binary, .cast,
+            => true,
             .call => |c| !c.ret.isVoid(),
             else => false,
         };
@@ -1114,7 +1132,7 @@ pub const Parser = struct {
             if (isNextWord(self, "align")) {
                 try self.advance();
                 try self.advance();
-                out.alignment = try self.parseU32();
+                out.alignment = try self.parseAlignU32();
                 continue;
             }
             if (isNextWord(self, "addrspace")) {
@@ -1192,7 +1210,7 @@ pub const Parser = struct {
         if (self.check(.comma) and isNextWord(self, "align")) {
             try self.advance();
             try self.advance();
-            out.* = try self.parseU32();
+            out.* = try self.parseAlignU32();
         }
     }
 
@@ -1349,6 +1367,59 @@ pub const Parser = struct {
             try indices.append(try self.parseU32());
         }
         return .{ .aggregate = aggregate, .indices = try indices.toOwnedSlice(), .span = Span.join(start, self.prev_span) };
+    }
+
+    fn parseInsertValue(self: *Parser, start: Span) Error!ast.InsertValue {
+        const aggregate = try self.parseTypedValue();
+        _ = try self.expect(.comma, "',' after insertvalue aggregate");
+        const value = try self.parseTypedValue();
+        var indices = std.ArrayList(u32).init(self.allocator);
+        while (self.check(.comma)) {
+            if (self.next_tok.kind == .metadata_id) break;
+            try self.advance();
+            try indices.append(try self.parseU32());
+        }
+        return .{
+            .aggregate = aggregate,
+            .value = value,
+            .indices = try indices.toOwnedSlice(),
+            .span = Span.join(start, self.prev_span),
+        };
+    }
+
+    fn parseExtractElement(self: *Parser, start: Span) Error!ast.ExtractElement {
+        const vector = try self.parseTypedValue();
+        _ = try self.expect(.comma, "',' after extractelement vector");
+        const index = try self.parseTypedValue();
+        return .{ .vector = vector, .index = index, .span = Span.join(start, self.prev_span) };
+    }
+
+    fn parseInsertElement(self: *Parser, start: Span) Error!ast.InsertElement {
+        const vector = try self.parseTypedValue();
+        _ = try self.expect(.comma, "',' after insertelement vector");
+        const value = try self.parseTypedValue();
+        _ = try self.expect(.comma, "',' after insertelement value");
+        const index = try self.parseTypedValue();
+        return .{
+            .vector = vector,
+            .value = value,
+            .index = index,
+            .span = Span.join(start, self.prev_span),
+        };
+    }
+
+    fn parseShuffleVector(self: *Parser, start: Span) Error!ast.ShuffleVector {
+        const lhs = try self.parseTypedValue();
+        _ = try self.expect(.comma, "',' after shufflevector lhs");
+        const rhs = try self.parseTypedValue();
+        _ = try self.expect(.comma, "',' after shufflevector rhs");
+        const mask = try self.parseTypedValue();
+        return .{
+            .lhs = lhs,
+            .rhs = rhs,
+            .mask = mask,
+            .span = Span.join(start, self.prev_span),
+        };
     }
 
     fn parseIcmp(self: *Parser, start: Span) Error!ast.Icmp {
@@ -2280,7 +2351,7 @@ pub const Parser = struct {
 
         if (std.mem.eql(u8, word, "align")) {
             try self.advance();
-            const value = try self.parseU32();
+            const value = try self.parseAlignU32();
             try out.append(.{ .span = tok.span, .kind = .{ .align_ = value } });
             return true;
         }

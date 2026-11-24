@@ -196,6 +196,17 @@ OPS: dict[int, tuple[str, str]] = {
     0xAC: ("AND_N", "u8"),
     0xAD: ("OR_N", "u8"),
     0xAE: ("XOR_N", "u8"),
+    0xAF: ("MAX_N", "u8"),
+    0xB0: ("MIN_N", "u8"),
+    0xB1: ("ABS_N", "u8"),
+    0xB2: ("CTTZ_N", "u8"),
+    0xB3: ("CTLZ_N", "u8"),
+    0xB4: ("CTPOP_N", "u8"),
+    0xB5: ("BSWAP_N", "u8"),
+    0xB6: ("BITREV_N", "u8"),
+    0xB7: ("FSHL_N", "u8"),
+    0xB8: ("FSHR_N", "u8"),
+    0xB9: ("USUB_SAT_N", "u8"),
 }
 
 
