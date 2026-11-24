@@ -514,6 +514,41 @@ pub const Value = extern union {
     u: u64,
 };
 
+inline fn pushAt(values: [*]Value, sp: *usize, limit: usize, v: Value) !void {
+    if (sp.* >= limit) return error.StackOverflow;
+    values[sp.*] = v;
+    sp.* += 1;
+}
+
+inline fn popAt(values: [*]Value, sp: *usize) !Value {
+    if (sp.* == 0) return error.StackUnderflow;
+    sp.* -= 1;
+    return values[sp.*];
+}
+
+inline fn normalizeTopAt(values: [*]Value, sp: *usize, param: u8) !void {
+    const width_code: u8 = param & 0x03;
+    if (width_code == 0x03) return error.BadOpcode;
+    const bits: u32 = @as(u32, 8) << @intCast(width_code);
+    const shift: u6 = @intCast(64 - bits);
+    if (sp.* == 0) return error.StackUnderflow;
+    const top = &values[sp.* - 1];
+    const raw: u64 = @bitCast(top.i);
+    top.i = if ((param & 0x80) != 0)
+        @as(i64, @bitCast(raw << shift)) >> shift
+    else
+        @bitCast(raw & ((@as(u64, 1) << @intCast(bits)) - 1));
+}
+
+inline fn consumeNormalsAt(values: [*]Value, sp: *usize, code: []const u8, ip: *usize) !void {
+    while (ip.* + 1 < code.len and code[ip.*] == OP_NORMALIZE) {
+        const param = code[ip.* + 1];
+        if ((param & 0x03) == 0x03) return;
+        try normalizeTopAt(values, sp, param);
+        ip.* += 2;
+    }
+}
+
 pub const Function = struct {
     /// Kept empty in v2 modules; entry lookup uses `VM.entry_func_index`.
     name: []const u8 = "",
@@ -1837,10 +1872,13 @@ pub const VM = struct {
         var va_sizes: [64]u16 = [_]u16{0} ** 64;
         var va_type_count: u8 = 0;
         var prev_op: u8 = 0;
+        var sp: usize = self.sp;
+        const values = self.values.ptr;
+        var code = self.functions[current].code;
+        var local_count: usize = self.functions[current].local_count;
+        errdefer self.sp = sp;
 
         while (true) {
-            const f = self.functions[current];
-            const code = f.code;
             if (ip >= code.len) return error.TruncatedCode;
             const op = code[ip];
             ip += 1;
@@ -1858,18 +1896,21 @@ pub const VM = struct {
             switch (op) {
                 OP_RET, OP_RET_VOID => {
                     const is_void = op == OP_RET_VOID;
-                    const v: Value = if (is_void) .{ .i = 0 } else try self.pop();
+                    const v: Value = if (is_void) .{ .i = 0 } else try popAt(values, &sp);
                     if (self.frame_count == stop_frames) {
+                        self.sp = sp;
                         self.result = v.i;
                         return v.i;
                     }
                     const fr = self.frames[self.frame_count - 1];
                     self.frame_count -= 1;
                     self.mem_top = fr.mem_mark;
-                    self.sp = base;
-                    if (!is_void) try self.push(v);
+                    sp = base;
+                    if (!is_void) try pushAt(values, &sp, self.stack_limit, v);
                     base = fr.base;
                     current = fr.func;
+                    code = self.functions[current].code;
+                    local_count = self.functions[current].local_count;
                     va_base = fr.va_base;
                     va_named = fr.va_named;
                     va_count = fr.va_count;
@@ -1880,7 +1921,7 @@ pub const VM = struct {
                 },
                 OP_LOAD_CONST_I64 => {
                     const v = try readI64(code, &ip);
-                    try self.push(.{ .i = v });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = v });
                 },
                 OP_LOAD_CONST_POOL => {
                     const ref = try readU32(code, &ip);
@@ -1935,7 +1976,7 @@ pub const VM = struct {
                             }
                         }
                         if (active) {
-                            const a = try self.pop();
+                            const a = try popAt(values, &sp);
                             if (kind == .cmp) {
                                 const result: i64 = switch (next_op) {
                                     OP_CMP_EQ => @as(i64, @intFromBool(a.i == c)),
@@ -1943,7 +1984,7 @@ pub const VM = struct {
                                     OP_CMP_LT_U => @as(i64, @intFromBool(@as(u64, @bitCast(a.i)) < @as(u64, @bitCast(c)))),
                                     else => unreachable,
                                 };
-                                try self.push(.{ .i = result });
+                                try pushAt(values, &sp, self.stack_limit, .{ .i = result });
                             } else {
                                 const cu: u64 = @bitCast(c);
                                 const sh: u6 = @intCast(cu & 63);
@@ -1967,8 +2008,8 @@ pub const VM = struct {
                                     OP_REM_U => @bitCast(@as(u64, @bitCast(a.i)) % cu),
                                     else => unreachable,
                                 };
-                                try self.push(.{ .i = result });
-                                if (kind == .narrow) try self.normalizeTop(narrow_param);
+                                try pushAt(values, &sp, self.stack_limit, .{ .i = result });
+                                if (kind == .narrow) try normalizeTopAt(values, &sp, narrow_param);
                             }
                             ip += fused_len;
                             fused = true;
@@ -1980,99 +2021,99 @@ pub const VM = struct {
                             }
                         }
                     }
-                    if (!fused) try self.push(.{ .i = c });
+                    if (!fused) try pushAt(values, &sp, self.stack_limit, .{ .i = c });
                 },
                 OP_NORMALIZE => {
                     const param = try readU8(code, &ip);
-                    try self.normalizeTop(param);
-                    try self.consumeNormals(code, &ip);
+                    try normalizeTopAt(values, &sp, param);
+                    try consumeNormalsAt(values, &sp, code, &ip);
                 },
                 OP_ADD_N => {
                     const param = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i +% b.i });
-                    try self.normalizeTop(param);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i +% b.i });
+                    try normalizeTopAt(values, &sp, param);
                 },
                 OP_SUB_N => {
                     const param = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i -% b.i });
-                    try self.normalizeTop(param);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i -% b.i });
+                    try normalizeTopAt(values, &sp, param);
                 },
                 OP_MUL_N => {
                     const param = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i *% b.i });
-                    try self.normalizeTop(param);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i *% b.i });
+                    try normalizeTopAt(values, &sp, param);
                 },
                 OP_AND_N => {
                     const param = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i & b.i });
-                    try self.normalizeTop(param);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i & b.i });
+                    try normalizeTopAt(values, &sp, param);
                 },
                 OP_OR_N => {
                     const param = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i | b.i });
-                    try self.normalizeTop(param);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i | b.i });
+                    try normalizeTopAt(values, &sp, param);
                 },
                 OP_XOR_N => {
                     const param = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i ^ b.i });
-                    try self.normalizeTop(param);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i ^ b.i });
+                    try normalizeTopAt(values, &sp, param);
                 },
                 OP_MAX_N, OP_MIN_N => {
                     const param = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const an = narrowForCompare(a.i, param);
                     const bn = narrowForCompare(b.i, param);
                     const take_a = if (op == OP_MAX_N)
                         (if ((param & 0x80) != 0) an >= bn else @as(u64, @bitCast(an)) >= @as(u64, @bitCast(bn)))
                     else
                         (if ((param & 0x80) != 0) an <= bn else @as(u64, @bitCast(an)) <= @as(u64, @bitCast(bn)));
-                    try self.push(.{ .i = narrowSignExtend(if (take_a) an else bn, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowSignExtend(if (take_a) an else bn, param) });
                 },
                 OP_ABS_N => {
                     const param = try readU8(code, &ip);
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const n = narrowForCompare(v.i, param | 0x80);
-                    try self.push(.{ .i = narrowSignExtend(if (n < 0) 0 -% n else n, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowSignExtend(if (n < 0) 0 -% n else n, param) });
                 },
                 OP_CTTZ_N => {
                     const param = try readU8(code, &ip);
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const u = narrowLow(v.i, param);
                     const bits = narrowWidthBits(param);
                     const r: u64 = if (u == 0) bits else @ctz(u);
-                    try self.push(.{ .i = narrowCanonical(r, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_CTLZ_N => {
                     const param = try readU8(code, &ip);
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const u = narrowLow(v.i, param);
                     const bits = narrowWidthBits(param);
                     const lz: u32 = @intCast(@clz(u));
                     const r: u64 = if (u == 0) bits else bits - (64 - lz);
-                    try self.push(.{ .i = narrowCanonical(r, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_CTPOP_N => {
                     const param = try readU8(code, &ip);
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const r: u64 = @popCount(narrowLow(v.i, param));
-                    try self.push(.{ .i = narrowCanonical(r, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_BSWAP_N => {
                     const param = try readU8(code, &ip);
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const u = narrowLow(v.i, param);
                     const r: u64 = switch (narrowWidthBits(param)) {
                         8 => @as(u8, @truncate(u)),
@@ -2080,11 +2121,11 @@ pub const VM = struct {
                         32 => @byteSwap(@as(u32, @truncate(u))),
                         else => @byteSwap(u),
                     };
-                    try self.push(.{ .i = narrowCanonical(r, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_BITREV_N => {
                     const param = try readU8(code, &ip);
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const u = narrowLow(v.i, param);
                     const r: u64 = switch (narrowWidthBits(param)) {
                         8 => @as(u8, @bitReverse(@as(u8, @truncate(u)))),
@@ -2092,13 +2133,13 @@ pub const VM = struct {
                         32 => @as(u32, @bitReverse(@as(u32, @truncate(u)))),
                         else => @bitReverse(u),
                     };
-                    try self.push(.{ .i = narrowCanonical(r, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_FSHL_N, OP_FSHR_N => {
                     const param = try readU8(code, &ip);
-                    const sv = try self.pop();
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const sv = try popAt(values, &sp);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const width = narrowWidthBits(param);
                     const mask = narrowMask(param);
                     const au = narrowLow(a.i, param);
@@ -2110,126 +2151,126 @@ pub const VM = struct {
                         ((au << @intCast(shift)) | (bu >> @intCast(width - shift))) & mask
                     else
                         ((au << @intCast(width - shift)) | (bu >> @intCast(shift))) & mask;
-                    try self.push(.{ .i = narrowCanonical(r, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_USUB_SAT_N => {
                     const param = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const au = narrowLow(a.i, param);
                     const bu = narrowLow(b.i, param);
-                    try self.push(.{ .i = narrowCanonical(if (au > bu) au - bu else 0, param) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(if (au > bu) au - bu else 0, param) });
                 },
                 OP_ADD => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i +% b.i });
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i +% b.i });
                 },
                 OP_SUB => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i -% b.i });
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i -% b.i });
                 },
                 OP_MUL => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i *% b.i });
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i *% b.i });
                 },
                 OP_DUP => {
-                    const a = try self.pop();
-                    try self.push(a);
-                    try self.push(a);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, a);
+                    try pushAt(values, &sp, self.stack_limit, a);
                 },
                 OP_POP => {
-                    _ = try self.pop();
+                    _ = try popAt(values, &sp);
                 },
                 OP_SWAP => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(b);
-                    try self.push(a);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, b);
+                    try pushAt(values, &sp, self.stack_limit, a);
                 },
                 OP_XOR => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i ^ b.i });
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i ^ b.i });
                 },
                 OP_DIV_S => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     if (b.i == 0) return error.DivisionByZero;
-                    try self.push(.{ .i = @divTrunc(a.i, b.i) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @divTrunc(a.i, b.i) });
                 },
                 OP_DIV_U => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const bu: u64 = @bitCast(b.i);
                     if (bu == 0) return error.DivisionByZero;
                     const au: u64 = @bitCast(a.i);
-                    try self.push(.{ .i = @bitCast(au / bu) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(au / bu) });
                 },
                 OP_REM_S => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     if (b.i == 0) return error.DivisionByZero;
-                    try self.push(.{ .i = @rem(a.i, b.i) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @rem(a.i, b.i) });
                 },
                 OP_REM_U => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const bu: u64 = @bitCast(b.i);
                     if (bu == 0) return error.DivisionByZero;
                     const au: u64 = @bitCast(a.i);
-                    try self.push(.{ .i = @bitCast(au % bu) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(au % bu) });
                 },
                 OP_AND => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i & b.i });
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i & b.i });
                 },
                 OP_OR => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = a.i | b.i });
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i | b.i });
                 },
                 OP_SHL => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const sh: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try self.push(.{ .i = @bitCast(@as(u64, @bitCast(a.i)) << sh) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(u64, @bitCast(a.i)) << sh) });
                 },
                 OP_SHR_S => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const sh: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try self.push(.{ .i = a.i >> sh });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i >> sh });
                 },
                 OP_SHR_U => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const sh: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try self.push(.{ .i = @bitCast(@as(u64, @bitCast(a.i)) >> sh) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(u64, @bitCast(a.i)) >> sh) });
                 },
                 OP_FPTOSI => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval: f64 = @bitCast(v.i);
-                    try self.push(.{ .i = try floatToI64Safe(fval) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(fval) });
                 },
                 OP_SITOFP => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval: f64 = @floatFromInt(v.i);
-                    try self.push(.{ .i = @bitCast(fval) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
                 },
                 OP_FPTOUI => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval: f64 = @bitCast(v.i);
-                    try self.push(.{ .i = @bitCast(try floatToU64Safe(fval)) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(fval)) });
                 },
                 OP_UITOFP => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const uval: u64 = @bitCast(v.i);
                     const fval: f64 = @floatFromInt(uval);
-                    try self.push(.{ .i = @bitCast(fval) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
                 },
                 OP_F80_CONST => {
                     var bits: u80 = 0;
@@ -2237,73 +2278,73 @@ pub const VM = struct {
                     while (i < 10) : (i += 1) {
                         bits |= @as(u80, try readU8(code, &ip)) << @intCast(8 * @as(u7, @intCast(i)));
                     }
-                    try self.pushF80(@bitCast(bits));
+                    try self.pushF80At(values, &sp, @bitCast(bits));
                 },
                 OP_F80_ADD => {
-                    const b = try self.popF80();
-                    const a = try self.popF80();
-                    try self.pushF80(a + b);
+                    const b = try self.popF80At(values, &sp);
+                    const a = try self.popF80At(values, &sp);
+                    try self.pushF80At(values, &sp, a + b);
                 },
                 OP_F80_SUB => {
-                    const b = try self.popF80();
-                    const a = try self.popF80();
-                    try self.pushF80(a - b);
+                    const b = try self.popF80At(values, &sp);
+                    const a = try self.popF80At(values, &sp);
+                    try self.pushF80At(values, &sp, a - b);
                 },
                 OP_F80_MUL => {
-                    const b = try self.popF80();
-                    const a = try self.popF80();
-                    try self.pushF80(a * b);
+                    const b = try self.popF80At(values, &sp);
+                    const a = try self.popF80At(values, &sp);
+                    try self.pushF80At(values, &sp, a * b);
                 },
                 OP_F80_DIV => {
-                    const b = try self.popF80();
-                    const a = try self.popF80();
-                    try self.pushF80(a / b);
+                    const b = try self.popF80At(values, &sp);
+                    const a = try self.popF80At(values, &sp);
+                    try self.pushF80At(values, &sp, a / b);
                 },
                 OP_F80_CMP => {
                     const pred = try readU8(code, &ip);
-                    const b = try self.popF80();
-                    const a = try self.popF80();
-                    try self.push(.{ .i = if (compareF80(a, b, pred)) 1 else 0 });
+                    const b = try self.popF80At(values, &sp);
+                    const a = try self.popF80At(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (compareF80(a, b, pred)) 1 else 0 });
                 },
                 OP_F80_FROM_F64 => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval: f64 = @bitCast(v.i);
-                    try self.pushF80(@floatCast(fval));
+                    try self.pushF80At(values, &sp, @floatCast(fval));
                 },
                 OP_F80_TO_F64 => {
-                    const v = try self.popF80();
-                    try self.push(.{ .i = @bitCast(@as(f64, @floatCast(v))) });
+                    const v = try self.popF80At(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(f64, @floatCast(v))) });
                 },
                 OP_F80_FROM_I64 => {
-                    const v = try self.pop();
-                    try self.pushF80(@floatFromInt(v.i));
+                    const v = try popAt(values, &sp);
+                    try self.pushF80At(values, &sp, @floatFromInt(v.i));
                 },
                 OP_F80_TO_I64 => {
-                    const v = try self.popF80();
-                    try self.push(.{ .i = try floatToI64Safe(v) });
+                    const v = try self.popF80At(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(v) });
                 },
                 OP_F80_TO_U64 => {
-                    const v = try self.popF80();
-                    try self.push(.{ .i = @bitCast(try floatToU64Safe(v)) });
+                    const v = try self.popF80At(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(v)) });
                 },
                 OP_F80_FROM_U64 => {
-                    const v = try self.pop();
-                    try self.pushF80(@floatFromInt(@as(u64, @bitCast(v.i))));
+                    const v = try popAt(values, &sp);
+                    try self.pushF80At(values, &sp, @floatFromInt(@as(u64, @bitCast(v.i))));
                 },
                 OP_F80_FROM_F32 => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
                     const fval: f32 = @bitCast(bits);
-                    try self.pushF80(@floatCast(fval));
+                    try self.pushF80At(values, &sp, @floatCast(fval));
                 },
                 OP_F80_TO_F32 => {
-                    const v = try self.popF80();
+                    const v = try self.popF80At(values, &sp);
                     const fval: f32 = @floatCast(v);
-                    try self.pushF32(fval);
+                    try self.pushF32At(values, &sp, fval);
                 },
                 OP_F80_NEG => {
-                    const v = try self.popF80();
-                    try self.pushF80(-v);
+                    const v = try self.popF80At(values, &sp);
+                    try self.pushF80At(values, &sp, -v);
                 },
                 OP_F128_CONST => {
                     var bits: u128 = 0;
@@ -2311,201 +2352,199 @@ pub const VM = struct {
                     while (i < 16) : (i += 1) {
                         bits |= @as(u128, try readU8(code, &ip)) << @intCast(8 * @as(u8, i));
                     }
-                    try self.pushF128(@bitCast(bits));
+                    try self.pushF128At(values, &sp, @bitCast(bits));
                 },
                 OP_F128_ADD => {
-                    const b = try self.popF128();
-                    const a = try self.popF128();
-                    try self.pushF128(a + b);
+                    const b = try self.popF128At(values, &sp);
+                    const a = try self.popF128At(values, &sp);
+                    try self.pushF128At(values, &sp, a + b);
                 },
                 OP_F128_SUB => {
-                    const b = try self.popF128();
-                    const a = try self.popF128();
-                    try self.pushF128(a - b);
+                    const b = try self.popF128At(values, &sp);
+                    const a = try self.popF128At(values, &sp);
+                    try self.pushF128At(values, &sp, a - b);
                 },
                 OP_F128_MUL => {
-                    const b = try self.popF128();
-                    const a = try self.popF128();
-                    try self.pushF128(a * b);
+                    const b = try self.popF128At(values, &sp);
+                    const a = try self.popF128At(values, &sp);
+                    try self.pushF128At(values, &sp, a * b);
                 },
                 OP_F128_DIV => {
-                    const b = try self.popF128();
-                    const a = try self.popF128();
-                    try self.pushF128(a / b);
+                    const b = try self.popF128At(values, &sp);
+                    const a = try self.popF128At(values, &sp);
+                    try self.pushF128At(values, &sp, a / b);
                 },
                 OP_F128_CMP => {
                     const pred = try readU8(code, &ip);
-                    const b = try self.popF128();
-                    const a = try self.popF128();
-                    try self.push(.{ .i = if (compareF128(a, b, pred)) 1 else 0 });
+                    const b = try self.popF128At(values, &sp);
+                    const a = try self.popF128At(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (compareF128(a, b, pred)) 1 else 0 });
                 },
                 OP_F128_NEG => {
-                    const v = try self.popF128();
-                    try self.pushF128(-v);
+                    const v = try self.popF128At(values, &sp);
+                    try self.pushF128At(values, &sp, -v);
                 },
                 OP_F128_FROM_F64 => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval: f64 = @bitCast(v.i);
-                    try self.pushF128(@floatCast(fval));
+                    try self.pushF128At(values, &sp, @floatCast(fval));
                 },
                 OP_F128_TO_F64 => {
-                    const v = try self.popF128();
-                    try self.push(.{ .i = @bitCast(@as(f64, @floatCast(v))) });
+                    const v = try self.popF128At(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(f64, @floatCast(v))) });
                 },
                 OP_F128_FROM_I64 => {
-                    const v = try self.pop();
-                    try self.pushF128(@floatFromInt(v.i));
+                    const v = try popAt(values, &sp);
+                    try self.pushF128At(values, &sp, @floatFromInt(v.i));
                 },
                 OP_F128_TO_I64 => {
-                    const v = try self.popF128();
-                    try self.push(.{ .i = try floatToI64Safe(v) });
+                    const v = try self.popF128At(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(v) });
                 },
                 OP_F128_TO_U64 => {
-                    const v = try self.popF128();
-                    try self.push(.{ .i = @bitCast(try floatToU64Safe(v)) });
+                    const v = try self.popF128At(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(v)) });
                 },
                 OP_F128_FROM_U64 => {
-                    const v = try self.pop();
-                    try self.pushF128(@floatFromInt(@as(u64, @bitCast(v.i))));
+                    const v = try popAt(values, &sp);
+                    try self.pushF128At(values, &sp, @floatFromInt(@as(u64, @bitCast(v.i))));
                 },
                 OP_F128_FROM_F32 => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
                     const fval: f32 = @bitCast(bits);
-                    try self.pushF128(@floatCast(fval));
+                    try self.pushF128At(values, &sp, @floatCast(fval));
                 },
                 OP_F128_TO_F32 => {
-                    const v = try self.popF128();
-                    try self.pushF32(@floatCast(v));
+                    const v = try self.popF128At(values, &sp);
+                    try self.pushF32At(values, &sp, @floatCast(v));
                 },
                 OP_FADD => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try self.push(.{ .i = @bitCast(fa + fb) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa + fb) });
                 },
                 OP_FSUB => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try self.push(.{ .i = @bitCast(fa - fb) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa - fb) });
                 },
                 OP_FMUL => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try self.push(.{ .i = @bitCast(fa * fb) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa * fb) });
                 },
                 OP_FMA => {
-                    const c = try self.pop();
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const c = try popAt(values, &sp);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
                     const fc: f64 = @bitCast(c.i);
-                    try self.push(.{ .i = @bitCast(@mulAdd(f64, fa, fb, fc)) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@mulAdd(f64, fa, fb, fc)) });
                 },
                 OP_FDIV => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try self.push(.{ .i = @bitCast(fa / fb) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa / fb) });
                 },
                 OP_FCMP => {
                     const pred = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try self.push(.{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
                 },
                 OP_FADD32 => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.pushF32(f32FromValue(a) + f32FromValue(b));
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try self.pushF32At(values, &sp, f32FromValue(a) + f32FromValue(b));
                 },
                 OP_FSUB32 => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.pushF32(f32FromValue(a) - f32FromValue(b));
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try self.pushF32At(values, &sp, f32FromValue(a) - f32FromValue(b));
                 },
                 OP_FMUL32 => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.pushF32(f32FromValue(a) * f32FromValue(b));
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try self.pushF32At(values, &sp, f32FromValue(a) * f32FromValue(b));
                 },
                 OP_FMA32 => {
-                    const c = try self.pop();
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.pushF32(@mulAdd(f32, f32FromValue(a), f32FromValue(b), f32FromValue(c)));
+                    const c = try popAt(values, &sp);
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try self.pushF32At(values, &sp, @mulAdd(f32, f32FromValue(a), f32FromValue(b), f32FromValue(c)));
                 },
                 OP_FDIV32 => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.pushF32(f32FromValue(a) / f32FromValue(b));
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try self.pushF32At(values, &sp, f32FromValue(a) / f32FromValue(b));
                 },
                 OP_FCMP32 => {
                     const pred = try readU8(code, &ip);
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const fa: f64 = f32FromValue(a);
                     const fb: f64 = f32FromValue(b);
-                    try self.push(.{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
                 },
                 OP_FPEXT => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval: f64 = f32FromValue(v);
-                    try self.push(.{ .i = @bitCast(fval) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
                 },
                 OP_FPTRUNC => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval: f64 = @bitCast(v.i);
-                    try self.pushF32(@floatCast(fval));
+                    try self.pushF32At(values, &sp, @floatCast(fval));
                 },
                 OP_FPTOSI32 => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval = f32FromValue(v);
-                    try self.push(.{ .i = try floatToI64Safe(fval) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(fval) });
                 },
                 OP_SITOFP32 => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval: f32 = @floatFromInt(v.i);
-                    try self.pushF32(fval);
+                    try self.pushF32At(values, &sp, fval);
                 },
                 OP_FPTOUI32 => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const fval = f32FromValue(v);
-                    try self.push(.{ .i = @bitCast(try floatToU64Safe(fval)) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(fval)) });
                 },
                 OP_UITOFP32 => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const uval: u64 = @bitCast(v.i);
                     const fval: f32 = @floatFromInt(uval);
-                    try self.pushF32(fval);
+                    try self.pushF32At(values, &sp, fval);
                 },
                 OP_LOAD_LOCAL => {
                     const idx = try readU16(code, &ip);
                     const slot: usize = idx;
-                    const local_count: usize = f.local_count;
                     if (slot >= local_count) return error.BadLocal;
-                    try self.push(self.values[base + slot]);
+                    try pushAt(values, &sp, self.stack_limit, values[base + slot]);
                     // clang -O0 canonicalizes narrow values by loading and then
                     // immediately normalizing. Fuse the fallthrough run; a jump
                     // that targets a NORMALIZE still executes it standalone.
-                    try self.consumeNormals(code, &ip);
+                    try consumeNormalsAt(values, &sp, code, &ip);
                 },
                 OP_STORE_LOCAL => {
                     const idx = try readU16(code, &ip);
                     const slot: usize = idx;
-                    const local_count: usize = f.local_count;
                     if (slot >= local_count) return error.BadLocal;
-                    if (self.sp == 0) return error.StackUnderflow;
-                    self.values[base + slot] = self.values[self.sp - 1];
+                    if (sp == 0) return error.StackUnderflow;
+                    values[base + slot] = values[sp - 1];
                     // -O0 IR emits `store %v, %local` followed by a `load %local`
                     // for nearly every use. The pair keeps the stack balanced,
                     // so fuse it: the top of stack already holds the stored
@@ -2518,7 +2557,7 @@ pub const VM = struct {
                         if (peekU16(code, ip + 1)) |slot2| {
                             const other: usize = slot2;
                             if (other < local_count) {
-                                if (other != slot) self.values[self.sp - 1] = self.values[base + other];
+                                if (other != slot) values[sp - 1] = values[base + other];
                                 ip += 3;
                                 fused = true;
                                 if (comptime trace_build) {
@@ -2527,28 +2566,28 @@ pub const VM = struct {
                             }
                         }
                     }
-                    if (!fused) self.sp -= 1;
+                    if (!fused) sp -= 1;
                     // Only the fused load leaves a value whose canonicalizing
                     // NORMALIZE we can absorb; checking every plain store costs
                     // more than the skipped dispatch.
-                    if (fused) try self.consumeNormals(code, &ip);
+                    if (fused) try consumeNormalsAt(values, &sp, code, &ip);
                 },
                 OP_CMP_EQ => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = if (a.i == b.i) 1 else 0 });
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (a.i == b.i) 1 else 0 });
                 },
                 OP_CMP_LT => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    try self.push(.{ .i = if (a.i < b.i) 1 else 0 });
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (a.i < b.i) 1 else 0 });
                 },
                 OP_CMP_LT_U => {
-                    const b = try self.pop();
-                    const a = try self.pop();
+                    const b = try popAt(values, &sp);
+                    const a = try popAt(values, &sp);
                     const au: u64 = @bitCast(a.i);
                     const bu: u64 = @bitCast(b.i);
-                    try self.push(.{ .i = if (au < bu) 1 else 0 });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (au < bu) 1 else 0 });
                 },
                 OP_JMP => {
                     const target: usize = try readU32(code, &ip);
@@ -2558,13 +2597,13 @@ pub const VM = struct {
                 OP_JZ => {
                     const target: usize = try readU32(code, &ip);
                     if (target > code.len) return error.BadJump;
-                    const cond = try self.pop();
+                    const cond = try popAt(values, &sp);
                     if (cond.i == 0) ip = target;
                 },
                 OP_JNZ => {
                     const target: usize = try readU32(code, &ip);
                     if (target > code.len) return error.BadJump;
-                    const cond = try self.pop();
+                    const cond = try popAt(values, &sp);
                     if (cond.i != 0) ip = target;
                 },
                 OP_CREATE_CALLBACK => {
@@ -2619,16 +2658,16 @@ pub const VM = struct {
                     callback_owners[global_slot] = self;
                     const addr = platform.callbackTable(global_slot) orelse return error.UnsupportedCallback;
                     const addr64: u64 = @intCast(@intFromPtr(addr));
-                    try self.push(.{ .i = @bitCast(addr64) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr64) });
                 },
                 OP_CALLBACK_ACQUIRE => {
                     const plan_index = try readU16(code, &ip);
                     const func = try readU16(code, &ip);
-                    try self.push(.{ .i = try self.acquireCallback(plan_index, func) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = try self.acquireCallback(plan_index, func) });
                 },
                 OP_CALLBACK_RELEASE => {
-                    const v = try self.pop();
-                    try self.push(.{ .i = self.releaseCallback(addressFromBits(v.i)) });
+                    const v = try popAt(values, &sp);
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = self.releaseCallback(addressFromBits(v.i)) });
                 },
                 OP_CALL_NATIVE, OP_CALL_VARARG => {
                     const idx = try readU16(code, &ip);
@@ -2651,27 +2690,29 @@ pub const VM = struct {
                         plan.conv = win32ConvFromName(name);
                     const target = try self.resolvedNative(idx, name);
                     try self.recordNativeTarget(@intFromPtr(target));
+                    self.sp = sp;
                     try self.invokeFfi(plan, target);
+                    sp = self.sp;
                 },
                 OP_FPCLASS => {
                     const kind = try readU8(code, &ip);
-                    const mask = try self.pop();
-                    const value = try self.pop();
+                    const mask = try popAt(values, &sp);
+                    const value = try popAt(values, &sp);
                     const cls = fpClassValue(value, kind);
-                    try self.push(.{ .i = if ((cls & @as(u16, @truncate(mask.u))) != 0) 1 else 0 });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = if ((cls & @as(u16, @truncate(mask.u))) != 0) 1 else 0 });
                 },
                 OP_STACKSAVE => {
-                    try self.push(.{ .i = @intCast(self.mem_top) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @intCast(self.mem_top) });
                 },
                 OP_STACKRESTORE => {
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     if (v.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(v.i);
                     if (n > self.memLimit()) return error.OutOfMemory;
                     self.mem_top = n;
                 },
                 OP_VA_START => {
-                    const pv = try self.pop();
+                    const pv = try popAt(values, &sp);
                     const extra = if (va_count > va_named) va_count - va_named else 0;
                     const slot_size: usize = if (platform.abi_id == 3) 4 else 8;
                     var overflow: u64 = 0;
@@ -2681,7 +2722,7 @@ pub const VM = struct {
                         var i: usize = 0;
                         while (i < extra) : (i += 1) {
                             const tc = if (i < va_type_count) va_types[i] else 0;
-                            const v = self.values[va_base + va_named + i];
+                            const v = values[va_base + va_named + i];
                             var n: usize = slot_size;
                             var step: usize = slot_size;
                             var alignment: usize = slot_size;
@@ -2742,8 +2783,8 @@ pub const VM = struct {
                     _ = p;
                 },
                 OP_VA_COPY => {
-                    const src = try self.pop();
-                    const dst = try self.pop();
+                    const src = try popAt(values, &sp);
+                    const dst = try popAt(values, &sp);
                     const n: usize = switch (platform.abi_id) {
                         1 => 24,
                         2 => 8,
@@ -2757,9 +2798,8 @@ pub const VM = struct {
                 },
                 OP_SETJMP => {
                     const slot = try readU16(code, &ip);
-                    const local_count: usize = f.local_count;
                     if (slot >= local_count) return error.BadLocal;
-                    const buf = try self.pop();
+                    const buf = try popAt(values, &sp);
                     var found: ?*JumpEntry = null;
                     var free_slot: ?*JumpEntry = null;
                     var ji: usize = 0;
@@ -2778,17 +2818,17 @@ pub const VM = struct {
                         .ip = ip,
                         .base = base,
                         .func = current,
-                        .sp = self.sp,
+                        .sp = sp,
                         .frames = self.frame_count,
                         .mem_top = self.mem_top,
                         .slot = slot,
                         .valid = true,
                     };
-                    self.values[base + slot] = .{ .i = 0 };
+                    values[base + slot] = .{ .i = 0 };
                 },
                 OP_LONGJMP => {
-                    const value = try self.pop();
-                    const buf = try self.pop();
+                    const value = try popAt(values, &sp);
+                    const buf = try popAt(values, &sp);
                     var ji: usize = 0;
                     while (ji < self.jumps.len) : (ji += 1) {
                         const e = &self.jumps[ji];
@@ -2798,10 +2838,12 @@ pub const VM = struct {
                             ip = e.ip;
                             base = e.base;
                             current = e.func;
-                            self.sp = e.sp;
+                            code = self.functions[current].code;
+                            local_count = self.functions[current].local_count;
+                            sp = e.sp;
                             self.frame_count = e.frames;
                             self.mem_top = e.mem_top;
-                            self.values[base + e.slot] = .{ .i = if (value.i == 0) 1 else value.i };
+                            values[base + e.slot] = .{ .i = if (value.i == 0) 1 else value.i };
                             break;
                         }
                     } else return error.BadLongjmp;
@@ -2811,14 +2853,14 @@ pub const VM = struct {
                     const sym = try self.resolveData(idx);
                     try self.recordNativeTarget(@intFromPtr(sym));
                     const addr: u64 = @intFromPtr(sym);
-                    try self.push(.{ .i = @bitCast(addr) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_ADDR_CONST => {
                     const off = try readU32(code, &ip);
                     const o: usize = off;
                     if (o >= self.mem.len) return error.BadAddress;
                     const addr: u64 = @intFromPtr(&self.mem[o]);
-                    try self.push(.{ .i = @bitCast(addr) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_SET_MEM_TOP => {
                     const size = try readU32(code, &ip);
@@ -2834,7 +2876,7 @@ pub const VM = struct {
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
-                    try self.push(.{ .i = @bitCast(addr) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_ALLOCA_ALIGNED => {
                     const size = try readU16(code, &ip);
@@ -2846,10 +2888,10 @@ pub const VM = struct {
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
-                    try self.push(.{ .i = @bitCast(addr) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_ALLOCA_DYN => {
-                    const sv = try self.pop();
+                    const sv = try popAt(values, &sp);
                     if (sv.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(sv.i);
                     const start = (self.mem_top + 7) & ~@as(usize, 7);
@@ -2857,12 +2899,12 @@ pub const VM = struct {
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
-                    try self.push(.{ .i = @bitCast(addr) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_ALLOCA_DYN_ALIGN => {
                     const align_raw = try readU8(code, &ip);
                     const alignment: usize = if (align_raw == 0) 8 else align_raw;
-                    const sv = try self.pop();
+                    const sv = try popAt(values, &sp);
                     if (sv.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(sv.i);
                     const start = (self.mem_top + alignment - 1) & ~(alignment - 1);
@@ -2870,13 +2912,13 @@ pub const VM = struct {
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
-                    try self.push(.{ .i = @bitCast(addr) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_LOAD_MEM => {
                     const size = try readU8(code, &ip);
                     const n: usize = size;
                     if (n == 0 or n > 8) return error.BadMemorySize;
-                    const v = try self.pop();
+                    const v = try popAt(values, &sp);
                     const addr: usize = addressFromBits(v.i);
                     if (!validMemoryRange(addr, n)) return error.BadAddress;
 
@@ -2904,14 +2946,14 @@ pub const VM = struct {
                             bits |= mask;
                         }
                     }
-                    try self.push(.{ .i = @bitCast(bits) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(bits) });
                 },
                 OP_STORE_MEM => {
                     const size = try readU8(code, &ip);
                     const n: usize = size;
                     if (n == 0 or n > 8) return error.BadMemorySize;
-                    const av = try self.pop();
-                    const vv = try self.pop();
+                    const av = try popAt(values, &sp);
+                    const vv = try popAt(values, &sp);
                     const addr: usize = addressFromBits(av.i);
                     if (!validMemoryRange(addr, n)) return error.BadAddress;
 
@@ -2943,9 +2985,9 @@ pub const VM = struct {
                     }
                 },
                 OP_MEMCPY => {
-                    const len_v = try self.pop();
-                    const src_v = try self.pop();
-                    const dst_v = try self.pop();
+                    const len_v = try popAt(values, &sp);
+                    const src_v = try popAt(values, &sp);
+                    const dst_v = try popAt(values, &sp);
                     if (len_v.i < 0) return error.BadMemorySize;
                     const len: usize = @intCast(len_v.i);
                     const dst_addr = addressFromBits(dst_v.i);
@@ -2963,9 +3005,9 @@ pub const VM = struct {
                     }
                 },
                 OP_MEMSET => {
-                    const len_v = try self.pop();
-                    const val_v = try self.pop();
-                    const dst_v = try self.pop();
+                    const len_v = try popAt(values, &sp);
+                    const val_v = try popAt(values, &sp);
+                    const dst_v = try popAt(values, &sp);
                     if (len_v.i < 0) return error.BadMemorySize;
                     const len: usize = @intCast(len_v.i);
                     const dst_addr = addressFromBits(dst_v.i);
@@ -2984,7 +3026,7 @@ pub const VM = struct {
                     const params: usize = callee.param_count;
                     const locals: usize = callee.local_count;
                     const arg_count: usize = total;
-                    if (arg_count < params or self.sp < arg_count) return error.StackUnderflow;
+                    if (arg_count < params or sp < arg_count) return error.StackUnderflow;
                     if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
                     const extra = arg_count - params;
                     if (extra > 64) return error.TooManyArgs;
@@ -2996,7 +3038,7 @@ pub const VM = struct {
                         types[ti] = type_code;
                         if (type_code == 3) sizes[ti] = try readU16(code, &ip);
                     }
-                    const callee_base = self.sp - arg_count;
+                    const callee_base = sp - arg_count;
                     const src_base = callee_base + params;
                     const extra_base = callee_base + locals;
                     // Both the extras and their new home must stay inside the
@@ -3018,16 +3060,18 @@ pub const VM = struct {
                     self.frame_count += 1;
                     base = callee_base;
                     current = fidx;
+                    code = self.functions[current].code;
+                    local_count = self.functions[current].local_count;
                     if (extra_base > src_base and extra_base < src_base + extra) {
                         var ei: usize = extra;
                         while (ei > 0) {
                             ei -= 1;
-                            self.values[extra_base + ei] = self.values[src_base + ei];
+                            values[extra_base + ei] = values[src_base + ei];
                         }
                     } else {
                         var ei: usize = 0;
                         while (ei < extra) : (ei += 1) {
-                            self.values[extra_base + ei] = self.values[src_base + ei];
+                            values[extra_base + ei] = values[src_base + ei];
                         }
                     }
                     va_base = extra_base;
@@ -3036,8 +3080,8 @@ pub const VM = struct {
                     va_types = types;
                     va_sizes = sizes;
                     va_type_count = @intCast(extra);
-                    self.sp = extra_base + extra;
-                    if (self.sp > self.stack_limit) return error.StackOverflow;
+                    sp = extra_base + extra;
+                    if (sp > self.stack_limit) return error.StackOverflow;
                     ip = 0;
                 },
                 OP_CALL_VARIADIC => {
@@ -3049,9 +3093,9 @@ pub const VM = struct {
                     const params: usize = callee.param_count;
                     const locals: usize = callee.local_count;
                     const arg_count: usize = total;
-                    if (arg_count < params or self.sp < arg_count) return error.StackUnderflow;
+                    if (arg_count < params or sp < arg_count) return error.StackUnderflow;
                     if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
-                    const callee_base = self.sp - arg_count;
+                    const callee_base = sp - arg_count;
                     // The callee's locals start immediately after its named
                     // parameters. Move variadic extras past those locals so
                     // compiler temporaries cannot overwrite them.
@@ -3075,16 +3119,18 @@ pub const VM = struct {
                     self.frame_count += 1;
                     base = callee_base;
                     current = fidx;
+                    code = self.functions[current].code;
+                    local_count = self.functions[current].local_count;
                     if (extra_base > src_base and extra_base < src_base + extra) {
                         var ei: usize = extra;
                         while (ei > 0) {
                             ei -= 1;
-                            self.values[extra_base + ei] = self.values[src_base + ei];
+                            values[extra_base + ei] = values[src_base + ei];
                         }
                     } else {
                         var ei: usize = 0;
                         while (ei < extra) : (ei += 1) {
-                            self.values[extra_base + ei] = self.values[src_base + ei];
+                            values[extra_base + ei] = values[src_base + ei];
                         }
                     }
                     va_base = extra_base;
@@ -3093,8 +3139,8 @@ pub const VM = struct {
                     va_types = [_]u8{0} ** 64;
                     va_sizes = [_]u16{0} ** 64;
                     va_type_count = 0;
-                    self.sp = extra_base + extra;
-                    if (self.sp > self.stack_limit) return error.StackOverflow;
+                    sp = extra_base + extra;
+                    if (sp > self.stack_limit) return error.StackOverflow;
                     ip = 0;
                 },
                 OP_CALL => {
@@ -3104,9 +3150,9 @@ pub const VM = struct {
                     const callee = self.functions[fidx];
                     const params: usize = callee.param_count;
                     const locals: usize = callee.local_count;
-                    if (self.sp < params) return error.StackUnderflow;
+                    if (sp < params) return error.StackUnderflow;
                     if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
-                    const callee_base = self.sp - params;
+                    const callee_base = sp - params;
                     self.frames[self.frame_count] = .{
                         .return_ip = ip,
                         .base = base,
@@ -3122,15 +3168,17 @@ pub const VM = struct {
                     self.frame_count += 1;
                     base = callee_base;
                     current = fidx;
+                    code = self.functions[current].code;
+                    local_count = self.functions[current].local_count;
                     va_base = 0;
                     va_named = 0;
                     va_count = 0;
                     va_type_count = 0;
-                    self.sp = callee_base + locals;
-                    if (self.sp > self.stack_limit) return error.StackOverflow;
+                    sp = callee_base + locals;
+                    if (sp > self.stack_limit) return error.StackOverflow;
                     var li: usize = params;
                     while (li < locals) : (li += 1) {
-                        self.values[callee_base + li] = .{ .i = 0 };
+                        values[callee_base + li] = .{ .i = 0 };
                     }
                     ip = 0;
                 },
@@ -3138,19 +3186,19 @@ pub const VM = struct {
                     const fn_idx = try readU16(code, &ip);
                     const fidx: usize = fn_idx;
                     if (fidx >= self.func_count) return error.BadFunction;
-                    try self.push(.{ .i = @intCast(fidx + 1) });
+                    try pushAt(values, &sp, self.stack_limit, .{ .i = @intCast(fidx + 1) });
                 },
                 OP_CALL_INDIRECT_NATIVE => {
                     const plan_idx = try readU16(code, &ip);
-                    const tag = try self.pop();
+                    const tag = try popAt(values, &sp);
                     if (tag.i > 0 and tag.i <= self.func_count) {
                         const fidx: usize = @intCast(tag.i - 1);
                         const callee = self.functions[fidx];
                         const params: usize = callee.param_count;
                         const locals: usize = callee.local_count;
-                        if (self.sp < params) return error.StackUnderflow;
+                        if (sp < params) return error.StackUnderflow;
                         if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
-                        const callee_base = self.sp - params;
+                        const callee_base = sp - params;
                         self.frames[self.frame_count] = .{
                             .return_ip = ip,
                             .base = base,
@@ -3163,14 +3211,16 @@ pub const VM = struct {
                         self.frame_count += 1;
                         base = callee_base;
                         current = fidx;
+                        code = self.functions[current].code;
+                        local_count = self.functions[current].local_count;
                         va_base = 0;
                         va_named = 0;
                         va_count = 0;
-                        self.sp = callee_base + locals;
-                        if (self.sp > self.stack_limit) return error.StackOverflow;
+                        sp = callee_base + locals;
+                        if (sp > self.stack_limit) return error.StackOverflow;
                         var li: usize = params;
                         while (li < locals) : (li += 1) {
-                            self.values[callee_base + li] = .{ .i = 0 };
+                            values[callee_base + li] = .{ .i = 0 };
                         }
                         ip = 0;
                     } else {
@@ -3188,20 +3238,22 @@ pub const VM = struct {
                         // keep the legacy registered-native-target gate.
                         if (!plan.native and !self.isNativeTarget(target_addr)) return error.BadAddress;
                         const target: *const anyopaque = @ptrFromInt(target_addr);
+                        self.sp = sp;
                         try self.invokeFfi(plan, target);
+                        sp = self.sp;
                     }
                 },
                 OP_CALL_INDIRECT => {
-                    const tag = try self.pop();
+                    const tag = try popAt(values, &sp);
                     if (tag.i <= 0) return error.BadFunction;
                     const fidx: usize = @intCast(tag.i - 1);
                     if (fidx >= self.func_count) return error.BadFunction;
                     const callee = self.functions[fidx];
                     const params: usize = callee.param_count;
                     const locals: usize = callee.local_count;
-                    if (self.sp < params) return error.StackUnderflow;
+                    if (sp < params) return error.StackUnderflow;
                     if (self.frame_count >= MAX_FRAMES) return error.FrameOverflow;
-                    const callee_base = self.sp - params;
+                    const callee_base = sp - params;
                     self.frames[self.frame_count] = .{
                         .return_ip = ip,
                         .base = base,
@@ -3217,15 +3269,17 @@ pub const VM = struct {
                     self.frame_count += 1;
                     base = callee_base;
                     current = fidx;
+                    code = self.functions[current].code;
+                    local_count = self.functions[current].local_count;
                     va_base = 0;
                     va_named = 0;
                     va_count = 0;
                     va_type_count = 0;
-                    self.sp = callee_base + locals;
-                    if (self.sp > self.stack_limit) return error.StackOverflow;
+                    sp = callee_base + locals;
+                    if (sp > self.stack_limit) return error.StackOverflow;
                     var li: usize = params;
                     while (li < locals) : (li += 1) {
-                        self.values[callee_base + li] = .{ .i = 0 };
+                        values[callee_base + li] = .{ .i = 0 };
                     }
                     ip = 0;
                 },
@@ -3235,39 +3289,26 @@ pub const VM = struct {
     }
 
     inline fn normalizeTop(self: *VM, param: u8) !void {
-        const width_code: u8 = param & 0x03;
-        if (width_code == 0x03) return error.BadOpcode;
-        const bits: u32 = @as(u32, 8) << @intCast(width_code);
-        const shift: u6 = @intCast(64 - bits);
-        if (self.sp == 0) return error.StackUnderflow;
-        const top = &self.values[self.sp - 1];
-        const raw: u64 = @bitCast(top.i);
-        top.i = if ((param & 0x80) != 0)
-            @as(i64, @bitCast(raw << shift)) >> shift
-        else
-            @bitCast(raw & ((@as(u64, 1) << @intCast(bits)) - 1));
+        return normalizeTopAt(self.values.ptr, &self.sp, param);
     }
 
     /// Apply a fallthrough run of NORMALIZE instructions. Jumps into the
     /// middle still execute the instruction from the dispatcher.
     inline fn consumeNormals(self: *VM, code: []const u8, ip: *usize) !void {
-        while (ip.* + 1 < code.len and code[ip.*] == OP_NORMALIZE) {
-            const param = code[ip.* + 1];
-            if ((param & 0x03) == 0x03) return;
-            try self.normalizeTop(param);
-            ip.* += 2;
-        }
+        return consumeNormalsAt(self.values.ptr, &self.sp, code, ip);
     }
 
-    fn push(self: *VM, v: Value) !void {
-        if (self.sp >= self.stack_limit) return error.StackOverflow;
-        self.values[self.sp] = v;
-        self.sp += 1;
+    inline fn push(self: *VM, v: Value) !void {
+        try pushAt(self.values.ptr, &self.sp, self.stack_limit, v);
+    }
+
+    inline fn pushF32At(self: *VM, values: [*]Value, sp: *usize, f: f32) !void {
+        const bits: u32 = @bitCast(f);
+        try pushAt(values, sp, self.stack_limit, .{ .i = @intCast(bits) });
     }
 
     fn pushF32(self: *VM, f: f32) !void {
-        const bits: u32 = @bitCast(f);
-        try self.push(.{ .i = @intCast(bits) });
+        try self.pushF32At(self.values.ptr, &self.sp, f);
     }
 
     fn allocTemp(self: *VM, size: usize, alignment: usize) ![]u8 {
@@ -3279,40 +3320,54 @@ pub const VM = struct {
         return self.mem[start..][0..size];
     }
 
-    fn pushF80(self: *VM, value: f80) !void {
+    inline fn pushF80At(self: *VM, values: [*]Value, sp: *usize, value: f80) !void {
         const block = try self.allocTemp(16, 16);
         const p: *align(1) f80 = @ptrCast(block.ptr);
         p.* = value;
         const addr: u64 = @intCast(@intFromPtr(p));
-        try self.push(.{ .i = @bitCast(addr) });
+        try pushAt(values, sp, self.stack_limit, .{ .i = @bitCast(addr) });
     }
 
-    fn popF80(self: *VM) !f80 {
-        const v = try self.pop();
-        const addr = addressFromBits(v.i);
+    fn pushF80(self: *VM, value: f80) !void {
+        try self.pushF80At(self.values.ptr, &self.sp, value);
+    }
 
+    inline fn popF80At(self: *VM, values: [*]Value, sp: *usize) !f80 {
+        _ = self;
+        const v = try popAt(values, sp);
+        const addr = addressFromBits(v.i);
         return @as(*align(1) const f80, @ptrFromInt(addr)).*;
     }
 
-    fn pushF128(self: *VM, value: f128) !void {
+    fn popF80(self: *VM) !f80 {
+        return self.popF80At(self.values.ptr, &self.sp);
+    }
+
+    inline fn pushF128At(self: *VM, values: [*]Value, sp: *usize, value: f128) !void {
         const block = try self.allocTemp(16, 16);
         const p: *align(1) f128 = @ptrCast(block.ptr);
         p.* = value;
         const addr: u64 = @intCast(@intFromPtr(p));
-        try self.push(.{ .i = @bitCast(addr) });
+        try pushAt(values, sp, self.stack_limit, .{ .i = @bitCast(addr) });
     }
 
-    fn popF128(self: *VM) !f128 {
-        const v = try self.pop();
-        const addr = addressFromBits(v.i);
+    fn pushF128(self: *VM, value: f128) !void {
+        try self.pushF128At(self.values.ptr, &self.sp, value);
+    }
 
+    inline fn popF128At(self: *VM, values: [*]Value, sp: *usize) !f128 {
+        _ = self;
+        const v = try popAt(values, sp);
+        const addr = addressFromBits(v.i);
         return @as(*align(1) const f128, @ptrFromInt(addr)).*;
     }
 
-    fn pop(self: *VM) !Value {
-        if (self.sp == 0) return error.StackUnderflow;
-        self.sp -= 1;
-        return self.values[self.sp];
+    fn popF128(self: *VM) !f128 {
+        return self.popF128At(self.values.ptr, &self.sp);
+    }
+
+    inline fn pop(self: *VM) !Value {
+        return popAt(self.values.ptr, &self.sp);
     }
 };
 
