@@ -413,6 +413,7 @@ make fuzz-cross           # 跨目标执行变异；仅本地
 make fuzz-capi-asan       # 仅本地
 make fuzz-sanitizer       # 仅本地
 make bench                 # 本机进程级基准，输出 build/benchmark.json
+make bench-long            # 长用例基准，输出 build/bench-long.json
 make size                  # Runtime ReleaseSmall 体积
 make size-cross           # 四个目标体积
 make test-winapi          # Windows <windows.h> 示例（Wine）
@@ -429,6 +430,12 @@ make check-version        # VERSION 单一来源校验
 ReleaseSmall 基线约为 **5.24–5.45 ms/run**（median；mean 5.27–5.48 ms，当前
 `build/benchmark.json` 采样）；这个数字包含进程启动、包加载和一次执行，
 适合做同一机器上的前后回归比较，不是纯 VM 指令吞吐。
+
+`make bench-long` 使用固定的 10 个长用例（CompCert `test/c` 的 9 个
+benchmark 加 c-testsuite `00040`），默认分别以 `--cc-opt 0,2` 各编译一次、
+预热一次、计时 3 次，输出 min/median 和相对 `--cc-opt 0` 的几何平均加速比到
+`build/bench-long.json`。当前 ReleaseSmall 基线：O2 相对 O0 **1.477x**；
+`vmach` 是既有例外（0.948x），其余用例 1.03–2.29x。
 
 ### 12.1 命令行与构建选项
 
@@ -463,7 +470,9 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 
 `--trace`（或 `CINTERP_TRACE=1`）在运行结束后向 stderr 打印指令总数、Mops/s、
 `STORE_LOCAL;LOAD_LOCAL` 融合次数、opcode/函数/原生计划直方图，用于定位长用例的
-热点。计数只在 `Debug`/`ReleaseSafe` 构建中编译进去；`ReleaseFast`/`ReleaseSmall`
+热点；`NORMALIZE after` 列出产生归一化的前一条 opcode，`LOAD_CONST_POOL before`
+列出常量加载后紧跟的 opcode，分别用于折叠结果归一化和常量操作数融合。
+计数只在 `Debug`/`ReleaseSafe` 构建中编译进去；`ReleaseFast`/`ReleaseSmall`
 会提示不可用，dispatch 循环和 VM 布局都没有额外字段。调用 libc `exit()` 的 C 程序
 由 `atexit` 兜底输出（Windows exe 未链接 CRT，只有正常返回时输出）。需要无干扰的
 stderr 时可用 `--trace ... 2>trace.txt` 单独捕获。

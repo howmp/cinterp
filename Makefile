@@ -1,4 +1,4 @@
-.PHONY: all help test compiler runtime debug-runtime cross-runtimes-win compiler-test integration lint size keygenme release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench size-cross clean distclean test-suites-smoke test-suites test-suites-full test-suites-opt test-suites-nightly test-suites-nightly-serial test-suites-report test-suites-cross test-winapi fetch-suites generate-diff generate-diff-nightly generate-diff-csmith release-artifacts evidence check-version
+.PHONY: all help test compiler runtime debug-runtime cross-runtimes-win compiler-test integration lint size keygenme release-check cross-test c-testsuite fuzz fuzz-exec fuzz-ffi-exec fuzz-bytecode fuzz-cross fuzz-capi-asan fuzz-sanitizer differential bench bench-long size-cross clean distclean test-suites-smoke test-suites test-suites-full test-suites-opt test-suites-nightly test-suites-nightly-serial test-suites-report test-suites-cross test-winapi fetch-suites generate-diff generate-diff-nightly generate-diff-csmith release-artifacts evidence check-version
 
 PYTHON ?= python3
 BUILD := build
@@ -43,6 +43,7 @@ help:
 		'test-suites-full    full pinned upstream suite' \
 		'test-suites-opt     csuite + c-testsuite at the default --cc-opt 2' \
 		'bench               benchmark and build/benchmark.json' \
+		'bench-long          long-running benchmarks and build/bench-long.json' \
 		'release-artifacts   release tarballs + SBOM + SHA256SUMS' \
 		'clean / distclean   remove outputs (clean preserves suite cache)'
 
@@ -218,6 +219,10 @@ differential: compiler runtime
 bench: compiler runtime
 	mkdir -p $(BUILD)
 	$(PYTHON) scripts/tools/benchmark.py --json $(BUILD)/benchmark.json
+
+bench-long: compiler runtime
+	mkdir -p $(BUILD)
+	$(PYTHON) scripts/tools/bench_long.py --json $(BUILD)/bench-long.json
 
 release-artifacts:
 	./scripts/release/package_release.sh

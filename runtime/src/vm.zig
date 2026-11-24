@@ -181,7 +181,12 @@ pub const TraceStats = struct {
     /// NORMALIZE immediately preceded by this opcode; guides folding the
     /// result normalization into the producer.
     norm_after: [256]u64 = [_]u64{0} ** 256,
+    /// Opcode immediately following LOAD_CONST_POOL; guides constant-operand
+    /// fusion.
+    const_pool_after: [256]u64 = [_]u64{0} ** 256,
     fused_store_load: u64 = 0,
+    /// LOAD_CONST_POOL;ALU dispatches fused at runtime.
+    fused_const_alu: u64 = 0,
 };
 
 fn traceOpName(op: u8) []const u8 {
@@ -1577,83 +1582,98 @@ pub const VM = struct {
     pub fn dumpTrace(self: *const VM, writer: anytype, elapsed_ns: ?u64) !void {
         if (comptime trace_build) {
             if (!self.trace_active) return;
-        const total = self.trace.total;
-        if (elapsed_ns) |ns| {
-            const seconds = @as(f64, @floatFromInt(ns)) / std.time.ns_per_s;
-            const mops = if (seconds > 0) @as(f64, @floatFromInt(total)) / seconds / 1e6 else 0;
-            try writer.print("cinterp trace: {d} instructions in {d:.3}s ({d:.1} Mops/s)\n", .{ total, seconds, mops });
-        } else {
-            try writer.print("cinterp trace: {d} instructions\n", .{total});
-        }
-        try writer.print("cinterp trace: fused STORE_LOCAL;LOAD_LOCAL {d}\n", .{self.trace.fused_store_load});
-
-        var entries: [256]TraceCount = undefined;
-        var n: usize = 0;
-        for (0..256) |i| {
-            if (self.trace.ops[i] == 0) continue;
-            entries[n] = .{ .key = @intCast(i), .count = self.trace.ops[i] };
-            n += 1;
-        }
-        std.mem.sort(TraceCount, entries[0..n], {}, traceCountDesc);
-        try writer.writeAll("cinterp trace: opcodes\n");
-        for (entries[0..@min(n, 24)]) |e| {
-            try writer.print("  {d:.2}% {d:>12}  {s}\n", .{
-                tracePercent(e.count, total), e.count, traceOpName(@intCast(e.key)),
-            });
-        }
-        if (n > 24) try writer.print("  ... {d} more opcodes\n", .{n - 24});
-
-        var nentries: [256]TraceCount = undefined;
-        var norm_count: usize = 0;
-        for (0..256) |i| {
-            if (self.trace.norm_after[i] == 0) continue;
-            nentries[norm_count] = .{ .key = @intCast(i), .count = self.trace.norm_after[i] };
-            norm_count += 1;
-        }
-        if (norm_count != 0) {
-            std.mem.sort(TraceCount, nentries[0..norm_count], {}, traceCountDesc);
-            try writer.writeAll("cinterp trace: NORMALIZE after\n");
-            for (nentries[0..@min(norm_count, 12)]) |e| {
-                try writer.print("  {d:>12}  {s}\n", .{ e.count, traceOpName(@intCast(e.key)) });
+            const total = self.trace.total;
+            if (elapsed_ns) |ns| {
+                const seconds = @as(f64, @floatFromInt(ns)) / std.time.ns_per_s;
+                const mops = if (seconds > 0) @as(f64, @floatFromInt(total)) / seconds / 1e6 else 0;
+                try writer.print("cinterp trace: {d} instructions in {d:.3}s ({d:.1} Mops/s)\n", .{ total, seconds, mops });
+            } else {
+                try writer.print("cinterp trace: {d} instructions\n", .{total});
             }
-        }
+            try writer.print("cinterp trace: fused STORE_LOCAL;LOAD_LOCAL {d}\n", .{self.trace.fused_store_load});
 
-        var fentries: [MAX_FUNCS]TraceCount = undefined;
-        var fn_count: usize = 0;
-        for (0..MAX_FUNCS) |i| {
-            if (self.trace.funcs[i] == 0) continue;
-            fentries[fn_count] = .{ .key = @intCast(i), .count = self.trace.funcs[i] };
-            fn_count += 1;
-        }
-        std.mem.sort(TraceCount, fentries[0..fn_count], {}, traceCountDesc);
-        try writer.writeAll("cinterp trace: functions\n");
-        for (fentries[0..@min(fn_count, 8)]) |e| {
-            try writer.print("  {d:.2}% {d:>12}  func[{d}]\n", .{
-                tracePercent(e.count, total), e.count, e.key,
-            });
-        }
-
-        var pentries: [plan_loader.MAX_PLANS]TraceCount = undefined;
-        var plan_count: usize = 0;
-        for (0..plan_loader.MAX_PLANS) |i| {
-            if (self.trace.plans[i] == 0) continue;
-            pentries[plan_count] = .{ .key = @intCast(i), .count = self.trace.plans[i] };
-            plan_count += 1;
-        }
-        std.mem.sort(TraceCount, pentries[0..plan_count], {}, traceCountDesc);
-        if (plan_count != 0) {
-            try writer.writeAll("cinterp trace: native calls\n");
-            for (pentries[0..@min(plan_count, 12)]) |e| {
-                var name: []const u8 = "?";
-                if (self.plan_store) |store| {
-                    if (store.planAt(e.key)) |p| name = p.name[0..p.name_len];
-                }
+            var entries: [256]TraceCount = undefined;
+            var n: usize = 0;
+            for (0..256) |i| {
+                if (self.trace.ops[i] == 0) continue;
+                entries[n] = .{ .key = @intCast(i), .count = self.trace.ops[i] };
+                n += 1;
+            }
+            std.mem.sort(TraceCount, entries[0..n], {}, traceCountDesc);
+            try writer.writeAll("cinterp trace: opcodes\n");
+            for (entries[0..@min(n, 24)]) |e| {
                 try writer.print("  {d:.2}% {d:>12}  {s}\n", .{
-                    tracePercent(e.count, total), e.count, name,
+                    tracePercent(e.count, total), e.count, traceOpName(@intCast(e.key)),
                 });
             }
-            if (plan_count > 12) try writer.print("  ... {d} more plans\n", .{plan_count - 12});
-        }
+            if (n > 24) try writer.print("  ... {d} more opcodes\n", .{n - 24});
+
+            var nentries: [256]TraceCount = undefined;
+            var norm_count: usize = 0;
+            for (0..256) |i| {
+                if (self.trace.norm_after[i] == 0) continue;
+                nentries[norm_count] = .{ .key = @intCast(i), .count = self.trace.norm_after[i] };
+                norm_count += 1;
+            }
+            if (norm_count != 0) {
+                std.mem.sort(TraceCount, nentries[0..norm_count], {}, traceCountDesc);
+                try writer.writeAll("cinterp trace: NORMALIZE after\n");
+                for (nentries[0..@min(norm_count, 12)]) |e| {
+                    try writer.print("  {d:>12}  {s}\n", .{ e.count, traceOpName(@intCast(e.key)) });
+                }
+            }
+
+            var centries: [256]TraceCount = undefined;
+            var const_count: usize = 0;
+            for (0..256) |i| {
+                if (self.trace.const_pool_after[i] == 0) continue;
+                centries[const_count] = .{ .key = @intCast(i), .count = self.trace.const_pool_after[i] };
+                const_count += 1;
+            }
+            if (const_count != 0) {
+                std.mem.sort(TraceCount, centries[0..const_count], {}, traceCountDesc);
+                try writer.writeAll("cinterp trace: LOAD_CONST_POOL before\n");
+                for (centries[0..@min(const_count, 12)]) |e| {
+                    try writer.print("  {d:>12}  {s}\n", .{ e.count, traceOpName(@intCast(e.key)) });
+                }
+            }
+
+            var fentries: [MAX_FUNCS]TraceCount = undefined;
+            var fn_count: usize = 0;
+            for (0..MAX_FUNCS) |i| {
+                if (self.trace.funcs[i] == 0) continue;
+                fentries[fn_count] = .{ .key = @intCast(i), .count = self.trace.funcs[i] };
+                fn_count += 1;
+            }
+            std.mem.sort(TraceCount, fentries[0..fn_count], {}, traceCountDesc);
+            try writer.writeAll("cinterp trace: functions\n");
+            for (fentries[0..@min(fn_count, 8)]) |e| {
+                try writer.print("  {d:.2}% {d:>12}  func[{d}]\n", .{
+                    tracePercent(e.count, total), e.count, e.key,
+                });
+            }
+
+            var pentries: [plan_loader.MAX_PLANS]TraceCount = undefined;
+            var plan_count: usize = 0;
+            for (0..plan_loader.MAX_PLANS) |i| {
+                if (self.trace.plans[i] == 0) continue;
+                pentries[plan_count] = .{ .key = @intCast(i), .count = self.trace.plans[i] };
+                plan_count += 1;
+            }
+            std.mem.sort(TraceCount, pentries[0..plan_count], {}, traceCountDesc);
+            if (plan_count != 0) {
+                try writer.writeAll("cinterp trace: native calls\n");
+                for (pentries[0..@min(plan_count, 12)]) |e| {
+                    var name: []const u8 = "?";
+                    if (self.plan_store) |store| {
+                        if (store.planAt(e.key)) |p| name = p.name[0..p.name_len];
+                    }
+                    try writer.print("  {d:.2}% {d:>12}  {s}\n", .{
+                        tracePercent(e.count, total), e.count, name,
+                    });
+                }
+                if (plan_count > 12) try writer.print("  ... {d} more plans\n", .{plan_count - 12});
+            }
         } else {
             try writer.writeAll("cinterp trace: counters require a Debug or ReleaseSafe runtime\n");
         }
@@ -1832,6 +1852,10 @@ pub const VM = struct {
                 },
                 OP_LOAD_CONST_POOL => {
                     const ref = try readU32(code, &ip);
+                    if (comptime trace_build) {
+                        if (self.trace_active and ip < code.len)
+                            self.trace.const_pool_after[code[ip]] += 1;
+                    }
                     const pool = self.const_pool orelse return error.BadAddress;
                     const width_code = (ref >> 28) & 0x3;
                     const width: usize = @as(usize, 1) << @intCast(width_code);
