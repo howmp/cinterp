@@ -1419,6 +1419,12 @@ pub const Parser = struct {
                 try self.advance();
                 continue;
             }
+            // LLVM 18+ annotates `or` with `disjoint` (operands share no set
+            // bits). It does not change the operation.
+            if (std.mem.eql(u8, word, "disjoint")) {
+                try self.advance();
+                continue;
+            }
             if (self.isFastMathFlag(word)) {
                 out.fast = true;
                 try self.advance();
