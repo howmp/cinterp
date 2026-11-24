@@ -526,7 +526,9 @@ SPDX SBOM 和 `SHA256SUMS`。CI 在打包后用 Sigstore keyless 签名 `SHA256S
 pkg-config/CMake 元数据和 Rust 绑定。每个压缩包的 `README.md` 由
 [`packaging/README.release.md.in`](./packaging/README.release.md.in) 渲染。
 `THIRD_PARTY_NOTICES.md` 只随编译器压缩包发布；runtime-only 包不携带派生符号索引。
-发布包不包含 `debug/` 分离调试文件；需要调试时请在源码中执行
+sysv-x86_64 的 `cinterp-run` 是自动选择脚本：CPU 具备完整 x86-64-v3（AVX2/BMI/FMA 等）
+特征时 exec `cinterp-run-v3`，否则 exec `cinterp-run-baseline`；`lib/` 中的嵌入库
+始终保持通用 baseline。发布包不包含 `debug/` 分离调试文件；需要调试时请在源码中执行
 `cd runtime && zig build -Doptimize=Debug`。
 
 ### 12.4 验证与证据
