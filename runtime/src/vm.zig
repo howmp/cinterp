@@ -151,6 +151,154 @@ pub const OP_NORMALIZE: u8 = 0xA6;
 pub const OP_FMA: u8 = 0xA7;
 pub const OP_FMA32: u8 = 0xA8;
 
+/// `--trace` counters. Debug and ReleaseSafe compile the updates in;
+/// ReleaseFast/ReleaseSmall fold `trace_build` to false and skip them, so the
+/// dispatch loop is unchanged there.
+const trace_build = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
+
+pub const TraceStats = struct {
+    total: u64 = 0,
+    ops: [256]u64 = [_]u64{0} ** 256,
+    funcs: [MAX_FUNCS]u64 = [_]u64{0} ** MAX_FUNCS,
+    plans: [plan_loader.MAX_PLANS]u64 = [_]u64{0} ** plan_loader.MAX_PLANS,
+    fused_store_load: u64 = 0,
+};
+
+fn traceOpName(op: u8) []const u8 {
+    return switch (op) {
+        0x01 => "RET",
+        0x02 => "RET_VOID",
+        0x10 => "LOAD_CONST_I64",
+        0x11 => "ADD",
+        0x12 => "SUB",
+        0x13 => "MUL",
+        0x14 => "DUP",
+        0x15 => "POP",
+        0x16 => "SWAP",
+        0x17 => "XOR",
+        0x18 => "DIV_S",
+        0x19 => "DIV_U",
+        0x1a => "REM_S",
+        0x1b => "REM_U",
+        0x1c => "AND",
+        0x1d => "OR",
+        0x1e => "SHL",
+        0x1f => "SHR_S",
+        0x20 => "LOAD_LOCAL",
+        0x21 => "STORE_LOCAL",
+        0x24 => "SHR_U",
+        0x25 => "FPTOSI",
+        0x26 => "SITOFP",
+        0x27 => "FADD",
+        0x28 => "FSUB",
+        0x29 => "FMUL",
+        0x2a => "FDIV",
+        0x2b => "FCMP",
+        0x2c => "FADD32",
+        0x2d => "FSUB32",
+        0x2e => "FMUL32",
+        0x2f => "FDIV32",
+        0x30 => "JMP",
+        0x31 => "JZ",
+        0x32 => "JNZ",
+        0x33 => "CMP_EQ",
+        0x34 => "CMP_LT",
+        0x35 => "CMP_LT_U",
+        0x38 => "FCMP32",
+        0x39 => "FPEXT",
+        0x3a => "FPTRUNC",
+        0x3b => "FPTOSI32",
+        0x3c => "SITOFP32",
+        0x40 => "CALL",
+        0x41 => "FUNC_ADDR",
+        0x42 => "CALL_INDIRECT",
+        0x60 => "ALLOCA",
+        0x61 => "LOAD_MEM",
+        0x62 => "STORE_MEM",
+        0x63 => "MEMCPY",
+        0x64 => "MEMSET",
+        0x65 => "ADDR_CONST",
+        0x66 => "SET_MEM_TOP",
+        0x70 => "CALL_NATIVE",
+        0x71 => "CALL_VARARG",
+        0x72 => "CREATE_CALLBACK",
+        0x73 => "F80_CONST",
+        0x74 => "F80_ADD",
+        0x75 => "F80_SUB",
+        0x76 => "F80_MUL",
+        0x77 => "F80_DIV",
+        0x78 => "F80_CMP",
+        0x79 => "F80_FROM_F64",
+        0x7a => "F80_TO_F64",
+        0x7b => "F80_FROM_I64",
+        0x7c => "F80_TO_I64",
+        0x7d => "F80_FROM_F32",
+        0x7e => "F80_TO_F32",
+        0x7f => "F80_NEG",
+        0x80 => "F128_CONST",
+        0x81 => "F128_ADD",
+        0x82 => "F128_SUB",
+        0x83 => "F128_MUL",
+        0x84 => "F128_DIV",
+        0x85 => "F128_CMP",
+        0x86 => "F128_NEG",
+        0x87 => "F128_FROM_F64",
+        0x88 => "F128_TO_F64",
+        0x89 => "F128_FROM_I64",
+        0x8a => "F128_TO_I64",
+        0x8b => "F128_FROM_F32",
+        0x8c => "F128_TO_F32",
+        0x8d => "ALLOCA_DYN",
+        0x8e => "FPTOUI",
+        0x8f => "UITOFP",
+        0x90 => "FPTOUI32",
+        0x91 => "UITOFP32",
+        0x92 => "F80_TO_U64",
+        0x93 => "F80_FROM_U64",
+        0x94 => "F128_TO_U64",
+        0x95 => "F128_FROM_U64",
+        0x96 => "ADDR_EXTERN",
+        0x97 => "SETJMP",
+        0x98 => "LONGJMP",
+        0x99 => "CALL_VARIADIC",
+        0x9a => "VA_START",
+        0x9b => "VA_COPY",
+        0x9c => "CALL_INDIRECT_NATIVE",
+        0x9d => "STACKSAVE",
+        0x9e => "STACKRESTORE",
+        0x9f => "ALLOCA_ALIGNED",
+        0xa0 => "ALLOCA_DYN_ALIGN",
+        0xa1 => "CALL_VARIADIC_TYPED",
+        0xa2 => "FPCLASS",
+        0xa3 => "CALLBACK_ACQUIRE",
+        0xa4 => "CALLBACK_RELEASE",
+        0xa5 => "LOAD_CONST_POOL",
+        0xa6 => "NORMALIZE",
+        0xa7 => "FMA",
+        0xa8 => "FMA32",
+        else => "UNKNOWN",
+    };
+}
+
+const TraceCount = struct {
+    key: u16,
+    count: u64,
+};
+
+const TraceField = if (trace_build) TraceStats else void;
+const trace_default: TraceField = if (trace_build) .{} else {};
+const TraceFlag = if (trace_build) bool else void;
+const trace_flag_default: TraceFlag = if (trace_build) false else {};
+
+fn traceCountDesc(_: void, a: TraceCount, b: TraceCount) bool {
+    return a.count > b.count;
+}
+
+fn tracePercent(count: u64, total: u64) f64 {
+    if (total == 0) return 0;
+    return 100.0 * @as(f64, @floatFromInt(count)) / @as(f64, @floatFromInt(total));
+}
+
 fn floatToI64Safe(x: anytype) !i64 {
     const xf: f64 = @floatCast(x);
     if (!std.math.isFinite(xf) or xf < -9223372036854775808.0 or xf >= 9223372036854775808.0)
@@ -589,6 +737,10 @@ pub const VM = struct {
     /// Last successful run result. A failed run leaves it untouched.
     result: i64 = 0,
     stack_limit: usize = MAX_STACK,
+    /// `--trace` is only honored by Debug/ReleaseSafe builds; the counters are
+    /// compiled out everywhere else.
+    trace_active: TraceFlag = trace_flag_default,
+    trace: TraceField = trace_default,
     last_error: [128]u8 = undefined,
     last_error_code: c_int = 0,
     /// Execution lock state. Null for stack-allocated test VMs and for the
@@ -1102,7 +1254,12 @@ pub const VM = struct {
 
     fn invokeFfi(self: *VM, plan: abi.CallPlan, target: *const anyopaque) !void {
         try platform.validate(plan);
-        var arg_block: [4096]u8 align(16) = [_]u8{0} ** 4096;
+        var arg_block: [4096]u8 align(16) = undefined;
+        // `marshal` reads a full 8-byte word for every GPR argument and
+        // plan validation keeps those offsets below 256. Staging writes every
+        // other byte it reads, so only this window needs zero padding instead
+        // of clearing all 4 KiB on every call.
+        @memset(arg_block[0..256], 0);
         var sret_ptr: ?*anyopaque = null;
 
         var i: usize = plan.args.len;
@@ -1130,7 +1287,10 @@ pub const VM = struct {
             }
         }
 
-        var stack_buf: [4096]u8 align(16) = [_]u8{0} ** 4096;
+        var stack_buf: [4096]u8 align(16) = undefined;
+        // The callee only observes the `stack_size` image; zero that (typically
+        // a few words) so unwritten padding is deterministic.
+        @memset(stack_buf[0..plan.stack_size], 0);
         var frame: platform.Frame = std.mem.zeroes(platform.Frame);
         var sret_dest = sret_ptr;
         if (plan.sret and sret_dest == null) {
@@ -1143,7 +1303,9 @@ pub const VM = struct {
         platform.marshal(&frame, plan, &arg_block, &stack_buf);
         platform.invoke(&frame, target);
 
-        var ret_block: [4096]u8 align(16) = [_]u8{0} ** 4096;
+        var ret_block: [4096]u8 align(16) = undefined;
+        // Multi-location returns copy `ret_size` bytes; zero only that span.
+        @memset(ret_block[0..plan.ret_size], 0);
         platform.readRet(&frame, plan, &ret_block);
 
         if (plan.sret) {
@@ -1305,7 +1467,86 @@ pub const VM = struct {
         if (entry_fn.param_count > 1) self.values[1] = .{ .u = argv_addr };
         if (entry_fn.param_count > 2) self.values[2] = .{ .u = envp_addr };
 
+        if (comptime trace_build) {
+            if (self.trace_active) self.trace = .{};
+        }
         return self.executeLoop(fi, 0, 0);
+    }
+
+    /// Enable instruction/plan histograms. Only Debug and ReleaseSafe runtimes
+    /// collect them; other build modes compile the updates out.
+    pub fn setTrace(self: *VM, enabled: bool) void {
+        if (comptime trace_build) self.trace_active = enabled;
+    }
+
+    pub fn dumpTrace(self: *const VM, writer: anytype, elapsed_ns: ?u64) !void {
+        if (comptime trace_build) {
+            if (!self.trace_active) return;
+        const total = self.trace.total;
+        if (elapsed_ns) |ns| {
+            const seconds = @as(f64, @floatFromInt(ns)) / std.time.ns_per_s;
+            const mops = if (seconds > 0) @as(f64, @floatFromInt(total)) / seconds / 1e6 else 0;
+            try writer.print("cinterp trace: {d} instructions in {d:.3}s ({d:.1} Mops/s)\n", .{ total, seconds, mops });
+        } else {
+            try writer.print("cinterp trace: {d} instructions\n", .{total});
+        }
+        try writer.print("cinterp trace: fused STORE_LOCAL;LOAD_LOCAL {d}\n", .{self.trace.fused_store_load});
+
+        var entries: [256]TraceCount = undefined;
+        var n: usize = 0;
+        for (0..256) |i| {
+            if (self.trace.ops[i] == 0) continue;
+            entries[n] = .{ .key = @intCast(i), .count = self.trace.ops[i] };
+            n += 1;
+        }
+        std.mem.sort(TraceCount, entries[0..n], {}, traceCountDesc);
+        try writer.writeAll("cinterp trace: opcodes\n");
+        for (entries[0..@min(n, 24)]) |e| {
+            try writer.print("  {d:.2}% {d:>12}  {s}\n", .{
+                tracePercent(e.count, total), e.count, traceOpName(@intCast(e.key)),
+            });
+        }
+        if (n > 24) try writer.print("  ... {d} more opcodes\n", .{n - 24});
+
+        var fentries: [MAX_FUNCS]TraceCount = undefined;
+        var fn_count: usize = 0;
+        for (0..MAX_FUNCS) |i| {
+            if (self.trace.funcs[i] == 0) continue;
+            fentries[fn_count] = .{ .key = @intCast(i), .count = self.trace.funcs[i] };
+            fn_count += 1;
+        }
+        std.mem.sort(TraceCount, fentries[0..fn_count], {}, traceCountDesc);
+        try writer.writeAll("cinterp trace: functions\n");
+        for (fentries[0..@min(fn_count, 8)]) |e| {
+            try writer.print("  {d:.2}% {d:>12}  func[{d}]\n", .{
+                tracePercent(e.count, total), e.count, e.key,
+            });
+        }
+
+        var pentries: [plan_loader.MAX_PLANS]TraceCount = undefined;
+        var plan_count: usize = 0;
+        for (0..plan_loader.MAX_PLANS) |i| {
+            if (self.trace.plans[i] == 0) continue;
+            pentries[plan_count] = .{ .key = @intCast(i), .count = self.trace.plans[i] };
+            plan_count += 1;
+        }
+        std.mem.sort(TraceCount, pentries[0..plan_count], {}, traceCountDesc);
+        if (plan_count != 0) {
+            try writer.writeAll("cinterp trace: native calls\n");
+            for (pentries[0..@min(plan_count, 12)]) |e| {
+                var name: []const u8 = "?";
+                if (self.plan_store) |store| {
+                    if (store.planAt(e.key)) |p| name = p.name[0..p.name_len];
+                }
+                try writer.print("  {d:.2}% {d:>12}  {s}\n", .{
+                    tracePercent(e.count, total), e.count, name,
+                });
+            }
+            if (plan_count > 12) try writer.print("  ... {d} more plans\n", .{plan_count - 12});
+        }
+        } else {
+            try writer.writeAll("cinterp trace: counters require a Debug or ReleaseSafe runtime\n");
+        }
     }
 
     /// Drop everything that must not survive from one run into the next: the
@@ -1440,6 +1681,13 @@ pub const VM = struct {
             if (ip >= code.len) return error.TruncatedCode;
             const op = code[ip];
             ip += 1;
+            if (comptime trace_build) {
+                if (self.trace_active) {
+                    self.trace.total += 1;
+                    self.trace.ops[op] += 1;
+                    self.trace.funcs[current] += 1;
+                }
+            }
 
             switch (op) {
                 OP_RET, OP_RET_VOID => {
@@ -1903,6 +2151,9 @@ pub const VM = struct {
                                 if (other != slot) self.values[self.sp - 1] = self.values[base + other];
                                 ip += 3;
                                 fused = true;
+                                if (comptime trace_build) {
+                                    if (self.trace_active) self.trace.fused_store_load += 1;
+                                }
                             }
                         }
                     }
@@ -2009,6 +2260,10 @@ pub const VM = struct {
                     const idx = try readU16(code, &ip);
                     const store = self.plan_store orelse return error.NoPlans;
                     const i: usize = idx;
+                    if (comptime trace_build) {
+                        if (self.trace_active and i < self.trace.plans.len)
+                            self.trace.plans[i] += 1;
+                    }
                     const p = store.planAt(i) orelse return error.BadPlan;
                     var plan = store.callPlan(p);
                     const n: usize = p.name_len;
@@ -2517,6 +2772,10 @@ pub const VM = struct {
                         const store = self.plan_store orelse return error.NoPlans;
                         const p = store.planAt(plan_idx) orelse return error.BadPlan;
                         const plan = store.callPlan(p);
+                        if (comptime trace_build) {
+                            if (self.trace_active and plan_idx < self.trace.plans.len)
+                                self.trace.plans[plan_idx] += 1;
+                        }
                         const target_addr = addressFromBits(tag.i);
                         if (target_addr == 0) return error.BadAddress;
                         // CI_NATIVE_PLAN marks the ABI as accepting dynamically

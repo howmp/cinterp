@@ -446,12 +446,19 @@ Windows 目标使用 Zig 自带的 MinGW 头文件，可用 `ZIG_LIB_DIR` 覆盖
 运行时：
 
 ```bash
-./runtime/zig-out/bin/cinterp-run <package.cib> [-- arg...]
+./runtime/zig-out/bin/cinterp-run [--trace] <package.cib> [-- arg...]
 ```
 
 单包、单次运行输出一行 `result: <i32>`；`--` 后的参数进入 C `argv[1..]`，包路径是
 `argv[0]`。用户库、重复运行、多 VM 和仅加载校验只通过 C API 使用。成功退出码 0，
 加载/运行失败 1，用法或 I/O 错误 2；C `main` 的返回值只通过 `result:` 输出。
+
+`--trace`（或 `CINTERP_TRACE=1`）在运行结束后向 stderr 打印指令总数、Mops/s、
+`STORE_LOCAL;LOAD_LOCAL` 融合次数、opcode/函数/原生计划直方图，用于定位长用例的
+热点。计数只在 `Debug`/`ReleaseSafe` 构建中编译进去；`ReleaseFast`/`ReleaseSmall`
+会提示不可用，dispatch 循环和 VM 布局都没有额外字段。调用 libc `exit()` 的 C 程序
+由 `atexit` 兜底输出（Windows exe 未链接 CRT，只有正常返回时输出）。需要无干扰的
+stderr 时可用 `--trace ... 2>trace.txt` 单独捕获。
 
 构建配置：`Debug`/`ReleaseSafe` 保留完整诊断、unwind 表、帧指针和 panic 栈回溯；
 `ReleaseSmall`（`make runtime` 的默认值）剥离 unwind 表、帧指针、panic 跟踪和符号，
