@@ -1824,10 +1824,26 @@ const Lowerer = struct {
     }
 
     fn emitPhiAssignments(self: *Lowerer, block: []const u8) !void {
+        // Phi incoming edges are parallel copies: every source must be read
+        // before any destination is written. Stage the values on the operand
+        // stack, then store them in reverse order. This matters for -O1+ IR
+        // (e.g. `%p = phi [..., %a]` next to `%a = phi [..., %add]`), which
+        // -O0 clang never produces.
+        var count: usize = 0;
         for (self.phi_assigns.items) |assign| {
             if (!eql(assign.pred, block)) continue;
             try self.emitValueOf(assign.ty, assign.value);
+            count += 1;
+        }
+        if (count == 0) return;
+        var remaining = count;
+        var i = self.phi_assigns.items.len;
+        while (i > 0 and remaining > 0) {
+            i -= 1;
+            const assign = self.phi_assigns.items[i];
+            if (!eql(assign.pred, block)) continue;
             try self.emitStoreSlot(try self.slotFor(assign.result));
+            remaining -= 1;
         }
     }
 
