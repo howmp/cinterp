@@ -70,6 +70,12 @@ copy_common() {
     mkdir -p "$dest/docs" "$dest/examples"
     cp docs/*.md "$dest/docs/"
     cp -a examples/. "$dest/examples/"
+    # Never ship local build caches in the examples tree (keygenme's
+    # .zig-cache alone is tens of MB and is not part of the release).
+    find "$dest/examples" -type d \
+        \( -name .zig-cache -o -name zig-out -o -name __pycache__ \
+           -o -name .pytest_cache -o -name node_modules -o -name target \) \
+        -prune -exec rm -rf {} +
 
     case "$target" in
         *windows*) private_libs="" ;;
