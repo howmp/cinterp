@@ -1,8 +1,16 @@
 #!/bin/sh
+# `cinterp` runs a built package: it wraps the runtime, not the compiler. The
+# runtime ships in `bin/` next to this script when a package puts both tools
+# there, and at the package root in runtime layouts, so check both.
 set -eu
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-if [ -x "$SELF_DIR/cinterp-cc" ]; then
-    exec "$SELF_DIR/cinterp-cc" "$@"
-fi
-echo "cinterp: cinterp-cc not found next to $0" >&2
+for candidate in \
+    "$SELF_DIR/cinterp-run" \
+    "$SELF_DIR/../cinterp-run"
+do
+    if [ -x "$candidate" ]; then
+        exec "$candidate" "$@"
+    fi
+done
+echo "cinterp: cinterp-run not found next to $0 or in its parent directory" >&2
 exit 127

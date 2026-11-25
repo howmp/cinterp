@@ -35,9 +35,15 @@ FAIL = "fail"
 MISSING = "missing"
 
 # (label, path, expected ok, expected skip, --require-* key)
+#
+# The smoke/standard baselines track the current manifests, so they move when a
+# suite's contents change (f87a07d removed long double support, which turned the
+# two `csuite/longdouble*` cases into skips and left 103 `unsupported` in the
+# standard tier). Update them together with such a change, never to paper over a
+# failure: every skip here is an `unsupported` class, not a `known-failure`.
 SUITE_REPORTS = (
-    ("test-suites-smoke", B / "test-suites-smoke.json", 18, 0, "smoke"),
-    ("test-suites", B / "test-suites.json", 395, 100, "standard"),
+    ("test-suites-smoke", B / "test-suites-smoke.json", 16, 2, "smoke"),
+    ("test-suites", B / "test-suites.json", 393, 103, "standard"),
     ("test-suites-full", B / "test-suites-full.json", None, None, "full"),
 )
 NIGHTLY_REPORT = B / "test-suites-nightly.json"
