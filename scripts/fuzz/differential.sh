@@ -4,7 +4,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 OUT="$ROOT/build/differential"
 mkdir -p "$OUT"
-CASES=(basics/hello basics/arrays basics/structs basics/math basics/bitfields basics/ptrstruct basics/longdouble)
+# longdouble (f80/f128) is no longer supported.
+CASES=(basics/hello basics/arrays basics/structs basics/math basics/bitfields basics/ptrstruct)
 ZIG_CC="${CINTERP_ZIG_CC:-$ROOT/build/cinterp-cc}"
 fail=0
 for name in "${CASES[@]}"; do
