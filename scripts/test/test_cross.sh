@@ -76,7 +76,7 @@ win_runner() {
 
 example() {
     case "$1" in
-        hello|arrays|structs|math|float_math|bitfields|longdouble|packed|packed_helper|ptrstruct)
+        hello|arrays|structs|math|float_math|bitfields|packed|packed_helper|ptrstruct)
             echo "examples/basics/$1.c" ;;
         ffi_*) echo "examples/ffi/$1.c" ;;
         ifconfig|ps|netstat|route) echo "examples/linux/$1.c" ;;
@@ -194,8 +194,10 @@ win_run() {
     echo "OK $package -> $expected x$repeat"
 }
 
-USUAL=(hello arrays structs ffi_malloc ffi_printf ffi_printf_longdouble ffi_snprintf math ffi_float ffi_structs ffi_regstruct ffi_regstruct_live ffi_mixedstruct ffi_qsort ffi_callback ffi_callback_big ffi_longdouble ffi_longdouble_live ffi_edges ffi_hfa ffi_hfa_stack packed)
-HELPERS=(ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper ffi_longdouble_helper ffi_edges_helper ffi_hfa_helper ffi_hfa_stack_helper packed_helper)
+# SKIP: ffi_printf_longdouble / ffi_longdouble* use f80/f128, unsupported.
+USUAL=(hello arrays structs ffi_malloc ffi_printf ffi_snprintf math ffi_float ffi_structs ffi_regstruct ffi_regstruct_live ffi_mixedstruct ffi_qsort ffi_callback ffi_callback_big ffi_edges ffi_hfa ffi_hfa_stack packed)
+# SKIP: ffi_longdouble_helper uses long double.
+HELPERS=(ffi_float_helper ffi_structs_helper ffi_regstruct_helper ffi_mixedstruct_helper ffi_callback_helper ffi_callback_big_helper ffi_edges_helper ffi_hfa_helper ffi_hfa_stack_helper packed_helper)
 
 if want win64; then
     echo "== Win64"
@@ -216,7 +218,7 @@ if want win64; then
     win_run cinterp-run64.exe structs-x86_64-windows.cib "" 34
     win_run cinterp-run64.exe ffi_malloc-x86_64-windows.cib "" 42
     win_run cinterp-run64.exe ffi_printf-x86_64-windows.cib "" 0
-    win_run cinterp-run64.exe ffi_printf_longdouble-x86_64-windows.cib "" 42
+# SKIP: long double/f80 unsupported:     win_run cinterp-run64.exe ffi_printf_longdouble-x86_64-windows.cib "" 42
     win_run cinterp-run64.exe ffi_snprintf-x86_64-windows.cib "" 55
     win_run cinterp-run64.exe math-x86_64-windows.cib "" 8
     win_run cinterp-run64.exe ffi_float-x86_64-windows.cib libffi_float_helper64.dll 5
@@ -228,8 +230,8 @@ if want win64; then
     win_run cinterp-run64.exe ffi_qsort-x86_64-windows.cib "" 1 2
     win_run cinterp-run64.exe ffi_callback-x86_64-windows.cib libffi_callback_helper64.dll 256
     win_run cinterp-run64.exe ffi_callback_big-x86_64-windows.cib libffi_callback_big_helper64.dll 246
-    win_run cinterp-run64.exe ffi_longdouble-x86_64-windows.cib libffi_longdouble_helper64.dll 60
-    win_run cinterp-run64.exe ffi_longdouble_live-x86_64-windows.cib libffi_longdouble_helper64.dll 15
+# SKIP: long double/f80 unsupported:     win_run cinterp-run64.exe ffi_longdouble-x86_64-windows.cib libffi_longdouble_helper64.dll 60
+# SKIP: long double/f80 unsupported:     win_run cinterp-run64.exe ffi_longdouble_live-x86_64-windows.cib libffi_longdouble_helper64.dll 15
     win_run cinterp-run64.exe ffi_edges-x86_64-windows.cib libffi_edges_helper64.dll 55
     win_run cinterp-run64.exe ffi_hfa-x86_64-windows.cib libffi_hfa_helper64.dll 120
     win_run cinterp-run64.exe ffi_hfa_stack-x86_64-windows.cib libffi_hfa_stack_helper64.dll 45
@@ -304,7 +306,7 @@ if want win32; then
     win_run cinterp-run32.exe structs-i686-windows.cib "" 34
     win_run cinterp-run32.exe ffi_malloc-i686-windows.cib "" 42
     win_run cinterp-run32.exe ffi_printf-i686-windows.cib "" 0
-    win_run cinterp-run32.exe ffi_printf_longdouble-i686-windows.cib "" 42
+# SKIP: long double/f80 unsupported:     win_run cinterp-run32.exe ffi_printf_longdouble-i686-windows.cib "" 42
     win_run cinterp-run32.exe ffi_snprintf-i686-windows.cib "" 55
     win_run cinterp-run32.exe math-i686-windows.cib "" 8
     win_run cinterp-run32.exe ffi_float-i686-windows.cib libffi_float_helper32.dll 5
@@ -316,8 +318,8 @@ if want win32; then
     win_run cinterp-run32.exe ffi_qsort-i686-windows.cib "" 1 2
     win_run cinterp-run32.exe ffi_callback-i686-windows.cib libffi_callback_helper32.dll 256
     win_run cinterp-run32.exe ffi_callback_big-i686-windows.cib libffi_callback_big_helper32.dll 246
-    win_run cinterp-run32.exe ffi_longdouble-i686-windows.cib libffi_longdouble_helper32.dll 60
-    win_run cinterp-run32.exe ffi_longdouble_live-i686-windows.cib libffi_longdouble_helper32.dll 15
+# SKIP: long double/f80 unsupported:     win_run cinterp-run32.exe ffi_longdouble-i686-windows.cib libffi_longdouble_helper32.dll 60
+# SKIP: long double/f80 unsupported:     win_run cinterp-run32.exe ffi_longdouble_live-i686-windows.cib libffi_longdouble_helper32.dll 15
     win_run cinterp-run32.exe ffi_edges-i686-windows.cib libffi_edges_helper32.dll 55
     win_run cinterp-run32.exe ffi_hfa-i686-windows.cib libffi_hfa_helper32.dll 120
     win_run cinterp-run32.exe ffi_hfa_stack-i686-windows.cib libffi_hfa_stack_helper32.dll 45
@@ -370,7 +372,7 @@ if want arm64; then
     arm_run structs 34
     arm_run ffi_malloc 42
     arm_run ffi_printf 0
-    arm_run ffi_printf_longdouble 42
+# SKIP: long double/f80 unsupported:     arm_run ffi_printf_longdouble 42
     arm_run ffi_snprintf 55
     arm_run math 8
     arm_run ffi_float 5 libffi_float_helper-arm64.so
@@ -382,8 +384,8 @@ if want arm64; then
     arm_run ffi_qsort 1 "" 2
     arm_run ffi_callback 256 libffi_callback_helper-arm64.so
     arm_run ffi_callback_big 246 libffi_callback_big_helper-arm64.so
-    arm_run ffi_longdouble 60 libffi_longdouble_helper-arm64.so
-    arm_run ffi_longdouble_live 15 libffi_longdouble_helper-arm64.so
+# SKIP: long double/f80 unsupported:     arm_run ffi_longdouble 60 libffi_longdouble_helper-arm64.so
+# SKIP: long double/f80 unsupported:     arm_run ffi_longdouble_live 15 libffi_longdouble_helper-arm64.so
     arm_run ffi_edges 55 libffi_edges_helper-arm64.so
     arm_run ffi_hfa 120 libffi_hfa_helper-arm64.so
     arm_run ffi_hfa_stack 45 libffi_hfa_stack_helper-arm64.so

@@ -123,21 +123,8 @@ jobs:
           "$D/bin/cinterp" compile "$D/examples/basics/hello.c" \
             -o "$WORK/hello.cib" > "$WORK/compile.log" 2>&1
           grep -q 'target=x86_64-linux' "$WORK/compile.log"
-          "$D/cinterp-run-baseline" "$WORK/hello.cib" > "$WORK/hello.log" 2>&1
+          "$D/cinterp-run" "$WORK/hello.cib" > "$WORK/hello.log" 2>&1
           grep -q 'result: 42' "$WORK/hello.log"
-          "$D/cinterp-run" "$WORK/hello.cib" > "$WORK/hello-wrapper.log" 2>&1
-          grep -q 'result: 42' "$WORK/hello-wrapper.log"
-          test -x "$D/cinterp-run-v3"
-          if grep -qw avx2 /proc/cpuinfo &&
-             grep -qw bmi1 /proc/cpuinfo &&
-             grep -qw bmi2 /proc/cpuinfo &&
-             grep -qw fma /proc/cpuinfo &&
-             grep -qw f16c /proc/cpuinfo &&
-             grep -qw movbe /proc/cpuinfo &&
-             grep -qw abm /proc/cpuinfo; then
-            "$D/cinterp-run-v3" "$WORK/hello.cib" > "$WORK/hello-v3.log" 2>&1
-            grep -q 'result: 42' "$WORK/hello-v3.log"
-          fi
           cc -shared -fPIC -O0 "$D/examples/ffi/ffi_structs_helper.c" \
             -o "$WORK/libstruct_helpers.so"
           "$D/bin/cinterp" compile "$D/examples/ffi/ffi_structs.c" \

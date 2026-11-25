@@ -1,0 +1,19 @@
+# skip list
+# non-goal: long double (x86_fp80/fp128) is unsupported
+20040709-1	non-goal: long double / 128-bit float unsupported
+20040709-2	non-goal: long double / 128-bit float unsupported
+20040709-3	non-goal: long double / 128-bit float unsupported
+2008-01-07-LongDouble	non-goal: long double / 128-bit float unsupported
+20080502-1	non-goal: long double / 128-bit float unsupported
+complex-1	non-goal: long double / 128-bit float unsupported
+copysign1	non-goal: long double / 128-bit float unsupported
+copysign2	non-goal: long double / 128-bit float unsupported
+inf-2	non-goal: long double / 128-bit float unsupported
+inf-3	non-goal: long double / 128-bit float unsupported
+memset-chk	non-goal: long double / 128-bit float unsupported
+pr36332	non-goal: long double / 128-bit float unsupported
+pr44942	non-goal: long double / 128-bit float unsupported
+stdarg-1	non-goal: long double / 128-bit float unsupported
+stdarg-2	non-goal: long double / 128-bit float unsupported
+stpcpy-chk	non-goal: long double / 128-bit float unsupported
+strcpy-chk	non-goal: long double / 128-bit float unsupported

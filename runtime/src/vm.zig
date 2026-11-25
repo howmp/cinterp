@@ -74,41 +74,11 @@ pub const OP_SET_MEM_TOP: u8 = 0x66;
 pub const OP_CALL_NATIVE: u8 = 0x70;
 pub const OP_CALL_VARARG: u8 = 0x71;
 pub const OP_CREATE_CALLBACK: u8 = 0x72;
-pub const OP_F80_CONST: u8 = 0x73;
-pub const OP_F80_ADD: u8 = 0x74;
-pub const OP_F80_SUB: u8 = 0x75;
-pub const OP_F80_MUL: u8 = 0x76;
-pub const OP_F80_DIV: u8 = 0x77;
-pub const OP_F80_CMP: u8 = 0x78;
-pub const OP_F80_FROM_F64: u8 = 0x79;
-pub const OP_F80_TO_F64: u8 = 0x7A;
-pub const OP_F80_FROM_I64: u8 = 0x7B;
-pub const OP_F80_TO_I64: u8 = 0x7C;
-pub const OP_F80_FROM_F32: u8 = 0x7D;
-pub const OP_F80_TO_F32: u8 = 0x7E;
-pub const OP_F80_NEG: u8 = 0x7F;
-pub const OP_F128_CONST: u8 = 0x80;
-pub const OP_F128_ADD: u8 = 0x81;
-pub const OP_F128_SUB: u8 = 0x82;
-pub const OP_F128_MUL: u8 = 0x83;
-pub const OP_F128_DIV: u8 = 0x84;
-pub const OP_F128_CMP: u8 = 0x85;
-pub const OP_F128_NEG: u8 = 0x86;
-pub const OP_F128_FROM_F64: u8 = 0x87;
-pub const OP_F128_TO_F64: u8 = 0x88;
-pub const OP_F128_FROM_I64: u8 = 0x89;
-pub const OP_F128_TO_I64: u8 = 0x8A;
-pub const OP_F128_FROM_F32: u8 = 0x8B;
-pub const OP_F128_TO_F32: u8 = 0x8C;
 pub const OP_ALLOCA_DYN: u8 = 0x8D;
 pub const OP_FPTOUI: u8 = 0x8E;
 pub const OP_UITOFP: u8 = 0x8F;
 pub const OP_FPTOUI32: u8 = 0x90;
 pub const OP_UITOFP32: u8 = 0x91;
-pub const OP_F80_TO_U64: u8 = 0x92;
-pub const OP_F80_FROM_U64: u8 = 0x93;
-pub const OP_F128_TO_U64: u8 = 0x94;
-pub const OP_F128_FROM_U64: u8 = 0x95;
 pub const OP_ADDR_EXTERN: u8 = 0x96;
 pub const OP_SETJMP: u8 = 0x97;
 pub const OP_LONGJMP: u8 = 0x98;
@@ -296,41 +266,11 @@ fn traceOpName(op: u8) []const u8 {
         0x70 => "CALL_NATIVE",
         0x71 => "CALL_VARARG",
         0x72 => "CREATE_CALLBACK",
-        0x73 => "F80_CONST",
-        0x74 => "F80_ADD",
-        0x75 => "F80_SUB",
-        0x76 => "F80_MUL",
-        0x77 => "F80_DIV",
-        0x78 => "F80_CMP",
-        0x79 => "F80_FROM_F64",
-        0x7a => "F80_TO_F64",
-        0x7b => "F80_FROM_I64",
-        0x7c => "F80_TO_I64",
-        0x7d => "F80_FROM_F32",
-        0x7e => "F80_TO_F32",
-        0x7f => "F80_NEG",
-        0x80 => "F128_CONST",
-        0x81 => "F128_ADD",
-        0x82 => "F128_SUB",
-        0x83 => "F128_MUL",
-        0x84 => "F128_DIV",
-        0x85 => "F128_CMP",
-        0x86 => "F128_NEG",
-        0x87 => "F128_FROM_F64",
-        0x88 => "F128_TO_F64",
-        0x89 => "F128_FROM_I64",
-        0x8a => "F128_TO_I64",
-        0x8b => "F128_FROM_F32",
-        0x8c => "F128_TO_F32",
         0x8d => "ALLOCA_DYN",
         0x8e => "FPTOUI",
         0x8f => "UITOFP",
         0x90 => "FPTOUI32",
         0x91 => "UITOFP32",
-        0x92 => "F80_TO_U64",
-        0x93 => "F80_FROM_U64",
-        0x94 => "F128_TO_U64",
-        0x95 => "F128_FROM_U64",
         0x96 => "ADDR_EXTERN",
         0x97 => "SETJMP",
         0x98 => "LONGJMP",
@@ -483,22 +423,14 @@ fn fpClass(bits: u128, width: u8) u16 {
         sign = @truncate(b >> 63);
         exp = @as(u128, b >> 52) & 0x7ff;
         frac = @as(u128, b & 0xfffffffffffff);
-    } else if (width == 80) {
-        const b: u80 = @truncate(bits);
-        sign = @truncate(b >> 79);
-        exp = @as(u128, b >> 64) & 0x7fff;
-        frac = @as(u128, b & 0xffffffffffffffff);
     } else {
-        const b: u128 = bits;
-        sign = @truncate(b >> 127);
-        exp = (b >> 112) & 0x7fff;
-        frac = b & ((@as(u128, 1) << 112) - 1);
+        return 0;
     }
     if (exp == 0 and frac == 0) return @as(u16, 1) << (if (sign == 1) 9 else 8);
     if (exp == 0) return @as(u16, 1) << (if (sign == 1) 7 else 6);
-    if (exp == ((@as(u128, 1) << (if (width == 32) @as(u7, 8) else if (width == 64) @as(u7, 11) else if (width == 80) @as(u7, 15) else @as(u7, 15))) - 1)) {
+    if (exp == ((@as(u128, 1) << (if (width == 32) @as(u7, 8) else @as(u7, 11))) - 1)) {
         if (frac != 0) {
-            const quiet_bit: u128 = @as(u128, 1) << (if (width == 32) @as(u7, 22) else if (width == 64) @as(u7, 51) else if (width == 80) @as(u7, 63) else @as(u7, 111));
+            const quiet_bit: u128 = @as(u128, 1) << (if (width == 32) @as(u7, 22) else @as(u7, 51));
             return @as(u16, 1) << (if ((frac & quiet_bit) != 0) @as(u4, 0) else @as(u4, 1));
         }
         return @as(u16, 1) << (if (sign == 1) 3 else 2);
@@ -510,14 +442,6 @@ fn fpClassValue(v: Value, kind: u8) u16 {
     return switch (kind) {
         0 => fpClass(@as(u128, @as(u32, @truncate(v.u))), 32),
         1 => fpClass(@as(u128, v.u), 64),
-        2 => blk: {
-            const p: *align(1) const u80 = @ptrFromInt(addressFromBits(v.i));
-            break :blk fpClass(@as(u128, p.*), 80);
-        },
-        3 => blk: {
-            const p: *align(1) const u128 = @ptrFromInt(addressFromBits(v.i));
-            break :blk fpClass(p.*, 128);
-        },
         else => 0,
     };
 }
@@ -755,48 +679,6 @@ var callback_cond: std.Thread.Condition = .{};
 fn f32FromValue(v: Value) f32 {
     const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
     return @bitCast(bits);
-}
-
-fn compareF128(a: f128, b: f128, pred: u8) bool {
-    const unordered = std.math.isNan(a) or std.math.isNan(b);
-    return switch (pred) {
-        0 => !unordered and a == b,
-        1 => !unordered and a != b,
-        2 => !unordered and a < b,
-        3 => !unordered and a <= b,
-        4 => !unordered and a > b,
-        5 => !unordered and a >= b,
-        6 => !unordered,
-        7 => unordered,
-        8 => unordered or a == b,
-        9 => unordered or a > b,
-        10 => unordered or a >= b,
-        11 => unordered or a < b,
-        12 => unordered or a <= b,
-        13 => unordered or a != b,
-        else => false,
-    };
-}
-
-fn compareF80(a: f80, b: f80, pred: u8) bool {
-    const unordered = std.math.isNan(a) or std.math.isNan(b);
-    return switch (pred) {
-        0 => !unordered and a == b,
-        1 => !unordered and a != b,
-        2 => !unordered and a < b,
-        3 => !unordered and a <= b,
-        4 => !unordered and a > b,
-        5 => !unordered and a >= b,
-        6 => !unordered,
-        7 => unordered,
-        8 => unordered or a == b,
-        9 => unordered or a > b,
-        10 => unordered or a >= b,
-        11 => unordered or a < b,
-        12 => unordered or a <= b,
-        13 => unordered or a != b,
-        else => false,
-    };
 }
 
 fn compareFloats(a: f64, b: f64, pred: u8) bool {
@@ -2310,153 +2192,6 @@ pub const VM = struct {
                     const fval: f64 = @floatFromInt(uval);
                     try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
                 },
-                OP_F80_CONST => {
-                    var bits: u80 = 0;
-                    var i: u8 = 0;
-                    while (i < 10) : (i += 1) {
-                        bits |= @as(u80, try readU8(code, &ip)) << @intCast(8 * @as(u7, @intCast(i)));
-                    }
-                    try self.pushF80At(values, &sp, @bitCast(bits));
-                },
-                OP_F80_ADD => {
-                    const b = try self.popF80At(values, &sp);
-                    const a = try self.popF80At(values, &sp);
-                    try self.pushF80At(values, &sp, a + b);
-                },
-                OP_F80_SUB => {
-                    const b = try self.popF80At(values, &sp);
-                    const a = try self.popF80At(values, &sp);
-                    try self.pushF80At(values, &sp, a - b);
-                },
-                OP_F80_MUL => {
-                    const b = try self.popF80At(values, &sp);
-                    const a = try self.popF80At(values, &sp);
-                    try self.pushF80At(values, &sp, a * b);
-                },
-                OP_F80_DIV => {
-                    const b = try self.popF80At(values, &sp);
-                    const a = try self.popF80At(values, &sp);
-                    try self.pushF80At(values, &sp, a / b);
-                },
-                OP_F80_CMP => {
-                    const pred = try readU8(code, &ip);
-                    const b = try self.popF80At(values, &sp);
-                    const a = try self.popF80At(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (compareF80(a, b, pred)) 1 else 0 });
-                },
-                OP_F80_FROM_F64 => {
-                    const v = try popAt(values, &sp);
-                    const fval: f64 = @bitCast(v.i);
-                    try self.pushF80At(values, &sp, @floatCast(fval));
-                },
-                OP_F80_TO_F64 => {
-                    const v = try self.popF80At(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(f64, @floatCast(v))) });
-                },
-                OP_F80_FROM_I64 => {
-                    const v = try popAt(values, &sp);
-                    try self.pushF80At(values, &sp, @floatFromInt(v.i));
-                },
-                OP_F80_TO_I64 => {
-                    const v = try self.popF80At(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(v) });
-                },
-                OP_F80_TO_U64 => {
-                    const v = try self.popF80At(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(v)) });
-                },
-                OP_F80_FROM_U64 => {
-                    const v = try popAt(values, &sp);
-                    try self.pushF80At(values, &sp, @floatFromInt(@as(u64, @bitCast(v.i))));
-                },
-                OP_F80_FROM_F32 => {
-                    const v = try popAt(values, &sp);
-                    const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
-                    const fval: f32 = @bitCast(bits);
-                    try self.pushF80At(values, &sp, @floatCast(fval));
-                },
-                OP_F80_TO_F32 => {
-                    const v = try self.popF80At(values, &sp);
-                    const fval: f32 = @floatCast(v);
-                    try self.pushF32At(values, &sp, fval);
-                },
-                OP_F80_NEG => {
-                    const v = try self.popF80At(values, &sp);
-                    try self.pushF80At(values, &sp, -v);
-                },
-                OP_F128_CONST => {
-                    var bits: u128 = 0;
-                    var i: u8 = 0;
-                    while (i < 16) : (i += 1) {
-                        bits |= @as(u128, try readU8(code, &ip)) << @intCast(8 * @as(u8, i));
-                    }
-                    try self.pushF128At(values, &sp, @bitCast(bits));
-                },
-                OP_F128_ADD => {
-                    const b = try self.popF128At(values, &sp);
-                    const a = try self.popF128At(values, &sp);
-                    try self.pushF128At(values, &sp, a + b);
-                },
-                OP_F128_SUB => {
-                    const b = try self.popF128At(values, &sp);
-                    const a = try self.popF128At(values, &sp);
-                    try self.pushF128At(values, &sp, a - b);
-                },
-                OP_F128_MUL => {
-                    const b = try self.popF128At(values, &sp);
-                    const a = try self.popF128At(values, &sp);
-                    try self.pushF128At(values, &sp, a * b);
-                },
-                OP_F128_DIV => {
-                    const b = try self.popF128At(values, &sp);
-                    const a = try self.popF128At(values, &sp);
-                    try self.pushF128At(values, &sp, a / b);
-                },
-                OP_F128_CMP => {
-                    const pred = try readU8(code, &ip);
-                    const b = try self.popF128At(values, &sp);
-                    const a = try self.popF128At(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (compareF128(a, b, pred)) 1 else 0 });
-                },
-                OP_F128_NEG => {
-                    const v = try self.popF128At(values, &sp);
-                    try self.pushF128At(values, &sp, -v);
-                },
-                OP_F128_FROM_F64 => {
-                    const v = try popAt(values, &sp);
-                    const fval: f64 = @bitCast(v.i);
-                    try self.pushF128At(values, &sp, @floatCast(fval));
-                },
-                OP_F128_TO_F64 => {
-                    const v = try self.popF128At(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(f64, @floatCast(v))) });
-                },
-                OP_F128_FROM_I64 => {
-                    const v = try popAt(values, &sp);
-                    try self.pushF128At(values, &sp, @floatFromInt(v.i));
-                },
-                OP_F128_TO_I64 => {
-                    const v = try self.popF128At(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(v) });
-                },
-                OP_F128_TO_U64 => {
-                    const v = try self.popF128At(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(v)) });
-                },
-                OP_F128_FROM_U64 => {
-                    const v = try popAt(values, &sp);
-                    try self.pushF128At(values, &sp, @floatFromInt(@as(u64, @bitCast(v.i))));
-                },
-                OP_F128_FROM_F32 => {
-                    const v = try popAt(values, &sp);
-                    const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
-                    const fval: f32 = @bitCast(bits);
-                    try self.pushF128At(values, &sp, @floatCast(fval));
-                },
-                OP_F128_TO_F32 => {
-                    const v = try self.popF128At(values, &sp);
-                    try self.pushF32At(values, &sp, @floatCast(v));
-                },
                 OP_FADD => {
                     const b = try popAt(values, &sp);
                     const a = try popAt(values, &sp);
@@ -3434,52 +3169,6 @@ pub const VM = struct {
         @memset(self.mem[start..][0..size], 0);
         self.mem_top = start + size;
         return self.mem[start..][0..size];
-    }
-
-    inline fn pushF80At(self: *VM, values: [*]Value, sp: *usize, value: f80) !void {
-        const block = try self.allocTemp(16, 16);
-        const p: *align(1) f80 = @ptrCast(block.ptr);
-        p.* = value;
-        const addr: u64 = @intCast(@intFromPtr(p));
-        try pushAt(values, sp, self.stack_limit, .{ .i = @bitCast(addr) });
-    }
-
-    fn pushF80(self: *VM, value: f80) !void {
-        try self.pushF80At(self.values.ptr, &self.sp, value);
-    }
-
-    inline fn popF80At(self: *VM, values: [*]Value, sp: *usize) !f80 {
-        _ = self;
-        const v = try popAt(values, sp);
-        const addr = addressFromBits(v.i);
-        return @as(*align(1) const f80, @ptrFromInt(addr)).*;
-    }
-
-    fn popF80(self: *VM) !f80 {
-        return self.popF80At(self.values.ptr, &self.sp);
-    }
-
-    inline fn pushF128At(self: *VM, values: [*]Value, sp: *usize, value: f128) !void {
-        const block = try self.allocTemp(16, 16);
-        const p: *align(1) f128 = @ptrCast(block.ptr);
-        p.* = value;
-        const addr: u64 = @intCast(@intFromPtr(p));
-        try pushAt(values, sp, self.stack_limit, .{ .i = @bitCast(addr) });
-    }
-
-    fn pushF128(self: *VM, value: f128) !void {
-        try self.pushF128At(self.values.ptr, &self.sp, value);
-    }
-
-    inline fn popF128At(self: *VM, values: [*]Value, sp: *usize) !f128 {
-        _ = self;
-        const v = try popAt(values, sp);
-        const addr = addressFromBits(v.i);
-        return @as(*align(1) const f128, @ptrFromInt(addr)).*;
-    }
-
-    fn popF128(self: *VM) !f128 {
-        return self.popF128At(self.values.ptr, &self.sp);
     }
 
     inline fn pop(self: *VM) !Value {

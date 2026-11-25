@@ -7,3 +7,22 @@ stuct	compiler limit: CIVM module larger than 2 MiB
 pr103813	compiler limit: static data exceeds VM maximum linear memory (16 MiB)
 simd-6	unsupported: vector global initializer
 vector-align-1	unsupported: vector global initializer
+20000818-1	non-goal: long double / 128-bit float unsupported
+20001212-1	non-goal: long double / 128-bit float unsupported
+20021008-1	non-goal: long double / 128-bit float unsupported
+20031208-1	non-goal: long double / 128-bit float unsupported
+20040709-1	non-goal: long double / 128-bit float unsupported
+20041026-1	non-goal: long double / 128-bit float unsupported
+20080628-1	non-goal: long double / 128-bit float unsupported
+20161123-1	non-goal: long double / 128-bit float unsupported
+941019-1	non-goal: long double / 128-bit float unsupported
+pr19357	non-goal: long double / 128-bit float unsupported
+pr30311	non-goal: long double / 128-bit float unsupported
+pr33855	non-goal: long double / 128-bit float unsupported
+pr35043	non-goal: long double / 128-bit float unsupported
+pr36125	non-goal: long double / 128-bit float unsupported
+pr48641	non-goal: long double / 128-bit float unsupported
+pr65540	non-goal: long double / 128-bit float unsupported
+pr89663-1	non-goal: long double / 128-bit float unsupported
+pr89663-2	non-goal: long double / 128-bit float unsupported
+trunctfdf	non-goal: long double / 128-bit float unsupported

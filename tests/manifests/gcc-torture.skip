@@ -6,3 +6,28 @@ nestfunc-4	non-goal: nested function/frame limit: exit 1 != 0
 pr32244-1	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
 pr34971	dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
 pr117095	unsupported: i128 global initializer
+20020413-1	non-goal: long double / 128-bit float unsupported
+20030914-1	non-goal: long double / 128-bit float unsupported
+20040709-1	non-goal: long double / 128-bit float unsupported
+20040709-2	non-goal: long double / 128-bit float unsupported
+20040709-3	non-goal: long double / 128-bit float unsupported
+930622-2	non-goal: long double / 128-bit float unsupported
+960215-1	non-goal: long double / 128-bit float unsupported
+960405-1	non-goal: long double / 128-bit float unsupported
+960513-1	non-goal: long double / 128-bit float unsupported
+align-2	non-goal: long double / 128-bit float unsupported
+conversion	non-goal: long double / 128-bit float unsupported
+memcpy-2	non-goal: long double / 128-bit float unsupported
+memset-1	non-goal: long double / 128-bit float unsupported
+memset-2	non-goal: long double / 128-bit float unsupported
+memset-3	non-goal: long double / 128-bit float unsupported
+pr44942	non-goal: long double / 128-bit float unsupported
+regstack-1	non-goal: long double / 128-bit float unsupported
+stdarg-1	non-goal: long double / 128-bit float unsupported
+stdarg-2	non-goal: long double / 128-bit float unsupported
+strcmp-1	non-goal: long double / 128-bit float unsupported
+strcpy-1	non-goal: long double / 128-bit float unsupported
+strlen-1	non-goal: long double / 128-bit float unsupported
+strncmp-1	non-goal: long double / 128-bit float unsupported
+va-arg-5	non-goal: long double / 128-bit float unsupported
+va-arg-6	non-goal: long double / 128-bit float unsupported

@@ -28,3 +28,4 @@ pthread_robust	unsupported: host pthread/TLS runtime model
 strtol	unsupported: host libc reference difference (musl strtol)
 wcstol	unsupported: host libc reference difference (musl wcstol)
 sscanf_long	unsupported: host glibc sscanf under RLIMIT_STACK=100KiB can SIGSEGV (native binary passes; musl reference behavior)
+strtold	non-goal: long double / 128-bit float unsupported

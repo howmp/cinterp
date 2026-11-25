@@ -14,3 +14,12 @@ float64x-builtin-issignaling-1	compile: /home/admin/cl/build/suites/gcc-torture/
 fp-cmp-cond-1	compile: 238:14: error: unsupported instruction 'insertelement' (found 'insertelement')
 pr50310	compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !385
 pr72824-2	compile: cinterp: bad parameter: '<4 x float> noundef %value'
+20010226-1	non-goal: long double / 128-bit float unsupported
+copysign1	non-goal: long double / 128-bit float unsupported
+copysign2	non-goal: long double / 128-bit float unsupported
+fp-cmp-3	non-goal: long double / 128-bit float unsupported
+fp-cmp-4l	non-goal: long double / 128-bit float unsupported
+fp-cmp-8l	non-goal: long double / 128-bit float unsupported
+inf-2	non-goal: long double / 128-bit float unsupported
+inf-3	non-goal: long double / 128-bit float unsupported
+pr36332	non-goal: long double / 128-bit float unsupported

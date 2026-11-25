@@ -24,18 +24,18 @@
 
 ## 类型
 
-`void`、`iN`、`half`、`bfloat`、`float`、`double`、`x86_fp80`、`fp128`、
-`ppc_fp128`、`ptr`（不透明、addrspace）、数组、向量、字面量与具名结构体
-（packed/unpacked）、函数类型。降低器会实体化 C 流水线所需的子集：标量、指针、
-数组、结构体、f32/f64/f80/f128。`half`/`bfloat` 会被解析并且有布局，但 C 前端不会
-对它们生成算术运算。
+`void`、`iN`、`half`、`bfloat`、`float`、`double`、`ptr`（不透明、addrspace）、
+数组、向量、字面量与具名结构体（packed/unpacked）、函数类型。降低器会实体化 C 流水线
+所需的子集：标量、指针、数组、结构体、f32/f64。`half`/`bfloat` 会被解析并且有布局，
+但 C 前端不会对它们生成算术运算。`x86_fp80`/`fp128`/`ppc_fp128`（long double /
+128-bit float）在类型解析阶段直接报错。
 
 ## 值与常量
 
 局部量、全局量、整数/浮点字面量（十进制、十六进制、`0xK`/`0xL`）、`null`、`undef`、
 `poison`、`zeroinitializer`、C 字符串、聚合常量，以及常量表达式：GEP、`ptrtoint`、
 `inttoptr`、`bitcast`、`addrspacecast`、整数二元运算、trunc/zext/sext、icmp/fcmp。
-多索引 GEP 常量表达式会保留每一个索引；f128 字面量会被规范化到规范字节序。
+多索引 GEP 常量表达式会保留每一个索引。
 
 ## 指令
 
@@ -67,7 +67,7 @@
 | `llvm.frameaddress` | 常量 `0` |
 | `llvm.ptrmask` | `and` |
 | `llvm.is.fpclass` | `OP_FPCLASS` |
-| `llvm.fmuladd.{f32,f64,f80,f128}` | `OP_FMA` / `OP_FMA32`（f32/f64）或 libm `fmal`（宽浮点） |
+| `llvm.fmuladd.{f32,f64}` | `OP_FMA` / `OP_FMA32` |
 | `llvm.smax/smin/umax/umin.{i8,i16,i32,i64}` | `OP_MAX_N` / `OP_MIN_N`，param 携带宽度与 signedness |
 | `llvm.abs.{i8,i16,i32,i64}` | `OP_ABS_N`（忽略 is_int_min_poison） |
 | `llvm.cttz/ctlz.{i8,i16,i32,i64}` | `OP_CTTZ_N` / `OP_CTLZ_N`，零输入返回位宽 |
@@ -106,9 +106,8 @@
 - GNU 向量扩展不在该子集内。向量值在 CIVM 中以数据块地址表示；`extractelement`/
   `insertelement` 按元素大小读写，向量常量和 `zeroinitializer` 会实体化到临时内存。
   向量算术、`shufflevector`、`getelementptr` 进入向量的非零字面索引仍未实现。
-- 全局 `fp128` 初始化器会写入 16 字节真实数据。`ppc_fp128`、`half`、`bfloat` 和
-  全局向量初始化器没有 runtime 值路径，会返回 `UnsupportedGlobalInitializer`，
-  不再静默保持为零。相对查找表的 `trunc(sub(ptrtoint, ptrtoint))` 初始化器会在
+- `x86_fp80`/`fp128`/`ppc_fp128` 不支持，类型解析阶段直接报错。`half`、`bfloat` 和
+  全局向量初始化器没有 runtime 值路径，会返回 `UnsupportedGlobalInitializer`。相对查找表的 `trunc(sub(ptrtoint, ptrtoint))` 初始化器会在
   布局完成后折叠为相对偏移；普通的外部/内部地址仍走 relocation。
 
 ## 校验

@@ -59,8 +59,9 @@ run_case ffi_malloc 42
 run_case arrays 10
 run_case structs 34
 run_case ffi_snprintf 55
-run_case ffi_printf_longdouble 42
-run_case longdouble 8
+# SKIP: long double (x86_fp80/fp128) support was removed.
+# run_case ffi_printf_longdouble 42
+# run_case longdouble 8
 
 echo "== Linux command examples"
 compile examples/linux/ifconfig.c -o "$OUT/ifconfig.cib" >/dev/null
@@ -199,16 +200,8 @@ packed_out="$("$OUT/capi_runner" "$OUT/packed.cib" "$OUT/libpacked_helper.so" 2>
 printf '%s\n' "$packed_out" | grep -Fq "result: 7"
 echo "OK packed -> 7"
 
-echo "== long double FFI"
-cc -shared -fPIC -O0 examples/ffi/ffi_longdouble_helper.c -o "$OUT/libffi_longdouble_helper.so"
-compile examples/ffi/ffi_longdouble.c -o "$OUT/ffi_longdouble.cib" >/dev/null
-ld_out="$("$OUT/capi_runner" "$OUT/ffi_longdouble.cib" "$OUT/libffi_longdouble_helper.so" 2>&1)"
-printf '%s\n' "$ld_out" | grep -Fq "result: 60"
-echo "OK ffi_longdouble -> 60"
-compile examples/ffi/ffi_longdouble_live.c -o "$OUT/ffi_longdouble_live.cib" >/dev/null
-ldlive_out="$("$OUT/capi_runner" "$OUT/ffi_longdouble_live.cib" "$OUT/libffi_longdouble_helper.so" 2>&1)"
-printf '%s\n' "$ldlive_out" | grep -Fq "result: 15"
-echo "OK ffi_longdouble_live -> 15"
+# SKIP: long double FFI (x86_fp80/fp128) support was removed.
+echo "== long double FFI (skipped: no f80/f128 support)"
 
 echo "== callback (qsort)"
 compile examples/ffi/ffi_qsort.c -o "$OUT/ffi_qsort.cib" >/dev/null
@@ -233,12 +226,8 @@ bigcb_out="$("$OUT/capi_runner" "$OUT/ffi_callback_big.cib" "$OUT/libffi_callbac
 printf '%s\n' "$bigcb_out" | grep -Fq "result: 246"
 echo "OK ffi_callback_big -> 246"
 
-echo "== callback HFA + long double"
-cc -shared -fPIC -O0 examples/ffi/ffi_callback_hfa_helper.c -o "$OUT/libffi_callback_hfa_helper.so"
-compile examples/ffi/ffi_callback_hfa.c -o "$OUT/ffi_callback_hfa.cib" >/dev/null
-hfacb_out="$("$OUT/capi_runner" "$OUT/ffi_callback_hfa.cib" "$OUT/libffi_callback_hfa_helper.so" 2>&1)"
-printf '%s\n' "$hfacb_out" | grep -Fq "result: 247"
-echo "OK ffi_callback_hfa -> 247"
+# SKIP: this HFA case also exercises long double, which is no longer supported.
+echo "== callback HFA + long double (skipped: no f80/f128 support)"
 
 echo "== ordinary signal callback"
 compile examples/ffi/ffi_signal.c -o "$OUT/ffi_signal.cib" >/dev/null

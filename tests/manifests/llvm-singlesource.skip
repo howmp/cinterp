@@ -7,3 +7,5 @@
 2009-12-07-StructReturn	unsupported: vector type
 2020-01-06-coverage-006	unsupported: i72 aggregate store
 AtomicOps	unsupported: K&R implicit int
+2009-04-16-BitfieldInitialization	non-goal: long double / 128-bit float unsupported
+byval-alignment	non-goal: long double / 128-bit float unsupported

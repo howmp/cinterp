@@ -673,6 +673,12 @@ pub fn main() !void {
             removeTempFiles(ll_path, callbacks_header_path, keep_ir);
             std.process.exit(1);
         }
+        if (err == error.IrParseError) {
+            // The parser already printed the diagnostic; avoid a Zig error
+            // trace on a normal user-facing compile error.
+            removeTempFiles(ll_path, callbacks_header_path, keep_ir);
+            std.process.exit(1);
+        }
         return err;
     };
 

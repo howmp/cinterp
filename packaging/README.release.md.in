@@ -9,10 +9,6 @@ libffi，没有 JIT，也没有可执行内存。本 tarball 是 **@TARGET@** �
 | 路径 | 内容 |
 | --- | --- |
 | `@RUNNER@` | 运行时入口：`@RUNNER@ package.cib [-- args...]` |
-<!-- x86-64-v3 -->
-| `@RUNNER@-baseline` | 通用 baseline 运行时；`@RUNNER@` 在无 AVX2 时自动使用它 |
-| `@RUNNER@-v3` | x86-64-v3（AVX2）运行时；`@RUNNER@` 在支持的 CPU 上自动 exec 它。`lib/` 中的嵌入库仍是通用 baseline。 |
-<!-- /x86-64-v3 -->
 | `include/cinterp.h` | C 嵌入 API（ABI 2） |
 | `lib/` | @TARGET@ 的共享库以及静态/导入库 |
 | `pkgconfig/cinterp.pc` | 可重定位的 pkg-config 元数据 |

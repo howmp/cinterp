@@ -57,7 +57,7 @@ offset  size  field
 
 ### 2.2 CIPC：常量/字符串池（v2）
 
-CIPC 是必需的 section。名称池保存 CIPL 计划名、CIPI data 名、provider 库名和符号名；数据池保存只读 globals、字符串、去重后的标量常量、f80/f128 常量对象，以及 mutable global 的非零初始化 chunk 值；mutable globals 的镜像本身不进入常量池。默认 `flags bit0=1`，此时 `name_blob` 和 `data` 都用包内随机 16 字节 key 做 XOR 混淆；`cinterp-cc --no-xor-const-pool` 输出 `flags=0` 的明文 CIPC。
+CIPC 是必需的 section。名称池保存 CIPL 计划名、CIPI data 名、provider 库名和符号名；数据池保存只读 globals、字符串、去重后的标量常量，以及 mutable global 的非零初始化 chunk 值；mutable globals 的镜像本身不进入常量池。默认 `flags bit0=1`，此时 `name_blob` 和 `data` 都用包内随机 16 字节 key 做 XOR 混淆；`cinterp-cc --no-xor-const-pool` 输出 `flags=0` 的明文 CIPC。
 
 ```
 offset size field
@@ -253,27 +253,13 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 | 0x70 | `CALL_NATIVE` | u16 plan | 按计划调用原生函数 |
 | 0x71 | `CALL_VARARG` | u16 plan | 按计划调用 varargs 原生函数 |
 | 0x72 | `CREATE_CALLBACK` | u16 slot,u16 func,u16 plan | 注册自动静态 callback slot（绑定当前 VM，跨 run 复用），压 trampoline 地址 |
-| 0x73 | `F80_CONST` | 10 bytes | x87 80-bit little-endian；压 f80 对象地址 |
-| 0x74-0x77 | `F80_ADD/SUB/MUL/DIV` | — | `a,b -> result`（指针） |
-| 0x78 | `F80_CMP` | pred u8 | f80 比较 |
-| 0x79 | `F80_FROM_F64` | — | f64 bits -> f80 指针 |
-| 0x7A | `F80_TO_F64` | — | f80 指针 -> f64 bits |
-| 0x7B | `F80_FROM_I64` | — | i64 -> f80 指针 |
-| 0x7C | `F80_TO_I64` | — | f80 指针 -> i64 |
-| 0x7D | `F80_FROM_F32` | — | f32 bits -> f80 指针 |
-| 0x7E | `F80_TO_F32` | — | f80 指针 -> f32 bits |
-| 0x7F | `F80_NEG` | — | f80 取负 |
-| 0x80 | `F128_CONST` | 16 bytes | IEEE 128-bit little-endian；压 f128 对象地址 |
-| 0x81-0x84 | `F128_ADD/SUB/MUL/DIV` | — | f128 指针运算 |
-| 0x85 | `F128_CMP` | pred u8 | f128 比较 |
-| 0x86 | `F128_NEG` | — | f128 取负 |
-| 0x87-0x8C | `F128_FROM_F64/TO_F64/FROM_I64/TO_I64/FROM_F32/TO_F32` | — | f128 转换 |
+| 0x73-0x8C | reserved | — | 旧 F80/F128 操作码；0.1.7 起 runtime 拒绝 |
 | 0x8D | `ALLOCA_DYN` | — | 弹 size，动态分配 VLA |
 | 0x8E | `FPTOUI` | — | f64 -> u64 bits |
 | 0x8F | `UITOFP` | — | u64 bits -> f64 |
 | 0x90 | `FPTOUI32` | — | f32 -> u64 bits |
 | 0x91 | `UITOFP32` | — | u64 bits -> f32 |
-| 0x92-0x95 | `F80_TO_U64/FROM_U64/F128_TO_U64/FROM_U64` | — | long double 无符号转换 |
+| 0x92-0x95 | reserved | — | 旧 F80/F128 无符号转换；0.1.7 起 runtime 拒绝 |
 | 0x96 | `ADDR_EXTERN` | u16 import | 压入 CIPI data 符号地址 |
 | 0x97 | `SETJMP` | u16 slot | 保存 VM 执行上下文，结果写 slot |
 | 0x98 | `LONGJMP` | — | 恢复对应 jmp_buf 的上下文 |
@@ -333,14 +319,11 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 | 6 | `ord` |
 | 7 | `uno` |
 
-### 4.2 f80/f128 值表示
+### 4.2 f80/f128（已移除）
 
-f80/f128 **不是** 8 字节栈值本身：
-
-- `*_CONST` 在 VM 线性内存分配一个 16B 对象，并把**对象地址**压栈。
-- 算术/比较 opcode 读取这些对象地址，结果再分配一个新对象并压地址。
-- `store/load` 对 f80/f128 使用 `MEMCPY`/指针别名语义；全局/内存布局由 C 类型大小决定。
-- FFI 返回 `st0`/多寄存器聚合时，`invokeFfi` 会从调用方 VM 线性内存分配返回块、复制结果并压入地址；返回块存活到当前帧返回，不再共享固定缓冲区。
+0.1.7 起 runtime 不再执行 F80/F128 opcode；编译器在 IR 类型解析阶段拒绝
+`x86_fp80`/`fp128`/`ppc_fp128`。旧 CIB 使用 `0x73-0x8C` 或 `0x92-0x95`
+会在加载/执行时报错。
 
 ### 4.3 显式 callback acquire/release
 
@@ -421,7 +404,7 @@ size  field
 | 5 | `rdx` | 第二整数返回寄存器 |
 | 6 | `xmm0` | 第一 SSE/vector 返回槽 |
 | 7 | `xmm1` | 第二 SSE/vector 返回槽 |
-| 8 | `st0` | x87 ST0（long double） |
+| 8 | `st0` | x87 ST0（reserved：F80 已移除） |
 | 9 | `xmm2` | 第三 HFA 返回槽 |
 | 10 | `xmm3` | 第四 HFA 返回槽 |
 

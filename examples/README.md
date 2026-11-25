@@ -3,7 +3,8 @@
 Examples are grouped by topic:
 
 - `basics/` — core C language and arithmetic examples: `hello`, arrays,
-  structs, packed structs, bitfields, `long double`, and float math.
+  structs, packed structs, bitfields, and float math. (`long double` examples are
+  retained for history but are rejected by the compiler.)
 - `ffi/` — native calls, callbacks, aggregate returns, HFA, varargs, and
   Win32 `stdcall`/`fastcall`/`thiscall` examples. Files ending in `_helper.c`
   are shared-library helpers for the matching example.

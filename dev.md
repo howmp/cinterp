@@ -75,7 +75,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。默认为 `-O2`，并追�
 
 上游用例若只在 `-O0` 语义下有效（例如 `#ifdef __OPTIMIZE__` 守卫、悬空 VLA 地址、malloc OOM 行为），manifest 可用 `case_cc_opt: 0` 为该用例单独指定前端级别；这些用例仍会运行并通过，不进入 skip。
 
-`compiler/src/ir/` 解析并校验支持的 LLVM IR 子集：标量/指针/数组/结构体、alloca/load/store/GEP、整数/浮点/位运算/比较/转换、br/switch/select/phi、insertvalue/extractelement/insertelement、直接/间接/tail call、常用 `llvm.*` intrinsic（含 cttz/ctlz/ctpop/bswap/bitreverse/fshl/fshr/usub.sat/abs/load.relative）、byval/sret、f80/fp128、varargs、VLA 和 setjmp/longjmp。完整契约见 [`docs/ir-subset.md`](./docs/ir-subset.md)。
+`compiler/src/ir/` 解析并校验支持的 LLVM IR 子集：标量/指针/数组/结构体、alloca/load/store/GEP、整数/浮点/位运算/比较/转换、br/switch/select/phi、insertvalue/extractelement/insertelement、直接/间接/tail call、常用 `llvm.*` intrinsic（含 cttz/ctlz/ctpop/bswap/bitreverse/fshl/fshr/usub.sat/abs/load.relative）、byval/sret、varargs、VLA 和 setjmp/longjmp。f80/fp128 已在类型解析阶段拒绝。完整契约见 [`docs/ir-subset.md`](./docs/ir-subset.md)。
 
 明确拒绝：shufflevector、atomicrmw/cmpxchg/fence、invoke/resume/landingpad、indirectbr，以及作为指令的 `va_arg`；非空内联汇编仍拒绝，空模板 `asm` 按恒等/编译器屏障降低。`freeze` 按恒等操作降低；`callbr` 可以解析并按普通 call 降低（标签列表忽略）；未知 `llvm.*` intrinsic 作为外部调用计划在运行期失败。
 
@@ -104,9 +104,9 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。默认为 `-O2`，并追�
 
 ### 6.1 值与 opcode
 
-- 栈槽固定 8 字节；`Value` 为 `extern union { i: i64, u: u64 }`，浮点按位存放，f32 仅在低 32 位有效，f80/f128 通过线性内存按指针传递。
+- 栈槽固定 8 字节；`Value` 为 `extern union { i: i64, u: u64 }`，浮点按位存放，f32 仅在低 32 位有效。
 - **opcode 唯一定义**：[`compiler/src/opcodes.zig`](./compiler/src/opcodes.zig)（`OP_*: u8`，0x01–0xB0）；运行时同序号常量在 `runtime/src/vm.zig`，两者必须同步。
-- 当前实现覆盖常量/局部变量、内存、整数/浮点/位运算/比较/转换、控制流、指针/GEP、varargs、setjmp/longjmp、VLA、f80/f128、`llvm.is.fpclass`、`MEMCPY/MEMSET`、原生调用/callback 等。
+- 当前实现覆盖常量/局部变量、内存、整数/浮点/位运算/比较/转换、控制流、指针/GEP、varargs、setjmp/longjmp、VLA、`llvm.is.fpclass`、`MEMCPY/MEMSET`、原生调用/callback 等。f80/f128 已移除。
 - 操作数使用固定小端 `u8/u16/u32/u64` 编码；跳转目标是加载后的字节码偏移。CIVM/CIPL 的逐字节布局见 [`docs/cib.md`](./docs/cib.md)。
 - 窄整数规约用单条 `NORMALIZE`（`0xA6`）完成，取代旧的 `常量掩码 + AND [+ SHL + SHR_S]` 序列。运行时还会在顺序执行时融合 `STORE_LOCAL; LOAD_LOCAL` 对：-O0 IR 对几乎每次局部变量读取都会生成这一对，同槽位时等价于空操作，异槽位时只需替换栈顶；跳转落到 `LOAD_LOCAL` 时仍按独立指令执行，语义不变。
 
@@ -120,7 +120,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。默认为 `-O2`，并追�
 ### 6.3 varargs 与 setjmp
 
 - 外部 varargs 的参数提升由 clang 完成；前端为实际参数生成 Loc（SysV `%al`、Win64 浮点 GPR 副本/栈 home、Win32 栈、AArch64 v0–v7/栈）。
-- 内部 varargs 调用携带每个额外参数的 layout code；VM 的 `va_start/va_arg/va_end/va_copy` 覆盖四个 ABI，支持 `long double` 和聚合参数。
+- 内部 varargs 调用携带每个额外参数的 layout code；VM 的 `va_start/va_arg/va_end/va_copy` 覆盖四个 ABI，支持聚合参数；`long double` 不再支持。
 - `setjmp/longjmp` 是 VM 级实现（含 Windows `_setjmp3`/`__intrinsic_setjmpex`），保存/恢复 ip、栈基址、帧数、`mem_top`；slot 越界返回 `BadLocal`/`BadLongjmp`。
 
 ### 6.4 重复运行、全新镜像与每 VM 线程
@@ -251,7 +251,7 @@ int main(void) {
 
 - `byval` 参数复制原始字节到栈；`sret` 通过隐藏指针写回调用方缓冲区。
 - register-class 聚合按 eightbyte 分类为 GPR/XMM；混合类（如 `{ i64, double }`）支持 RAX+XMM0。
-- HFA 1–4 个 float/double 使用连续 v 寄存器，HFA 3/4、栈上 HFA、4 个返回向量和 fp128 均已覆盖。
+- HFA 1–4 个 float/double 使用连续 v 寄存器，HFA 3/4、栈上 HFA 和 4 个返回向量已覆盖。
 - 没有代表类型矩阵：计划里直接是位置和字节数。
 
 ## 8. 调用约定要点
@@ -526,9 +526,7 @@ SPDX SBOM 和 `SHA256SUMS`。CI 在打包后用 Sigstore keyless 签名 `SHA256S
 pkg-config/CMake 元数据和 Rust 绑定。每个压缩包的 `README.md` 由
 [`packaging/README.release.md.in`](./packaging/README.release.md.in) 渲染。
 `THIRD_PARTY_NOTICES.md` 只随编译器压缩包发布；runtime-only 包不携带派生符号索引。
-sysv-x86_64 的 `cinterp-run` 是自动选择脚本：CPU 具备完整 x86-64-v3（AVX2/BMI/FMA 等）
-特征时 exec `cinterp-run-v3`，否则 exec `cinterp-run-baseline`；`lib/` 中的嵌入库
-始终保持通用 baseline。发布包不包含 `debug/` 分离调试文件；需要调试时请在源码中执行
+发布包不包含 `debug/` 分离调试文件；需要调试时请在源码中执行
 `cd runtime && zig build -Doptimize=Debug`。
 
 ### 12.4 验证与证据
@@ -550,12 +548,12 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 - **C/ABI**：`_Complex`、GCC builtins、外部 inline/weak 语义、Win64 `__vectorcall`/COM、SysV `i128`/向量参数、向量类型、内联汇编、`_Atomic`/`_Thread_local` 不支持。
 - **链接**：不支持 CIB-to-CIB 链接、包间导出/依赖；跨包复用需合并源码后重新生成 CIB，或由宿主通过 `ci_vm_load_library` 加载普通共享库。
 - **执行模型**：一个 VM 单执行上下文、单 CIB；进程可通过 `ci_process_*` 持有最多 64 个 VM，不同 VM 可并行。无进程内沙箱、无 Safe 模式；不可信输入由宿主隔离。
-- **Windows CRT**：`%Lf` 行为与原生 MinGW 一致，不额外提供格式化 shim；`examples/ffi/ffi_printf_longdouble.c` 只锁定 smoke 行为。
+- **F80/F128**：`long double` / `__float128` 已移除，编译器在 IR 类型解析阶段报错；相关示例与测试跳过。
 - **外部数据符号**：基础 provider（`stdout`/`errno`/`environ`/`stdin`/`tzname`/`opt*`、Windows `_environ`/`_fmode`/`_tzname` 等）已支持；Windows UCRT 的 `_errno`/`__acrt_iob_func`/`__p__environ` 是函数计划。更冷门的数据符号走 provider/fallback。
 
 ## 14. 已知限制与后续方向
 
-- **FFI 返回块生命周期**：宽值/多 loc 返回值现在按调用从调用方 VM 线性内存分配，存活到当前帧返回；不再共享 `ret_buf`。长循环中大量宽返回会按 `ret_size` 增长，最终受线性内存上限约束（与 f80/f128 临时值一致）。VM→VM 寄存器返回聚合仍依赖 callee 内存未被改写，属于后续独立 ownership 工作。
+- **FFI 返回块生命周期**：宽值/多 loc 返回值现在按调用从调用方 VM 线性内存分配，存活到当前帧返回；不再共享 `ret_buf`。长循环中大量宽返回会按 `ret_size` 增长，最终受线性内存上限约束。VM→VM 寄存器返回聚合仍依赖 callee 内存未被改写，属于后续独立 ownership 工作。
 - **Win32 `thiscall` 支持范围**：原生/间接调用和 callback 均支持；第一个 4 字节标量（`this`）走 ECX，其余走 callee 清理的栈。Win64 的 `__vectorcall`/COM 仍不支持。
 - **原生库句柄不卸载**：`ci_vm_load_library` 与 CIPI provider 的 `dlopen`/`LoadLibrary` 句柄随进程保留，没有 `dlclose`/`FreeLibrary`；长期多包宿主应自建进程边界。
 - **宿主堆、atexit/signal 与全局初始化**：`malloc` 等宿主堆分配跨 run 累积，不随 VM 线性内存重置；`atexit`/`signal` 是进程全局状态，多 VM/重复运行共享；全局安装代码只出现在 `main`，运行时也只接受 `main` 入口。
@@ -581,7 +579,7 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 ### 14.2 已完成项留下的尾巴
 
 - **VM→VM 寄存器聚合返回 ownership**：FFI 宽/多 loc 返回值已改为调用方 VM 临时块，但 VM 内部函数返回的寄存器聚合仍只是指向 callee 线性内存的指针，依赖该区域在下一次分配前未被改写。需要时再单独设计调用点复制或 hidden return pointer 协议。
-- **精确 Windows `%Lf` shim**：本轮 `examples/ffi/ffi_printf_longdouble.c` 只锁定当前 MinGW/CRT 的 smoke 行为，没有实现 80-bit `long double` 的精确格式化层。
+- **F80/F128 已移除**：不再提供 `long double`/`__float128` 支持，相关示例与测试跳过。
 - **更多 external data / 跨 ABI 执行 fuzz**：继续按真实用例扩充 provider；跨 ABI fuzz 目前以 load-only 为主，执行级 fuzz 仍是后续方向。
 
 后续工作仍遵守现有约束：不以放宽运行时上限、修改 expected 或跳过失败用例的方式“修复”。

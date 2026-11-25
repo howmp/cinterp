@@ -1,0 +1,4 @@
+# skip list
+# non-goal: long double (x86_fp80/fp128) is unsupported
+longdouble	non-goal: long double / 128-bit float unsupported
+longdouble_precision	non-goal: long double / 128-bit float unsupported

@@ -3763,5 +3763,6 @@
       "id": "zerolen-2",
       "source": "SingleSource/Regression/C/gcc-c-torture/execute/zerolen-2.c"
     }
-  ]
+  ],
+  "repo_skip_file": "tests/manifests/llvm-regression-c.skip"
 }

@@ -42,3 +42,5 @@
 95_bitfields_ms	dialect: Clang ms_struct bitfield width/layout differs from TCC (native clang output matches cinterp)
 96_nodata_wanted	harness/test-entry: no runnable main: stdout mismatch
 98_al_ax_extend	non-goal: external symbol/inline/asm: stdout mismatch
+111_conversion	non-goal: long double / 128-bit float unsupported
+22_floating_point	non-goal: long double / 128-bit float unsupported

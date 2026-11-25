@@ -1849,6 +1849,9 @@ pub const Parser = struct {
                     return self.newType(.{ .ptr = .{ .addr_space = addr_space, .span = Span.join(tok.span, self.prev_span) } });
                 }
                 if (floatKindFromWord(word)) |kind| {
+                    if (kind == .x86_fp80 or kind == .fp128 or kind == .ppc_fp128) {
+                        return self.fail(tok, "floating type '{s}' is not supported; long double and 128-bit floats are not supported", .{word});
+                    }
                     try self.advance();
                     return self.newType(.{ .float = .{ .kind = kind, .span = tok.span } });
                 }

@@ -2,10 +2,16 @@
   "suite": "csuite",
   "description": "cinterp local C subset",
   "root": ".",
-  "tiers": ["smoke", "standard", "full", "nightly"],
+  "tiers": [
+    "smoke",
+    "standard",
+    "full",
+    "nightly"
+  ],
   "source_glob": "tests/csuite/*.c",
   "expect_marker": true,
   "expected_exit": null,
   "timeout": 10,
-  "license": "project"
+  "license": "project",
+  "repo_skip_file": "tests/manifests/csuite.skip"
 }

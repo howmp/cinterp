@@ -1,6 +1,6 @@
 # Unsupported 用例
 
-本文件由 `scripts/tools/gen_unsupported_doc.py` 从 `build/test-suites-full.json` 生成，列出当前 **191** 个 `unsupported` skip。
+本文件由 `scripts/tools/gen_unsupported_doc.py` 从 `build/test-suites-full.json` 生成，列出当前 **268** 个 `unsupported` skip。
 
 说明：`reason` 保留 suite runner 记录的 skip 原因；编译诊断在 report 中可能只保留首行。绝对路径的 `build/suites/` 前缀会被规范化为相对路径。
 
@@ -77,13 +77,16 @@
 - `init3` — compile: build/suites/CompCert/test/regression/init3.c:5:20: error: incompatible pointer to integer conversion initializing 'int' with an expression of type 'void *' [-Wint-conversion]
 - `packedstruct1` — compile: build/suites/CompCert/test/regression/packedstruct1.c:19:19: error: expected identifier or '('
 
-## gcc-ieee (15)
+## gcc-ieee (24)
 
+- `20010226-1` — non-goal: long double / 128-bit float unsupported
 - `bfloat16-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'bf16' on floating constant
 - `builtin-issignaling-1` — compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !65
 - `cdivchkd` — non-goal: _Complex (explicitly unsupported); observed 2026-10-31
 - `cdivchkf` — non-goal: _Complex (explicitly unsupported); observed 2026-10-31
 - `cdivchkld` — non-goal: _Complex (explicitly unsupported); observed 2026-10-31
+- `copysign1` — non-goal: long double / 128-bit float unsupported
+- `copysign2` — non-goal: long double / 128-bit float unsupported
 - `float128-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f128' on floating constant
 - `float128x-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f128x' on floating constant
 - `float16-builtin-issignaling-1` — compile: cinterp: bad parameter: 'half noundef %x'
@@ -91,32 +94,82 @@
 - `float32x-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f32x' on floating constant
 - `float64-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f64' on floating constant
 - `float64x-builtin-issignaling-1` — compile: build/suites/gcc-torture/gcc/testsuite/gcc.c-torture/execute/ieee/builtin-issignaling-1.c:133:78: error: invalid suffix 'f64x' on floating constant
+- `fp-cmp-3` — non-goal: long double / 128-bit float unsupported
+- `fp-cmp-4l` — non-goal: long double / 128-bit float unsupported
+- `fp-cmp-8l` — non-goal: long double / 128-bit float unsupported
 - `fp-cmp-cond-1` — compile: 238:14: error: unsupported instruction 'insertelement' (found 'insertelement')
+- `inf-2` — non-goal: long double / 128-bit float unsupported
+- `inf-3` — non-goal: long double / 128-bit float unsupported
+- `pr36332` — non-goal: long double / 128-bit float unsupported
 - `pr50310` — compile: cinterp: unsupported instruction: call void asm sideeffect "", "~{memory},~{dirflag},~{fpsr},~{flags}"(), !srcloc !385
 - `pr72824-2` — compile: cinterp: bad parameter: '<4 x float> noundef %value'
 
-## gcc-torture (7)
+## gcc-torture (32)
 
+- `20020413-1` — non-goal: long double / 128-bit float unsupported
+- `20030914-1` — non-goal: long double / 128-bit float unsupported
+- `20040709-1` — non-goal: long double / 128-bit float unsupported
+- `20040709-2` — non-goal: long double / 128-bit float unsupported
+- `20040709-3` — non-goal: long double / 128-bit float unsupported
 - `20101011-1` — unsupported: signal/SIGFPE runtime behavior
+- `930622-2` — non-goal: long double / 128-bit float unsupported
+- `960215-1` — non-goal: long double / 128-bit float unsupported
+- `960405-1` — non-goal: long double / 128-bit float unsupported
+- `960513-1` — non-goal: long double / 128-bit float unsupported
+- `align-2` — non-goal: long double / 128-bit float unsupported
 - `bitfld-3` — dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
+- `conversion` — non-goal: long double / 128-bit float unsupported
 - `eeprof-1` — unsupported: -finstrument-functions profiling hooks
+- `memcpy-2` — non-goal: long double / 128-bit float unsupported
+- `memset-1` — non-goal: long double / 128-bit float unsupported
+- `memset-2` — non-goal: long double / 128-bit float unsupported
+- `memset-3` — non-goal: long double / 128-bit float unsupported
 - `nestfunc-4` — non-goal: nested function/frame limit: exit 1 != 0
 - `pr117095` — unsupported: i128 global initializer
 - `pr32244-1` — dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
 - `pr34971` — dialect: GCC bitfield expression width differs in Clang IR: exit -6 != 0
+- `pr44942` — non-goal: long double / 128-bit float unsupported
+- `regstack-1` — non-goal: long double / 128-bit float unsupported
+- `stdarg-1` — non-goal: long double / 128-bit float unsupported
+- `stdarg-2` — non-goal: long double / 128-bit float unsupported
+- `strcmp-1` — non-goal: long double / 128-bit float unsupported
+- `strcpy-1` — non-goal: long double / 128-bit float unsupported
+- `strlen-1` — non-goal: long double / 128-bit float unsupported
+- `strncmp-1` — non-goal: long double / 128-bit float unsupported
+- `va-arg-5` — non-goal: long double / 128-bit float unsupported
+- `va-arg-6` — non-goal: long double / 128-bit float unsupported
 
-## gcc-torture-compile (8)
+## gcc-torture-compile (27)
 
+- `20000818-1` — non-goal: long double / 128-bit float unsupported
+- `20001212-1` — non-goal: long double / 128-bit float unsupported
 - `20010518-2` — compiler limit: static data exceeds VM maximum linear memory (16 MiB)
+- `20021008-1` — non-goal: long double / 128-bit float unsupported
+- `20031208-1` — non-goal: long double / 128-bit float unsupported
+- `20040709-1` — non-goal: long double / 128-bit float unsupported
+- `20041026-1` — non-goal: long double / 128-bit float unsupported
 - `20080625-1` — compiler limit: static data exceeds VM maximum linear memory (16 MiB)
+- `20080628-1` — non-goal: long double / 128-bit float unsupported
+- `20161123-1` — non-goal: long double / 128-bit float unsupported
+- `941019-1` — non-goal: long double / 128-bit float unsupported
 - `limits-externdecl` — compiler limit: more than 512 entries in the CIPI import table
 - `pr103813` — compiler limit: static data exceeds VM maximum linear memory (16 MiB)
+- `pr19357` — non-goal: long double / 128-bit float unsupported
+- `pr30311` — non-goal: long double / 128-bit float unsupported
+- `pr33855` — non-goal: long double / 128-bit float unsupported
+- `pr35043` — non-goal: long double / 128-bit float unsupported
+- `pr36125` — non-goal: long double / 128-bit float unsupported
 - `pr37669-2` — compiler limit: more than 64 arguments in one call plan
+- `pr48641` — non-goal: long double / 128-bit float unsupported
+- `pr65540` — non-goal: long double / 128-bit float unsupported
+- `pr89663-1` — non-goal: long double / 128-bit float unsupported
+- `pr89663-2` — non-goal: long double / 128-bit float unsupported
 - `simd-6` — unsupported: vector global initializer
 - `stuct` — compiler limit: CIVM module larger than 2 MiB
+- `trunctfdf` — non-goal: long double / 128-bit float unsupported
 - `vector-align-1` — unsupported: vector global initializer
 
-## libc-test (29)
+## libc-test (30)
 
 - `clocale_mbfuncs` — unsupported: host libc reference difference (musl locale/wide-char)
 - `crypt` — unsupported: libcrypt provider unavailable on host
@@ -138,6 +191,7 @@
 - `sscanf_long` — unsupported: host glibc sscanf under RLIMIT_STACK=100KiB can SIGSEGV (native binary passes; musl reference behavior)
 - `strftime` — unsupported: host libc reference difference (musl strftime)
 - `strtol` — unsupported: host libc reference difference (musl strtol)
+- `strtold` — non-goal: long double / 128-bit float unsupported
 - `tls_align` — unsupported: host pthread/TLS runtime model
 - `tls_align_dlopen` — unsupported: host pthread/TLS runtime model
 - `tls_align_dso` — unsupported: host pthread/TLS runtime model
@@ -172,23 +226,42 @@
 - `tls_get_new-dtv` — unsupported: host pthread/TLS/signal runtime model
 - `tls_get_new-dtv_dso` — unsupported: host pthread/TLS/signal runtime model
 
-## llvm-regression-c (2)
+## llvm-regression-c (19)
 
 - `20020107-1` — unsupported: inline asm
+- `20040709-1` — non-goal: long double / 128-bit float unsupported
+- `20040709-2` — non-goal: long double / 128-bit float unsupported
+- `20040709-3` — non-goal: long double / 128-bit float unsupported
+- `2008-01-07-LongDouble` — non-goal: long double / 128-bit float unsupported
+- `20080502-1` — non-goal: long double / 128-bit float unsupported
+- `complex-1` — non-goal: long double / 128-bit float unsupported
+- `copysign1` — non-goal: long double / 128-bit float unsupported
+- `copysign2` — non-goal: long double / 128-bit float unsupported
+- `inf-2` — non-goal: long double / 128-bit float unsupported
+- `inf-3` — non-goal: long double / 128-bit float unsupported
+- `memset-chk` — non-goal: long double / 128-bit float unsupported
+- `pr36332` — non-goal: long double / 128-bit float unsupported
+- `pr44942` — non-goal: long double / 128-bit float unsupported
 - `pr60822` — compiler limit: CIVM module larger than 2 MiB
+- `stdarg-1` — non-goal: long double / 128-bit float unsupported
+- `stdarg-2` — non-goal: long double / 128-bit float unsupported
+- `stpcpy-chk` — non-goal: long double / 128-bit float unsupported
+- `strcpy-chk` — non-goal: long double / 128-bit float unsupported
 
-## llvm-singlesource (8)
+## llvm-singlesource (10)
 
 - `2002-12-13-MishaTest` — unsupported: K&R implicit int
 - `2006-01-23-UnionInit` — unsupported: zero-size aggregate resource model
 - `2007-01-04-KNR-Args` — unsupported: K&R implicit int
 - `2008-04-18-LoopBug` — unsupported: K&R implicit int
 - `2008-04-20-LoopBug2` — unsupported: K&R implicit int
+- `2009-04-16-BitfieldInitialization` — non-goal: long double / 128-bit float unsupported
 - `2009-12-07-StructReturn` — unsupported: vector type
 - `2020-01-06-coverage-006` — unsupported: i72 aggregate store
 - `AtomicOps` — unsupported: K&R implicit int
+- `byval-alignment` — non-goal: long double / 128-bit float unsupported
 
-## tcc-tests2 (43)
+## tcc-tests2 (45)
 
 - `100_c99array-decls` — diagnostic/frontend: expected compile error/dialect: build/suites/tcc/tests/tests2/100_c99array-decls.c:26:9: error: restrict requires a pointer or reference ('pointer_array' (aka 'int *[2]') is invalid)
 - `101_cleanup` — compile: thread 3280260 panic: integer overflow
@@ -196,6 +269,7 @@
 - `104+_inline` — non-goal: external inline: stdout mismatch
 - `104_inline` — non-goal: external inline: stdout mismatch
 - `108_constructor` — mismatch: platform/diagnostic: stdout mismatch
+- `111_conversion` — non-goal: long double / 128-bit float unsupported
 - `112_backtrace` — mismatch: platform/diagnostic: stdout mismatch
 - `113_btdll` — non-goal: external symbol/inline/asm: stdout mismatch
 - `114_bound_signal` — non-goal: threads: stdout mismatch
@@ -220,6 +294,7 @@
 - `149_parameter_qualifier_errors` — diagnostic/frontend: expected compile error/dialect: build/suites/tcc/tests/tests2/149_parameter_qualifier_errors.c:5:13: error: cannot assign to variable 'pointer' with const-qualified type 'int *const'
 - `150_return_qualifiers` — diagnostic/frontend: expected compile error/dialect: build/suites/tcc/tests/tests2/150_return_qualifiers.c:12:5: error: conflicting types for 'const_return'
 - `151_atomic_header` — frontend/dialect: unsupported compile: cinterp: unsupported type volatile
+- `22_floating_point` — non-goal: long double / 128-bit float unsupported
 - `34_array_assignment` — diagnostic/frontend: expected compile error/dialect: build/suites/tcc/tests/tests2/34_array_assignment.c:16:6: error: array type 'int[4]' is not assignable
 - `46_grep` — mismatch: platform/diagnostic: stdout mismatch
 - `60_errors_and_warnings` — harness/test-entry: no runnable main: stdout mismatch

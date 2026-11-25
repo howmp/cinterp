@@ -18,7 +18,7 @@ CASES = {
     "math": "basics/math.c",
     "bitfields": "basics/bitfields.c",
     "ptrstruct": "basics/ptrstruct.c",
-    "longdouble": "basics/longdouble.c",
+    # long double (f80/f128) is no longer supported.
     "ffi_printf": "ffi/ffi_printf.c",
 }
 
