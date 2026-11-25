@@ -127,7 +127,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。默认为 `-O2`，并追�
 
 ### 6.4 重复运行、全新镜像与每 VM 线程
 
-- `ci_vm_run`/`ci_vm_run_args` 每次进入都调用 `resetRunImage`：清零值栈槽位/`sp`/`mem_top`/`arg_area_start`/`frame_count`，清零整块线性内存，清空 `jumps`（上一次运行的 `setjmp` 目标不能复活），清空按 run 收集的 `native_targets`；`native_plan_cache` 保留（plan 索引不变）。
+- `ci_vm_run`/`ci_vm_run_args` 每次进入都调用 `resetRunImage`：清零值栈槽位/`sp`/`mem_top`/`arg_area_start`/`frame_count`，清空 `jumps`（上一次运行的 `setjmp` 目标不能复活），清空按 run 收集的 `native_targets`；`native_plan_cache` 保留（plan 索引不变）。线性内存不再整块清零：`mem_dirty_high` 记录本次 run 写过的最高字节（allocas、`STORE_MEM`/`MEMCPY`/`MEMSET`、const pool 拷贝），下次 run 只清这段，`argv`/`envp` 区域按上一次的 `arg_area_start` 单独清。首次分配仍整块清零。
 - `result` 不参与重置：只有成功运行才写入，`ci_vm_result` 始终返回最后一次成功结果。
 - 全局安装代码由编译器生成在 `main` 开头（`SET_MEM_TOP` + 全局镜像），因此重复运行 `main` 会重新安装 globals。运行时只接受 `main` 别名；其他入口名返回 `CI_E_ENTRY`。
 - 每 VM 有独立执行权（owner/depth/条件变量）：另一线程 `ci_vm_run` 返回 `CI_E_BUSY`；同一线程嵌套（callback 内再次 run）返回 `CI_E_RUNTIME`，避免清空外层镜像。

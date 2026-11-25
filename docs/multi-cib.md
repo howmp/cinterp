@@ -195,7 +195,7 @@ int main(void) {
 `ci_vm_run`/`ci_vm_run_args` 每次进入时都会执行 `resetRunImage`：
 
 - 清零值栈槽位、`sp`、`mem_top`、`arg_area_start`、`frame_count`；
-- 清零整个线性内存；
+- 清零线性内存中上一次运行写过的区间（高水位）以及 `argv`/`envp` 区域；
 - 清空 `setjmp` 目标表，避免上一次运行的 `longjmp` 命中已经结束的代码；
 - 清空按 run 登记的 native target 列表（native plan 缓存保留，因为 plan 索引不变）；
 - 重新构建 `argv`/`envp` 区域。宿主环境在进程内第一次需要时被复制成一份快照

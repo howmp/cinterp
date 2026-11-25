@@ -867,6 +867,10 @@ pub const VM = struct {
     /// First byte of the argv/envp area `buildArgArea` carved out of `mem`;
     /// zero means no area is reserved and the whole region is allocatable.
     arg_area_start: usize = 0,
+    /// One past the highest linear-memory byte this run has written. Cleared
+    /// regions are recomputed from it so `resetRunImage` does not have to zero
+    /// the whole image (1 MiB of `@memset` dominated a run of a small program).
+    mem_dirty_high: usize = 0,
     plan_store: ?*plan_loader.Store = null,
     imports: link_loader.Table = .{},
     import_handles: [link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS]?*anyopaque = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS),
@@ -1533,6 +1537,12 @@ pub const VM = struct {
         }
         if (self.mem.len == 0) {
             self.mem = try std.heap.page_allocator.alignedAlloc(u8, 32, DEFAULT_MEMORY);
+            // `resetRunImage` only clears the span a previous run touched, so
+            // the fresh allocation has to start zeroed itself: nothing has been
+            // written yet, and page_allocator hands back recycled pages.
+            @memset(self.mem, 0);
+            self.mem_dirty_high = 0;
+            self.arg_area_start = 0;
         }
     }
 
@@ -1628,6 +1638,7 @@ pub const VM = struct {
                 @memcpy(self.mem[base..end], pool.data);
             }
             self.mem_top = end;
+            self.noteMemWrite(end);
         }
 
         const entry_fn = self.functions[fi];
@@ -1764,11 +1775,42 @@ pub const VM = struct {
         for (0..self.values.len) |i| self.values[i] = .{ .i = 0 };
         self.sp = 0;
         self.mem_top = 0;
+        // The argv/envp block is written at the top of the image and is not
+        // part of the high-water mark (tracking it would stretch the mark to
+        // `mem.len`). It is cleared here as its own span instead: the previous
+        // run's block may now sit below the new `arg_area_start` and therefore
+        // inside the region a later alloca can hand out.
+        const prev_arg_area = self.arg_area_start;
         self.arg_area_start = 0;
-        @memset(self.mem, 0);
+        // Only the span the previous run could have written has to be cleared;
+        // the rest of the image is either untouched or already zero. The
+        // high-water mark covers every other write path (allocas and the bump
+        // pointer, `STORE_MEM`/`MEMCPY`/`MEMSET` through VM pointers, and the
+        // const pool copy), so a run cannot inherit stale bytes.
+        @memset(self.mem[0..self.mem_dirty_high], 0);
+        if (prev_arg_area != 0) @memset(self.mem[prev_arg_area..], 0);
+        self.mem_dirty_high = 0;
         self.frame_count = 0;
         for (&self.jumps) |*entry| entry.* = .{};
         self.native_target_count = 0;
+    }
+
+    /// Extend the run's write high-water mark. Every linear-memory write calls
+    /// this so `resetRunImage` can clear exactly the span that was touched.
+    inline fn noteMemWrite(self: *VM, end: usize) void {
+        if (end > self.mem_dirty_high) self.mem_dirty_high = end;
+    }
+
+    /// Same, for a write through a VM-visible host pointer: translate it back
+    /// into an image offset and ignore anything outside the image (`STORE_MEM`
+    /// accepts host addresses that are not part of `mem`).
+    inline fn noteMemWriteAt(self: *VM, addr: usize, len: usize) void {
+        const base = @intFromPtr(self.mem.ptr);
+        if (addr < base) return;
+        const off = addr - base;
+        if (off >= self.mem.len) return;
+        const end = off + len;
+        if (end <= self.mem.len and end > self.mem_dirty_high) self.mem_dirty_high = end;
     }
 
     fn buildArgArea(self: *VM, cargs: []const []const u8) !struct { usize, u64, u64 } {
@@ -1824,6 +1866,11 @@ pub const VM = struct {
             pos += ptr_size;
         }
         @memcpy(self.mem[pos .. pos + ptr_size], std.mem.asBytes(&zero));
+        // The argv/envp block sits at the top of the image and every run
+        // rewrites it in full, with every string NUL-terminated, so it stays
+        // out of the high-water mark: tracking it would stretch the mark to
+        // `mem.len` and defeat clearing only the span that was touched.
+        _ = &pos;
         return .{
             arg_count,
             @intFromPtr(&self.mem[argv_off]),
@@ -2733,6 +2780,9 @@ pub const VM = struct {
                     const n: usize = size;
                     if (n > self.memLimit()) return error.OutOfMemory;
                     self.mem_top = n;
+                    // `SET_MEM_TOP` only moves the bump pointer here; the install
+                    // loop that follows issues `STORE_MEM`s that track
+                    // themselves, so nothing else is needed.
                 },
                 OP_ALLOCA => {
                     const size = try readU16(code, &ip);
@@ -2741,6 +2791,7 @@ pub const VM = struct {
                     if (start + n > self.memLimit()) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
+                    self.noteMemWrite(self.mem_top);
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
                     pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
@@ -2753,6 +2804,7 @@ pub const VM = struct {
                     if (start + n > self.memLimit()) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
+                    self.noteMemWrite(self.mem_top);
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
                     pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
@@ -2764,6 +2816,7 @@ pub const VM = struct {
                     if (start + n > self.memLimit()) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
+                    self.noteMemWrite(self.mem_top);
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
                     pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
@@ -2777,6 +2830,7 @@ pub const VM = struct {
                     if (start + n > self.memLimit()) return error.OutOfMemory;
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
+                    self.noteMemWrite(self.mem_top);
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
                     pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
@@ -2849,6 +2903,7 @@ pub const VM = struct {
                         8 => std.mem.writeInt(u64, p[0..8], bits, .little),
                         else => unreachable,
                     }
+                    self.noteMemWriteAt(addr, n);
                 },
                 OP_MEMCPY => {
                     const len_v = popAt(values, &sp);
@@ -2869,6 +2924,7 @@ pub const VM = struct {
                     } else if (@intFromPtr(dst) > @intFromPtr(src)) {
                         std.mem.copyBackwards(u8, dst[0..len], src[0..len]);
                     }
+                    self.noteMemWriteAt(dst_addr, len);
                 },
                 OP_MEMSET => {
                     const len_v = popAt(values, &sp);
@@ -2882,6 +2938,7 @@ pub const VM = struct {
                     const byte: u8 = @truncate(@as(u64, @bitCast(val_v.i)));
 
                     @memset(dst[0..len], byte);
+                    self.noteMemWriteAt(dst_addr, len);
                 },
                 OP_CALL_VARIADIC_TYPED => {
                     const fn_idx = try readU16(code, &ip);
@@ -3954,6 +4011,9 @@ fn createVm(stack_size: usize, memory_size: usize) ?*VM {
         std.heap.page_allocator.destroy(machine);
         return null;
     };
+    // `resetRunImage` only clears what a previous run wrote, so the initial
+    // image has to be zeroed here.
+    @memset(machine.mem, 0);
     machine.stack_limit = limit;
     machine.clearError();
     return machine;
