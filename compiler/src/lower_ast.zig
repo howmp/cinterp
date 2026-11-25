@@ -1634,6 +1634,356 @@ fn lowerFunction(ctx: *Context, func_index: usize) !abi.Function {
 
 const PromotedRef = struct { name: []const u8, size: u32 };
 
+// ------------------------------------------------------- operand stack bound
+
+/// Net operand-stack effect of one instruction, in slots.
+const StackEffect = struct { pop: u16, push: u16 };
+
+/// Operand width in bytes for the opcodes that take a fixed-size immediate.
+/// Mirrors `runtime/src/vm.zig`'s `readU8`/`readU16`/`readU32`/`readI64` and the
+/// per-opcode operand layout, so the analysis walks the same bytes the VM does.
+/// `error.VariadicTypedNeedsCallee` marks the one opcode whose operand length
+/// depends on the module's function table.
+fn staticOperandLen(opcode: u8) !usize {
+    return switch (opcode) {
+        op.OP_RET,
+        op.OP_RET_VOID,
+        op.OP_ADD,
+        op.OP_SUB,
+        op.OP_MUL,
+        op.OP_DUP,
+        op.OP_SWAP,
+        op.OP_XOR,
+        op.OP_DIV_S,
+        op.OP_DIV_U,
+        op.OP_REM_S,
+        op.OP_REM_U,
+        op.OP_AND,
+        op.OP_OR,
+        op.OP_SHL,
+        op.OP_SHR_S,
+        op.OP_SHR_U,
+        op.OP_FPTOSI,
+        op.OP_SITOFP,
+        op.OP_FADD,
+        op.OP_FSUB,
+        op.OP_FMUL,
+        op.OP_FDIV,
+        op.OP_FADD32,
+        op.OP_FSUB32,
+        op.OP_FMUL32,
+        op.OP_FDIV32,
+        op.OP_CMP_EQ,
+        op.OP_CMP_LT,
+        op.OP_CMP_LT_U,
+        op.OP_FPEXT,
+        op.OP_FPTRUNC,
+        op.OP_FPTOSI32,
+        op.OP_SITOFP32,
+        op.OP_CALL_INDIRECT,
+        op.OP_MEMCPY,
+        op.OP_MEMSET,
+        op.OP_FPTOUI,
+        op.OP_UITOFP,
+        op.OP_FPTOUI32,
+        op.OP_UITOFP32,
+        op.OP_CALLBACK_RELEASE,
+        op.OP_LONGJMP,
+        op.OP_VA_START,
+        op.OP_VA_COPY,
+        op.OP_STACKSAVE,
+        op.OP_STACKRESTORE,
+        op.OP_FMA,
+        op.OP_FMA32,
+        => 0,
+        op.OP_FCMP,
+        op.OP_FCMP32,
+        op.OP_FPCLASS,
+        op.OP_LOAD_MEM,
+        op.OP_STORE_MEM,
+        op.OP_NORMALIZE,
+        op.OP_ADD_N,
+        op.OP_SUB_N,
+        op.OP_MUL_N,
+        op.OP_AND_N,
+        op.OP_OR_N,
+        op.OP_XOR_N,
+        op.OP_MAX_N,
+        op.OP_MIN_N,
+        op.OP_ABS_N,
+        op.OP_CTTZ_N,
+        op.OP_CTLZ_N,
+        op.OP_CTPOP_N,
+        op.OP_BSWAP_N,
+        op.OP_BITREV_N,
+        op.OP_FSHL_N,
+        op.OP_FSHR_N,
+        op.OP_USUB_SAT_N,
+        op.OP_SHL_N,
+        op.OP_SHR_U_N,
+        op.OP_SHR_S_N,
+        op.OP_DIV_S_N,
+        op.OP_DIV_U_N,
+        op.OP_REM_S_N,
+        op.OP_REM_U_N,
+        op.OP_ALLOCA_DYN_ALIGN,
+        => 1,
+        op.OP_LOAD_LOCAL,
+        op.OP_STORE_LOCAL,
+        op.OP_CALL,
+        op.OP_FUNC_ADDR,
+        op.OP_ALLOCA,
+        op.OP_SETJMP,
+        op.OP_ADDR_EXTERN,
+        op.OP_CALL_NATIVE,
+        op.OP_CALL_VARARG,
+        op.OP_CALL_INDIRECT_NATIVE,
+        => 2,
+        op.OP_ALLOCA_ALIGNED => 3,
+        op.OP_JMP,
+        op.OP_JZ,
+        op.OP_JNZ,
+        op.OP_ADDR_CONST,
+        op.OP_SET_MEM_TOP,
+        op.OP_LOAD_CONST_POOL,
+        op.OP_CALLBACK_ACQUIRE,
+        op.OP_CALL_VARIADIC => 4,
+        op.OP_CREATE_CALLBACK => 6,
+        op.OP_LOAD_CONST_I64 => 8,
+        op.OP_CALL_VARIADIC_TYPED => return error.VariadicTypedNeedsCallee,
+        else => return error.UnknownOpcode,
+    };
+}
+
+/// Net effect on the operand stack. `JZ`/`JNZ` consume their condition, calls
+/// consume their arguments and push a result unless the callee returns void.
+fn staticStackEffect(opcode: u8, ctx: *Context, code: []const u8, at: usize) !StackEffect {
+    return switch (opcode) {
+        op.OP_RET => .{ .pop = 1, .push = 0 },
+        op.OP_RET_VOID => .{ .pop = 0, .push = 0 },
+        op.OP_LOAD_CONST_I64, op.OP_LOAD_CONST_POOL => .{ .pop = 0, .push = 1 },
+        op.OP_LOAD_LOCAL, op.OP_FUNC_ADDR, op.OP_ADDR_CONST, op.OP_ADDR_EXTERN => .{ .pop = 0, .push = 1 },
+        op.OP_STACKSAVE, op.OP_ALLOCA, op.OP_ALLOCA_ALIGNED, op.OP_ALLOCA_DYN, op.OP_ALLOCA_DYN_ALIGN => .{ .pop = 0, .push = 1 },
+        op.OP_CREATE_CALLBACK, op.OP_CALLBACK_ACQUIRE => .{ .pop = 0, .push = 1 },
+        op.OP_STORE_LOCAL, op.OP_STORE_MEM, op.OP_STACKRESTORE, op.OP_VA_START => .{ .pop = 1, .push = 0 },
+        // `SET_MEM_TOP u32` carries its size inline and leaves the stack alone.
+        op.OP_SET_MEM_TOP => .{ .pop = 0, .push = 0 },
+        op.OP_DUP => .{ .pop = 1, .push = 2 },
+        op.OP_SWAP => .{ .pop = 2, .push = 2 },
+        op.OP_LOAD_MEM => .{ .pop = 1, .push = 1 },
+        op.OP_ADD,
+        op.OP_SUB,
+        op.OP_MUL,
+        op.OP_XOR,
+        op.OP_DIV_S,
+        op.OP_DIV_U,
+        op.OP_REM_S,
+        op.OP_REM_U,
+        op.OP_AND,
+        op.OP_OR,
+        op.OP_SHL,
+        op.OP_SHR_S,
+        op.OP_SHR_U,
+        op.OP_FADD,
+        op.OP_FSUB,
+        op.OP_FMUL,
+        op.OP_FDIV,
+        op.OP_FADD32,
+        op.OP_FSUB32,
+        op.OP_FMUL32,
+        op.OP_FDIV32,
+        op.OP_CMP_EQ,
+        op.OP_CMP_LT,
+        op.OP_CMP_LT_U,
+        op.OP_FCMP,
+        op.OP_FCMP32,
+        op.OP_FPCLASS,
+        op.OP_ADD_N,
+        op.OP_SUB_N,
+        op.OP_MUL_N,
+        op.OP_AND_N,
+        op.OP_OR_N,
+        op.OP_XOR_N,
+        op.OP_MAX_N,
+        op.OP_MIN_N,
+        op.OP_FSHL_N,
+        op.OP_FSHR_N,
+        op.OP_USUB_SAT_N,
+        op.OP_SHL_N,
+        op.OP_SHR_U_N,
+        op.OP_SHR_S_N,
+        op.OP_DIV_S_N,
+        op.OP_DIV_U_N,
+        op.OP_REM_S_N,
+        op.OP_REM_U_N,
+        => .{ .pop = 2, .push = 1 },
+        op.OP_CALLBACK_RELEASE => .{ .pop = 1, .push = 1 },
+        op.OP_FMA, op.OP_FMA32 => .{ .pop = 3, .push = 1 },
+        op.OP_ABS_N,
+        op.OP_CTTZ_N,
+        op.OP_CTLZ_N,
+        op.OP_CTPOP_N,
+        op.OP_BSWAP_N,
+        op.OP_BITREV_N,
+        op.OP_FPTOSI,
+        op.OP_SITOFP,
+        op.OP_FPEXT,
+        op.OP_FPTRUNC,
+        op.OP_FPTOSI32,
+        op.OP_SITOFP32,
+        op.OP_FPTOUI,
+        op.OP_UITOFP,
+        op.OP_FPTOUI32,
+        op.OP_UITOFP32,
+        op.OP_NORMALIZE,
+        => .{ .pop = 1, .push = 1 },
+        op.OP_MEMCPY, op.OP_MEMSET => .{ .pop = 3, .push = 0 },
+        op.OP_VA_COPY, op.OP_LONGJMP => .{ .pop = 2, .push = 0 },
+        op.OP_SETJMP => .{ .pop = 1, .push = 0 },
+        op.OP_JMP => .{ .pop = 0, .push = 0 },
+        op.OP_JZ, op.OP_JNZ => .{ .pop = 1, .push = 0 },
+        op.OP_CALL => blk: {
+            const fidx = std.mem.readInt(u16, code[at + 1 ..][0..2], .little);
+            if (fidx >= ctx.module.functions.len) return error.BadFunctionIndex;
+            const callee = ctx.func_params[fidx];
+            const ret = ctx.module.functions[fidx].sig.ret;
+            break :blk .{
+                .pop = @intCast(callee.len),
+                .push = if (ret.isVoid()) 0 else 1,
+            };
+        },
+        op.OP_CALL_INDIRECT => .{ .pop = 1, .push = 1 },
+        op.OP_CALL_NATIVE, op.OP_CALL_VARARG, op.OP_CALL_INDIRECT_NATIVE => blk: {
+            const plan_index = std.mem.readInt(u16, code[at + 1 ..][0..2], .little);
+            if (plan_index >= ctx.plans.items.len) return error.BadPlanIndex;
+            const plan = ctx.plans.items[plan_index];
+            const pushes: u16 = if (plan.ret_locs.len == 0 and !plan.sret) 0 else 1;
+            break :blk .{ .pop = @intCast(plan.args.len), .push = pushes };
+        },
+        op.OP_CALL_VARIADIC => blk: {
+            const fidx = std.mem.readInt(u16, code[at + 1 ..][0..2], .little);
+            const total = std.mem.readInt(u16, code[at + 3 ..][0..2], .little);
+            if (fidx >= ctx.module.functions.len) return error.BadFunctionIndex;
+            const ret = ctx.module.functions[fidx].sig.ret;
+            break :blk .{ .pop = total, .push = if (ret.isVoid()) 0 else 1 };
+        },
+        op.OP_CALL_VARIADIC_TYPED => blk: {
+            const fidx = std.mem.readInt(u16, code[at + 1 ..][0..2], .little);
+            const total = std.mem.readInt(u16, code[at + 3 ..][0..2], .little);
+            if (fidx >= ctx.module.functions.len) return error.BadFunctionIndex;
+            const ret = ctx.module.functions[fidx].sig.ret;
+            break :blk .{ .pop = total, .push = if (ret.isVoid()) 0 else 1 };
+        },
+        else => return error.UnknownOpcode,
+    };
+}
+
+/// Byte length of one instruction including opcode and operands.
+fn staticInstrLen(opcode: u8, ctx: *Context, code: []const u8, at: usize) !usize {
+    const fixed = staticOperandLen(opcode) catch |err| switch (err) {
+        error.VariadicTypedNeedsCallee => blk: {
+            // `u16 func, u16 total` plus one tag per extra, and a `u16` size
+            // for tag 3 (byval/VLA/aggregate).
+            if (at + 5 > code.len) return error.TruncatedCode;
+            const fidx = std.mem.readInt(u16, code[at + 1 ..][0..2], .little);
+            const total = std.mem.readInt(u16, code[at + 3 ..][0..2], .little);
+            if (fidx >= ctx.module.functions.len) return error.BadFunctionIndex;
+            const named: u16 = @intCast(ctx.func_params[fidx].len);
+            if (total < named) return error.BadArgCount;
+            var pos = at + 5;
+            var i: u16 = named;
+            while (i < total) : (i += 1) {
+                if (pos >= code.len) return error.TruncatedCode;
+                const tag = code[pos];
+                pos += 1;
+                if (tag == 3) {
+                    if (pos + 2 > code.len) return error.TruncatedCode;
+                    pos += 2;
+                }
+            }
+            // `staticInstrLen` adds the opcode byte itself.
+            break :blk pos - at - 1;
+        },
+        else => return err,
+    };
+    return 1 + fixed;
+}
+
+/// Maximum operand-stack depth a function reaches above its frame base, as an
+/// upper bound over all reachable control-flow paths.
+///
+/// The bytecode is re-decoded after patching so jump targets are final. A work
+/// list walks reachable offsets with the depth known on entry; at a merge point
+/// the larger depth wins (a smaller one is still safe because the bound is an
+/// upper bound, not an exact depth). Unreachable bytes are never visited, so a
+/// function never pays for code its branches cannot reach.
+fn computeMaxStack(allocator: Allocator, code: []const u8, ctx: *Context) !u16 {
+    if (code.len == 0) return 0;
+    const unknown = std.math.maxInt(u32);
+    const depth = try allocator.alloc(u32, code.len);
+    defer allocator.free(depth);
+    @memset(depth, unknown);
+
+    var work = std.ArrayList(usize).init(allocator);
+    defer work.deinit();
+    depth[0] = 0;
+    try work.append(0);
+
+    var max_depth: u32 = 0;
+    while (work.popOrNull()) |at| {
+        const cur = depth[at];
+        if (cur == unknown) continue;
+        if (cur > max_depth) max_depth = cur;
+
+        const opcode = code[at];
+        const effect = try staticStackEffect(opcode, ctx, code, at);
+        const len = try staticInstrLen(opcode, ctx, code, at);
+        if (at + len > code.len) return error.TruncatedCode;
+        if (effect.pop > cur) return error.StackUnderflow;
+        const after = cur - effect.pop + effect.push;
+        if (after > max_depth) max_depth = after;
+
+        // Successors. Terminators do not fall through.
+        switch (opcode) {
+            op.OP_RET, op.OP_RET_VOID, op.OP_JMP, op.OP_LONGJMP => {},
+            op.OP_JZ, op.OP_JNZ => {
+                const target: usize = std.mem.readInt(u32, code[at + 1 ..][0..4], .little);
+                if (target < code.len and depth[target] == unknown) {
+                    depth[target] = after;
+                    try work.append(target);
+                }
+                if (at + len < code.len and depth[at + len] == unknown) {
+                    depth[at + len] = after;
+                    try work.append(at + len);
+                }
+            },
+            else => {},
+        }
+        // Unconditional jump target, and fallthrough for everything else that
+        // is not a terminator.
+        switch (opcode) {
+            op.OP_JMP => {
+                const target: usize = std.mem.readInt(u32, code[at + 1 ..][0..4], .little);
+                if (target < code.len and depth[target] == unknown) {
+                    depth[target] = after;
+                    try work.append(target);
+                }
+            },
+            op.OP_RET, op.OP_RET_VOID, op.OP_LONGJMP, op.OP_JZ, op.OP_JNZ => {},
+            else => {
+                if (at + len < code.len and depth[at + len] == unknown) {
+                    depth[at + len] = after;
+                    try work.append(at + len);
+                }
+            },
+        }
+    }
+
+    if (max_depth > std.math.maxInt(u16)) return error.StackTooDeep;
+    return @intCast(max_depth);
+}
+
+
 const Lowerer = struct {
     ctx: *Context,
     allocator: Allocator,
@@ -2277,6 +2627,11 @@ const Lowerer = struct {
             @memcpy(self.func.code.items[patch.pos..][0..4], &buf);
         }
         self.func.local_count = self.next_slot;
+        self.func.max_stack = try computeMaxStack(
+            self.allocator,
+            self.func.code.items,
+            self.ctx,
+        );
     }
 
     /// `main` applies pointer relocations after the runtime copied the CIPC

@@ -40,7 +40,7 @@ def parse_civm(module: bytes) -> int:
     if len(module) < 10:
         raise Bad("CIVM header truncated")
     version = module[4]
-    if version != 2:
+    if version != 3:
         raise Bad(f"unsupported CIVM version {version}")
     count = u16(module, 6)
     entry = u16(module, 8)
@@ -50,14 +50,17 @@ def parse_civm(module: bytes) -> int:
         raise Bad(f"CIVM entry index {entry} out of range")
     p = 10
     for fn in range(count):
-        if p + 8 > len(module):
+        if p + 10 > len(module):
             raise Bad(f"function {fn} header truncated")
         params = u16(module, p)
         locals_ = u16(module, p + 2)
-        clen = u32(module, p + 4)
-        p += 8
+        max_stack = u16(module, p + 4)
+        clen = u32(module, p + 6)
+        p += 10
         if locals_ < params:
             raise Bad(f"function {fn}: locals {locals_} < params {params}")
+        if max_stack > 8192:
+            raise Bad(f"function {fn}: max_stack {max_stack} > 8192")
         if p + clen > len(module):
             raise Bad(f"function {fn}: code overruns module")
         p += clen

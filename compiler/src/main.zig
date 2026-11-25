@@ -115,7 +115,7 @@ fn limitMessage(err: LimitError) []const u8 {
 fn moduleByteLen(functions: []const abi.Function) usize {
     var total: usize = 10;
     for (functions) |func| {
-        total += 2 + 2 + 4 + func.code.items.len;
+        total += 2 + 2 + 2 + 4 + func.code.items.len;
     }
     return total;
 }
@@ -130,6 +130,9 @@ pub fn validateLimits(result: abi.CompileResult, module_bytes: usize, table: *co
     for (result.functions) |func| {
         if (func.name.len > Limits.name) return error.FunctionNameTooLong;
         if (func.local_count > Limits.vm_stack_slots) return error.StackTooDeep;
+        // The runtime validates `frame_base + local_count + max_stack` against
+        // its stack limit when entering a frame, so the bound has to fit too.
+        if (func.max_stack > Limits.vm_stack_slots) return error.StackTooDeep;
         // moduleSerialize stores the CIVM code length as u32.
         if (func.code.items.len > std.math.maxInt(u32)) return error.FunctionCodeTooLarge;
     }
@@ -386,7 +389,7 @@ fn moduleSerialize(allocator: Allocator, functions: []const abi.Function) ![]u8 
     }
     var out = std.ArrayList(u8).init(allocator);
     try out.appendSlice("CIVM");
-    try out.append(2);
+    try out.append(3);
     try out.append(1);
     try writeU16(&out, @intCast(functions.len));
     try writeU16(&out, entry_index);
@@ -394,6 +397,7 @@ fn moduleSerialize(allocator: Allocator, functions: []const abi.Function) ![]u8 
         if (func.code.items.len > std.math.maxInt(u32)) return error.FunctionCodeTooLarge;
         try writeU16(&out, func.param_count);
         try writeU16(&out, func.local_count);
+        try writeU16(&out, func.max_stack);
         try writeU32(&out, @intCast(func.code.items.len));
         try out.appendSlice(func.code.items);
     }
@@ -878,9 +882,9 @@ test "moduleByteLen matches moduleSerialize and a small package validates" {
     defer funcs[0].code.deinit();
     const result = abi.CompileResult{ .functions = &funcs, .plans = &.{}, .external_data = &.{} };
 
-    // 10-byte CIVM v2 header + 2+2 counts + u32 code len.
+    // 10-byte CIVM header + 2+2+2 counts + u32 code len.
     const expected = moduleByteLen(result.functions);
-    try std.testing.expectEqual(@as(usize, 18), expected);
+    try std.testing.expectEqual(@as(usize, 20), expected);
     const bytes = try moduleSerialize(std.testing.allocator, result.functions);
     defer std.testing.allocator.free(bytes);
     try std.testing.expectEqual(expected, bytes.len);

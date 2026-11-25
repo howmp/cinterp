@@ -463,14 +463,20 @@ pub const Value = extern union {
     u: u64,
 };
 
-inline fn pushAt(values: [*]Value, sp: *usize, limit: usize, v: Value) !void {
-    if (sp.* >= limit) return error.StackOverflow;
+/// Push one slot. The frame was validated against the stack limit when it was
+/// entered, using the callee's `max_stack`, so the dispatch loop does not
+/// re-check on every push. `limit` stays in the signature so the invariant is
+/// visible at each call site and can be asserted in Debug builds.
+inline fn pushAt(values: [*]Value, sp: *usize, limit: usize, v: Value) void {
+    if (comptime builtin.mode == .Debug) std.debug.assert(sp.* < limit);
     values[sp.*] = v;
     sp.* += 1;
 }
 
-inline fn popAt(values: [*]Value, sp: *usize) !Value {
-    if (sp.* == 0) return error.StackUnderflow;
+/// Pop one slot. Entry validation covers the operand stack as well, so a
+/// well-formed package cannot underflow here; Debug builds still assert it.
+inline fn popAt(values: [*]Value, sp: *usize) Value {
+    if (comptime builtin.mode == .Debug) std.debug.assert(sp.* > 0);
     sp.* -= 1;
     return values[sp.*];
 }
@@ -503,6 +509,10 @@ pub const Function = struct {
     name: []const u8 = "",
     param_count: u16,
     local_count: u16,
+    /// Highest operand-stack slot this function touches above its frame base.
+    /// CIVM v3 carries it so entering a frame can validate the whole body once
+    /// instead of checking the stack on every push and pop.
+    max_stack: u16 = 0,
     code: []const u8,
 };
 
@@ -1468,7 +1478,7 @@ pub const VM = struct {
         const magic = try r.take(4);
         if (!std.mem.eql(u8, magic, "CIVM")) return error.BadMagic;
         const version = try r.readU8();
-        if (version != 2) return error.BadVersion;
+        if (version != 3) return error.BadVersion;
         const arch = try r.readU8();
         if (arch != 1) return error.BadArch;
         const count = try r.readU16();
@@ -1483,16 +1493,34 @@ pub const VM = struct {
         while (i < n) : (i += 1) {
             const params = try r.readU16();
             const locals = try r.readU16();
+            const max_stack = try r.readU16();
             const code_len = try r.readU32();
             if (locals < params) return error.BadLocals;
+            if (max_stack > MAX_STACK) return error.StackTooDeep;
             const code = try r.take(code_len);
             self.functions[i] = .{
                 .param_count = params,
                 .local_count = locals,
+                .max_stack = max_stack,
                 .code = code,
             };
         }
         if (r.pos != r.data.len) return error.TrailingBytes;
+
+        // The dispatch loop no longer checks the operand stack on every push
+        // and pop, so the stored bound is what keeps a body inside its frame.
+        // Debug builds re-derive it and reject a record that understates what
+        // the code needs; the analysis costs a decode pass per function, so
+        // release builds skip it and rely on the compiler plus the guard slots
+        // `ensureRuntimeBuffers` adds around `values`.
+        if (comptime builtin.mode == .Debug) {
+            for (self.functions[0..n]) |func| {
+                if (func.max_stack == 0) continue;
+                if (try analyzeMaxStack(func.code, self.functions[0..n])) |needed| {
+                    if (needed > func.max_stack) return error.BadStackBound;
+                }
+            }
+        }
     }
 
     pub fn runEntry(self: *VM, name: []const u8) !i64 {
@@ -1534,6 +1562,7 @@ pub const VM = struct {
         const entry_locals: usize = entry_fn.local_count;
         self.sp = entry_locals;
         if (self.sp > self.stack_limit) return error.StackOverflow;
+        if (entry_locals + entry_fn.max_stack > self.stack_limit) return error.StackOverflow;
 
         const argc, const argv_addr, const envp_addr = try self.buildArgArea(cargs);
         if (entry_fn.param_count > 0) self.values[0] = .{ .u = @intCast(argc) };
@@ -1750,6 +1779,7 @@ pub const VM = struct {
         const base = saved_sp;
         const locals: usize = f.local_count;
         if (base + locals > self.stack_limit) return error.StackOverflow;
+        if (base + locals + f.max_stack > self.stack_limit) return error.StackOverflow;
         for (args, 0..) |v, i| self.values[base + i] = v;
         var i: usize = args.len;
         while (i < locals) : (i += 1) self.values[base + i] = .{ .i = 0 };
@@ -1803,7 +1833,7 @@ pub const VM = struct {
             switch (op) {
                 OP_RET, OP_RET_VOID => {
                     const is_void = op == OP_RET_VOID;
-                    const v: Value = if (is_void) .{ .i = 0 } else try popAt(values, &sp);
+                    const v: Value = if (is_void) .{ .i = 0 } else popAt(values, &sp);
                     if (self.frame_count == stop_frames) {
                         self.sp = sp;
                         self.result = v.i;
@@ -1813,7 +1843,7 @@ pub const VM = struct {
                     self.frame_count -= 1;
                     self.mem_top = fr.mem_mark;
                     sp = base;
-                    if (!is_void) try pushAt(values, &sp, self.stack_limit, v);
+                    if (!is_void) pushAt(values, &sp, self.stack_limit, v);
                     base = fr.base;
                     current = fr.func;
                     code = self.functions[current].code;
@@ -1828,7 +1858,7 @@ pub const VM = struct {
                 },
                 OP_LOAD_CONST_I64 => {
                     const v = try readI64(code, &ip);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = v });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = v });
                 },
                 OP_LOAD_CONST_POOL => {
                     const ref = try readU32(code, &ip);
@@ -1883,7 +1913,7 @@ pub const VM = struct {
                             }
                         }
                         if (active) {
-                            const a = try popAt(values, &sp);
+                            const a = popAt(values, &sp);
                             if (kind == .cmp) {
                                 const result: i64 = switch (next_op) {
                                     OP_CMP_EQ => @as(i64, @intFromBool(a.i == c)),
@@ -1891,7 +1921,7 @@ pub const VM = struct {
                                     OP_CMP_LT_U => @as(i64, @intFromBool(@as(u64, @bitCast(a.i)) < @as(u64, @bitCast(c)))),
                                     else => unreachable,
                                 };
-                                try pushAt(values, &sp, self.stack_limit, .{ .i = result });
+                                pushAt(values, &sp, self.stack_limit, .{ .i = result });
                             } else {
                                 const cu: u64 = @bitCast(c);
                                 const sh: u6 = @intCast(cu & 63);
@@ -1928,7 +1958,7 @@ pub const VM = struct {
                                     OP_REM_U_N => narrowCanonical(narrowLow(a.i, narrow_param) % narrowLow(c, narrow_param), narrow_param),
                                     else => unreachable,
                                 };
-                                try pushAt(values, &sp, self.stack_limit, .{ .i = result });
+                                pushAt(values, &sp, self.stack_limit, .{ .i = result });
                                 if (kind == .narrow) try normalizeTopAt(values, &sp, narrow_param);
                             }
                             ip += fused_len;
@@ -1941,7 +1971,7 @@ pub const VM = struct {
                             }
                         }
                     }
-                    if (!fused) try pushAt(values, &sp, self.stack_limit, .{ .i = c });
+                    if (!fused) pushAt(values, &sp, self.stack_limit, .{ .i = c });
                 },
                 OP_NORMALIZE => {
                     const param = try readU8(code, &ip);
@@ -1950,90 +1980,90 @@ pub const VM = struct {
                 },
                 OP_ADD_N => {
                     const param = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i +% b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i +% b.i });
                     try normalizeTopAt(values, &sp, param);
                 },
                 OP_SUB_N => {
                     const param = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i -% b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i -% b.i });
                     try normalizeTopAt(values, &sp, param);
                 },
                 OP_MUL_N => {
                     const param = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i *% b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i *% b.i });
                     try normalizeTopAt(values, &sp, param);
                 },
                 OP_AND_N => {
                     const param = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i & b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i & b.i });
                     try normalizeTopAt(values, &sp, param);
                 },
                 OP_OR_N => {
                     const param = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i | b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i | b.i });
                     try normalizeTopAt(values, &sp, param);
                 },
                 OP_XOR_N => {
                     const param = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i ^ b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i ^ b.i });
                     try normalizeTopAt(values, &sp, param);
                 },
                 OP_MAX_N, OP_MIN_N => {
                     const param = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const an = narrowForCompare(a.i, param);
                     const bn = narrowForCompare(b.i, param);
                     const take_a = if (op == OP_MAX_N)
                         (if ((param & 0x80) != 0) an >= bn else @as(u64, @bitCast(an)) >= @as(u64, @bitCast(bn)))
                     else
                         (if ((param & 0x80) != 0) an <= bn else @as(u64, @bitCast(an)) <= @as(u64, @bitCast(bn)));
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowSignExtend(if (take_a) an else bn, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowSignExtend(if (take_a) an else bn, param) });
                 },
                 OP_ABS_N => {
                     const param = try readU8(code, &ip);
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const n = narrowForCompare(v.i, param | 0x80);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowSignExtend(if (n < 0) 0 -% n else n, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowSignExtend(if (n < 0) 0 -% n else n, param) });
                 },
                 OP_CTTZ_N => {
                     const param = try readU8(code, &ip);
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const u = narrowLow(v.i, param);
                     const bits = narrowWidthBits(param);
                     const r: u64 = if (u == 0) bits else @ctz(u);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_CTLZ_N => {
                     const param = try readU8(code, &ip);
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const u = narrowLow(v.i, param);
                     const bits = narrowWidthBits(param);
                     const lz: u32 = @intCast(@clz(u));
                     const r: u64 = if (u == 0) bits else bits - (64 - lz);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_CTPOP_N => {
                     const param = try readU8(code, &ip);
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const r: u64 = @popCount(narrowLow(v.i, param));
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_BSWAP_N => {
                     const param = try readU8(code, &ip);
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const u = narrowLow(v.i, param);
                     const r: u64 = switch (narrowWidthBits(param)) {
                         8 => @as(u8, @truncate(u)),
@@ -2041,11 +2071,11 @@ pub const VM = struct {
                         32 => @byteSwap(@as(u32, @truncate(u))),
                         else => @byteSwap(u),
                     };
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_BITREV_N => {
                     const param = try readU8(code, &ip);
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const u = narrowLow(v.i, param);
                     const r: u64 = switch (narrowWidthBits(param)) {
                         8 => @as(u8, @bitReverse(@as(u8, @truncate(u)))),
@@ -2053,13 +2083,13 @@ pub const VM = struct {
                         32 => @as(u32, @bitReverse(@as(u32, @truncate(u)))),
                         else => @bitReverse(u),
                     };
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_FSHL_N, OP_FSHR_N => {
                     const param = try readU8(code, &ip);
-                    const sv = try popAt(values, &sp);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const sv = popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const width = narrowWidthBits(param);
                     const mask = narrowMask(param);
                     const au = narrowLow(a.i, param);
@@ -2071,233 +2101,233 @@ pub const VM = struct {
                         ((au << @intCast(shift)) | (bu >> @intCast(width - shift))) & mask
                     else
                         ((au << @intCast(width - shift)) | (bu >> @intCast(shift))) & mask;
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(r, param) });
                 },
                 OP_USUB_SAT_N => {
                     const param = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const au = narrowLow(a.i, param);
                     const bu = narrowLow(b.i, param);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(if (au > bu) au - bu else 0, param) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = narrowCanonical(if (au > bu) au - bu else 0, param) });
                 },
                 OP_ADD => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i +% b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i +% b.i });
                 },
                 OP_SUB => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i -% b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i -% b.i });
                 },
                 OP_MUL => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i *% b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i *% b.i });
                 },
                 OP_DUP => {
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, a);
-                    try pushAt(values, &sp, self.stack_limit, a);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, a);
+                    pushAt(values, &sp, self.stack_limit, a);
                 },
                 OP_POP => {
-                    _ = try popAt(values, &sp);
+                    _ = popAt(values, &sp);
                 },
                 OP_SWAP => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, b);
-                    try pushAt(values, &sp, self.stack_limit, a);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, b);
+                    pushAt(values, &sp, self.stack_limit, a);
                 },
                 OP_XOR => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i ^ b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i ^ b.i });
                 },
                 OP_DIV_S => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     if (b.i == 0) return error.DivisionByZero;
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @divTrunc(a.i, b.i) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @divTrunc(a.i, b.i) });
                 },
                 OP_DIV_U => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const bu: u64 = @bitCast(b.i);
                     if (bu == 0) return error.DivisionByZero;
                     const au: u64 = @bitCast(a.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(au / bu) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(au / bu) });
                 },
                 OP_REM_S => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     if (b.i == 0) return error.DivisionByZero;
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @rem(a.i, b.i) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @rem(a.i, b.i) });
                 },
                 OP_REM_U => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const bu: u64 = @bitCast(b.i);
                     if (bu == 0) return error.DivisionByZero;
                     const au: u64 = @bitCast(a.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(au % bu) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(au % bu) });
                 },
                 OP_AND => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i & b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i & b.i });
                 },
                 OP_OR => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i | b.i });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i | b.i });
                 },
                 OP_SHL => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const sh: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(u64, @bitCast(a.i)) << sh) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(u64, @bitCast(a.i)) << sh) });
                 },
                 OP_SHR_S => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const sh: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = a.i >> sh });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = a.i >> sh });
                 },
                 OP_SHR_U => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const sh: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(u64, @bitCast(a.i)) >> sh) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@as(u64, @bitCast(a.i)) >> sh) });
                 },
                 OP_FPTOSI => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const fval: f64 = @bitCast(v.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(fval) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(fval) });
                 },
                 OP_SITOFP => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const fval: f64 = @floatFromInt(v.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
                 },
                 OP_FPTOUI => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const fval: f64 = @bitCast(v.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(fval)) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(fval)) });
                 },
                 OP_UITOFP => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const uval: u64 = @bitCast(v.i);
                     const fval: f64 = @floatFromInt(uval);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
                 },
                 OP_FADD => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa + fb) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa + fb) });
                 },
                 OP_FSUB => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa - fb) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa - fb) });
                 },
                 OP_FMUL => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa * fb) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa * fb) });
                 },
                 OP_FMA => {
-                    const c = try popAt(values, &sp);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const c = popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
                     const fc: f64 = @bitCast(c.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@mulAdd(f64, fa, fb, fc)) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(@mulAdd(f64, fa, fb, fc)) });
                 },
                 OP_FDIV => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa / fb) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fa / fb) });
                 },
                 OP_FCMP => {
                     const pred = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const fa: f64 = @bitCast(a.i);
                     const fb: f64 = @bitCast(b.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
                 },
                 OP_FADD32 => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     try self.pushF32At(values, &sp, f32FromValue(a) + f32FromValue(b));
                 },
                 OP_FSUB32 => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     try self.pushF32At(values, &sp, f32FromValue(a) - f32FromValue(b));
                 },
                 OP_FMUL32 => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     try self.pushF32At(values, &sp, f32FromValue(a) * f32FromValue(b));
                 },
                 OP_FMA32 => {
-                    const c = try popAt(values, &sp);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const c = popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     try self.pushF32At(values, &sp, @mulAdd(f32, f32FromValue(a), f32FromValue(b), f32FromValue(c)));
                 },
                 OP_FDIV32 => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     try self.pushF32At(values, &sp, f32FromValue(a) / f32FromValue(b));
                 },
                 OP_FCMP32 => {
                     const pred = try readU8(code, &ip);
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const fa: f64 = f32FromValue(a);
                     const fb: f64 = f32FromValue(b);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = if (compareFloats(fa, fb, pred)) 1 else 0 });
                 },
                 OP_FPEXT => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const fval: f64 = f32FromValue(v);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(fval) });
                 },
                 OP_FPTRUNC => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const fval: f64 = @bitCast(v.i);
                     try self.pushF32At(values, &sp, @floatCast(fval));
                 },
                 OP_FPTOSI32 => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const fval = f32FromValue(v);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(fval) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = try floatToI64Safe(fval) });
                 },
                 OP_SITOFP32 => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const fval: f32 = @floatFromInt(v.i);
                     try self.pushF32At(values, &sp, fval);
                 },
                 OP_FPTOUI32 => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const fval = f32FromValue(v);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(fval)) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(try floatToU64Safe(fval)) });
                 },
                 OP_UITOFP32 => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const uval: u64 = @bitCast(v.i);
                     const fval: f32 = @floatFromInt(uval);
                     try self.pushF32At(values, &sp, fval);
@@ -2306,7 +2336,7 @@ pub const VM = struct {
                     const idx = try readU16(code, &ip);
                     const slot: usize = idx;
                     if (slot >= local_count) return error.BadLocal;
-                    try pushAt(values, &sp, self.stack_limit, values[base + slot]);
+                    pushAt(values, &sp, self.stack_limit, values[base + slot]);
                     // clang -O0 canonicalizes narrow values by loading and then
                     // immediately normalizing. Fuse the fallthrough run; a jump
                     // that targets a NORMALIZE still executes it standalone.
@@ -2346,21 +2376,21 @@ pub const VM = struct {
                     if (fused) try consumeNormalsAt(values, &sp, code, &ip);
                 },
                 OP_CMP_EQ => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (a.i == b.i) 1 else 0 });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = if (a.i == b.i) 1 else 0 });
                 },
                 OP_CMP_LT => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (a.i < b.i) 1 else 0 });
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = if (a.i < b.i) 1 else 0 });
                 },
                 OP_CMP_LT_U => {
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const au: u64 = @bitCast(a.i);
                     const bu: u64 = @bitCast(b.i);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = if (au < bu) 1 else 0 });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = if (au < bu) 1 else 0 });
                 },
                 OP_JMP => {
                     const target: usize = try readU32(code, &ip);
@@ -2370,13 +2400,13 @@ pub const VM = struct {
                 OP_JZ => {
                     const target: usize = try readU32(code, &ip);
                     if (target > code.len) return error.BadJump;
-                    const cond = try popAt(values, &sp);
+                    const cond = popAt(values, &sp);
                     if (cond.i == 0) ip = target;
                 },
                 OP_JNZ => {
                     const target: usize = try readU32(code, &ip);
                     if (target > code.len) return error.BadJump;
-                    const cond = try popAt(values, &sp);
+                    const cond = popAt(values, &sp);
                     if (cond.i != 0) ip = target;
                 },
                 OP_CREATE_CALLBACK => {
@@ -2431,16 +2461,16 @@ pub const VM = struct {
                     callback_owners[global_slot] = self;
                     const addr = platform.callbackTable(global_slot) orelse return error.UnsupportedCallback;
                     const addr64: u64 = @intCast(@intFromPtr(addr));
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr64) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr64) });
                 },
                 OP_CALLBACK_ACQUIRE => {
                     const plan_index = try readU16(code, &ip);
                     const func = try readU16(code, &ip);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = try self.acquireCallback(plan_index, func) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = try self.acquireCallback(plan_index, func) });
                 },
                 OP_CALLBACK_RELEASE => {
-                    const v = try popAt(values, &sp);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = self.releaseCallback(addressFromBits(v.i)) });
+                    const v = popAt(values, &sp);
+                    pushAt(values, &sp, self.stack_limit, .{ .i = self.releaseCallback(addressFromBits(v.i)) });
                 },
                 OP_CALL_NATIVE, OP_CALL_VARARG => {
                     const idx = try readU16(code, &ip);
@@ -2469,23 +2499,23 @@ pub const VM = struct {
                 },
                 OP_FPCLASS => {
                     const kind = try readU8(code, &ip);
-                    const mask = try popAt(values, &sp);
-                    const value = try popAt(values, &sp);
+                    const mask = popAt(values, &sp);
+                    const value = popAt(values, &sp);
                     const cls = fpClassValue(value, kind);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = if ((cls & @as(u16, @truncate(mask.u))) != 0) 1 else 0 });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = if ((cls & @as(u16, @truncate(mask.u))) != 0) 1 else 0 });
                 },
                 OP_STACKSAVE => {
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @intCast(self.mem_top) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @intCast(self.mem_top) });
                 },
                 OP_STACKRESTORE => {
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     if (v.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(v.i);
                     if (n > self.memLimit()) return error.OutOfMemory;
                     self.mem_top = n;
                 },
                 OP_VA_START => {
-                    const pv = try popAt(values, &sp);
+                    const pv = popAt(values, &sp);
                     const extra = if (va_count > va_named) va_count - va_named else 0;
                     const slot_size: usize = if (platform.abi_id == 3) 4 else 8;
                     var overflow: u64 = 0;
@@ -2556,8 +2586,8 @@ pub const VM = struct {
                     _ = p;
                 },
                 OP_VA_COPY => {
-                    const src = try popAt(values, &sp);
-                    const dst = try popAt(values, &sp);
+                    const src = popAt(values, &sp);
+                    const dst = popAt(values, &sp);
                     const n: usize = switch (platform.abi_id) {
                         1 => 24,
                         2 => 8,
@@ -2572,7 +2602,7 @@ pub const VM = struct {
                 OP_SETJMP => {
                     const slot = try readU16(code, &ip);
                     if (slot >= local_count) return error.BadLocal;
-                    const buf = try popAt(values, &sp);
+                    const buf = popAt(values, &sp);
                     var found: ?*JumpEntry = null;
                     var free_slot: ?*JumpEntry = null;
                     var ji: usize = 0;
@@ -2600,8 +2630,8 @@ pub const VM = struct {
                     values[base + slot] = .{ .i = 0 };
                 },
                 OP_LONGJMP => {
-                    const value = try popAt(values, &sp);
-                    const buf = try popAt(values, &sp);
+                    const value = popAt(values, &sp);
+                    const buf = popAt(values, &sp);
                     var ji: usize = 0;
                     while (ji < self.jumps.len) : (ji += 1) {
                         const e = &self.jumps[ji];
@@ -2626,14 +2656,14 @@ pub const VM = struct {
                     const sym = try self.resolveData(idx);
                     try self.recordNativeTarget(@intFromPtr(sym));
                     const addr: u64 = @intFromPtr(sym);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_ADDR_CONST => {
                     const off = try readU32(code, &ip);
                     const o: usize = off;
                     if (o >= self.mem.len) return error.BadAddress;
                     const addr: u64 = @intFromPtr(&self.mem[o]);
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_SET_MEM_TOP => {
                     const size = try readU32(code, &ip);
@@ -2649,7 +2679,7 @@ pub const VM = struct {
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_ALLOCA_ALIGNED => {
                     const size = try readU16(code, &ip);
@@ -2661,10 +2691,10 @@ pub const VM = struct {
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_ALLOCA_DYN => {
-                    const sv = try popAt(values, &sp);
+                    const sv = popAt(values, &sp);
                     if (sv.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(sv.i);
                     const start = (self.mem_top + 7) & ~@as(usize, 7);
@@ -2672,12 +2702,12 @@ pub const VM = struct {
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_ALLOCA_DYN_ALIGN => {
                     const align_raw = try readU8(code, &ip);
                     const alignment: usize = if (align_raw == 0) 8 else align_raw;
-                    const sv = try popAt(values, &sp);
+                    const sv = popAt(values, &sp);
                     if (sv.i < 0) return error.BadMemorySize;
                     const n: usize = @intCast(sv.i);
                     const start = (self.mem_top + alignment - 1) & ~(alignment - 1);
@@ -2685,13 +2715,13 @@ pub const VM = struct {
                     @memset(self.mem[start .. start + n], 0);
                     self.mem_top = start + n;
                     const addr: u64 = @intCast(@intFromPtr(&self.mem[start]));
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(addr) });
                 },
                 OP_LOAD_MEM => {
                     const size = try readU8(code, &ip);
                     const n: usize = size;
                     if (n == 0 or n > 8) return error.BadMemorySize;
-                    const v = try popAt(values, &sp);
+                    const v = popAt(values, &sp);
                     const addr: usize = addressFromBits(v.i);
                     if (!validMemoryRange(addr, n)) return error.BadAddress;
 
@@ -2719,14 +2749,14 @@ pub const VM = struct {
                             bits |= mask;
                         }
                     }
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(bits) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @bitCast(bits) });
                 },
                 OP_STORE_MEM => {
                     const size = try readU8(code, &ip);
                     const n: usize = size;
                     if (n == 0 or n > 8) return error.BadMemorySize;
-                    const av = try popAt(values, &sp);
-                    const vv = try popAt(values, &sp);
+                    const av = popAt(values, &sp);
+                    const vv = popAt(values, &sp);
                     const addr: usize = addressFromBits(av.i);
                     if (!validMemoryRange(addr, n)) return error.BadAddress;
 
@@ -2758,9 +2788,9 @@ pub const VM = struct {
                     }
                 },
                 OP_MEMCPY => {
-                    const len_v = try popAt(values, &sp);
-                    const src_v = try popAt(values, &sp);
-                    const dst_v = try popAt(values, &sp);
+                    const len_v = popAt(values, &sp);
+                    const src_v = popAt(values, &sp);
+                    const dst_v = popAt(values, &sp);
                     if (len_v.i < 0) return error.BadMemorySize;
                     const len: usize = @intCast(len_v.i);
                     const dst_addr = addressFromBits(dst_v.i);
@@ -2778,9 +2808,9 @@ pub const VM = struct {
                     }
                 },
                 OP_MEMSET => {
-                    const len_v = try popAt(values, &sp);
-                    const val_v = try popAt(values, &sp);
-                    const dst_v = try popAt(values, &sp);
+                    const len_v = popAt(values, &sp);
+                    const val_v = popAt(values, &sp);
+                    const dst_v = popAt(values, &sp);
                     if (len_v.i < 0) return error.BadMemorySize;
                     const len: usize = @intCast(len_v.i);
                     const dst_addr = addressFromBits(dst_v.i);
@@ -2855,6 +2885,7 @@ pub const VM = struct {
                     va_type_count = @intCast(extra);
                     sp = extra_base + extra;
                     if (sp > self.stack_limit) return error.StackOverflow;
+                    if (extra_base + extra + callee.max_stack > self.stack_limit) return error.StackOverflow;
                     ip = 0;
                 },
                 OP_CALL_VARIADIC => {
@@ -2914,6 +2945,7 @@ pub const VM = struct {
                     va_type_count = 0;
                     sp = extra_base + extra;
                     if (sp > self.stack_limit) return error.StackOverflow;
+                    if (extra_base + extra + callee.max_stack > self.stack_limit) return error.StackOverflow;
                     ip = 0;
                 },
                 OP_CALL => {
@@ -2949,6 +2981,7 @@ pub const VM = struct {
                     va_type_count = 0;
                     sp = callee_base + locals;
                     if (sp > self.stack_limit) return error.StackOverflow;
+                    if (callee_base + locals + callee.max_stack > self.stack_limit) return error.StackOverflow;
                     var li: usize = params;
                     while (li < locals) : (li += 1) {
                         values[callee_base + li] = .{ .i = 0 };
@@ -2959,11 +2992,11 @@ pub const VM = struct {
                     const fn_idx = try readU16(code, &ip);
                     const fidx: usize = fn_idx;
                     if (fidx >= self.func_count) return error.BadFunction;
-                    try pushAt(values, &sp, self.stack_limit, .{ .i = @intCast(fidx + 1) });
+                    pushAt(values, &sp, self.stack_limit, .{ .i = @intCast(fidx + 1) });
                 },
                 OP_CALL_INDIRECT_NATIVE => {
                     const plan_idx = try readU16(code, &ip);
-                    const tag = try popAt(values, &sp);
+                    const tag = popAt(values, &sp);
                     if (tag.i > 0 and tag.i <= self.func_count) {
                         const fidx: usize = @intCast(tag.i - 1);
                         const callee = self.functions[fidx];
@@ -2991,6 +3024,7 @@ pub const VM = struct {
                         va_count = 0;
                         sp = callee_base + locals;
                         if (sp > self.stack_limit) return error.StackOverflow;
+                        if (callee_base + locals + callee.max_stack > self.stack_limit) return error.StackOverflow;
                         var li: usize = params;
                         while (li < locals) : (li += 1) {
                             values[callee_base + li] = .{ .i = 0 };
@@ -3017,7 +3051,7 @@ pub const VM = struct {
                     }
                 },
                 OP_CALL_INDIRECT => {
-                    const tag = try popAt(values, &sp);
+                    const tag = popAt(values, &sp);
                     if (tag.i <= 0) return error.BadFunction;
                     const fidx: usize = @intCast(tag.i - 1);
                     if (fidx >= self.func_count) return error.BadFunction;
@@ -3050,6 +3084,7 @@ pub const VM = struct {
                     va_type_count = 0;
                     sp = callee_base + locals;
                     if (sp > self.stack_limit) return error.StackOverflow;
+                    if (callee_base + locals + callee.max_stack > self.stack_limit) return error.StackOverflow;
                     var li: usize = params;
                     while (li < locals) : (li += 1) {
                         values[callee_base + li] = .{ .i = 0 };
@@ -3059,78 +3094,78 @@ pub const VM = struct {
                 OP_SHL_N => {
                     const param = try readU8(code, &ip);
                     if ((param & 0x03) == 0x03) return error.BadOpcode;
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const shift: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try pushAt(values, &sp, self.stack_limit, .{
+                    pushAt(values, &sp, self.stack_limit, .{
                         .i = narrowCanonical(narrowLow(a.i, param) << shift, param),
                     });
                 },
                 OP_SHR_U_N => {
                     const param = try readU8(code, &ip);
                     if ((param & 0x03) == 0x03) return error.BadOpcode;
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const shift: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try pushAt(values, &sp, self.stack_limit, .{
+                    pushAt(values, &sp, self.stack_limit, .{
                         .i = narrowCanonical(narrowLow(a.i, param) >> shift, param),
                     });
                 },
                 OP_SHR_S_N => {
                     const param = try readU8(code, &ip);
                     if ((param & 0x03) == 0x03) return error.BadOpcode;
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const shift: u6 = @intCast(@as(u64, @bitCast(b.i)) & 63);
-                    try pushAt(values, &sp, self.stack_limit, .{
+                    pushAt(values, &sp, self.stack_limit, .{
                         .i = narrowSignExtend(narrowSignExtend(a.i, param) >> shift, param),
                     });
                 },
                 OP_DIV_S_N => {
                     const param = try readU8(code, &ip);
                     if ((param & 0x03) == 0x03) return error.BadOpcode;
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const an = narrowSignExtend(a.i, param);
                     const bn = narrowSignExtend(b.i, param);
                     if (bn == 0) return error.DivisionByZero;
-                    try pushAt(values, &sp, self.stack_limit, .{
+                    pushAt(values, &sp, self.stack_limit, .{
                         .i = narrowSignExtend(@divTrunc(an, bn), param),
                     });
                 },
                 OP_DIV_U_N => {
                     const param = try readU8(code, &ip);
                     if ((param & 0x03) == 0x03) return error.BadOpcode;
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const au = narrowLow(a.i, param);
                     const bu = narrowLow(b.i, param);
                     if (bu == 0) return error.DivisionByZero;
-                    try pushAt(values, &sp, self.stack_limit, .{
+                    pushAt(values, &sp, self.stack_limit, .{
                         .i = narrowCanonical(au / bu, param),
                     });
                 },
                 OP_REM_S_N => {
                     const param = try readU8(code, &ip);
                     if ((param & 0x03) == 0x03) return error.BadOpcode;
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const an = narrowSignExtend(a.i, param);
                     const bn = narrowSignExtend(b.i, param);
                     if (bn == 0) return error.DivisionByZero;
-                    try pushAt(values, &sp, self.stack_limit, .{
+                    pushAt(values, &sp, self.stack_limit, .{
                         .i = narrowSignExtend(@rem(an, bn), param),
                     });
                 },
                 OP_REM_U_N => {
                     const param = try readU8(code, &ip);
                     if ((param & 0x03) == 0x03) return error.BadOpcode;
-                    const b = try popAt(values, &sp);
-                    const a = try popAt(values, &sp);
+                    const b = popAt(values, &sp);
+                    const a = popAt(values, &sp);
                     const au = narrowLow(a.i, param);
                     const bu = narrowLow(b.i, param);
                     if (bu == 0) return error.DivisionByZero;
-                    try pushAt(values, &sp, self.stack_limit, .{
+                    pushAt(values, &sp, self.stack_limit, .{
                         .i = narrowCanonical(au % bu, param),
                     });
                 },
@@ -3150,16 +3185,16 @@ pub const VM = struct {
     }
 
     inline fn push(self: *VM, v: Value) !void {
-        try pushAt(self.values.ptr, &self.sp, self.stack_limit, v);
+        pushAt(self.values.ptr, &self.sp, self.stack_limit, v);
     }
 
     inline fn pushF32At(self: *VM, values: [*]Value, sp: *usize, f: f32) !void {
         const bits: u32 = @bitCast(f);
-        try pushAt(values, sp, self.stack_limit, .{ .i = @intCast(bits) });
+        pushAt(values, sp, self.stack_limit, .{ .i = @intCast(bits) });
     }
 
     fn pushF32(self: *VM, f: f32) !void {
-        try self.pushF32At(self.values.ptr, &self.sp, f);
+        self.pushF32At(self.values.ptr, &self.sp, f);
     }
 
     fn allocTemp(self: *VM, size: usize, alignment: usize) ![]u8 {
@@ -3498,6 +3533,166 @@ fn badOpcode(op: u8, current: usize, ip: usize) error{BadOpcode} {
     @setCold(true);
     std.debug.print("bad opcode 0x{x} func={d} ip={d}\n", .{ op, current, ip });
     return error.BadOpcode;
+}
+
+/// Net operand-stack effect of one instruction, used to re-derive a function's
+/// stack bound at load time. Calls whose return shape is not recorded in CIVM
+/// are given the larger of the two possible effects: over-stating the bound can
+/// only reject a package, never let one run past its frame.
+const StackEffect = struct { pop: u16, push: u16 };
+
+fn loadStackEffect(opcode: u8, code: []const u8, at: usize, funcs: []const Function) !StackEffect {
+    return switch (opcode) {
+        OP_RET => .{ .pop = 1, .push = 0 },
+        OP_RET_VOID => .{ .pop = 0, .push = 0 },
+        OP_LOAD_CONST_I64, OP_LOAD_CONST_POOL, OP_LOAD_LOCAL, OP_FUNC_ADDR, OP_ADDR_CONST, OP_ADDR_EXTERN => .{ .pop = 0, .push = 1 },
+        OP_STACKSAVE, OP_ALLOCA, OP_ALLOCA_ALIGNED, OP_ALLOCA_DYN, OP_ALLOCA_DYN_ALIGN => .{ .pop = 0, .push = 1 },
+        OP_CREATE_CALLBACK, OP_CALLBACK_ACQUIRE => .{ .pop = 0, .push = 1 },
+        OP_STORE_LOCAL, OP_POP, OP_STORE_MEM, OP_STACKRESTORE, OP_VA_START => .{ .pop = 1, .push = 0 },
+        OP_SET_MEM_TOP => .{ .pop = 0, .push = 0 },
+        OP_DUP => .{ .pop = 1, .push = 2 },
+        OP_SWAP => .{ .pop = 2, .push = 2 },
+        OP_LOAD_MEM, OP_NORMALIZE, OP_CALLBACK_RELEASE => .{ .pop = 1, .push = 1 },
+        OP_FPTOSI, OP_SITOFP, OP_FPTOUI, OP_UITOFP, OP_FPEXT, OP_FPTRUNC, OP_FPTOSI32, OP_SITOFP32, OP_FPTOUI32, OP_UITOFP32 => .{ .pop = 1, .push = 1 },
+        OP_ABS_N, OP_CTTZ_N, OP_CTLZ_N, OP_CTPOP_N, OP_BSWAP_N, OP_BITREV_N => .{ .pop = 1, .push = 1 },
+        OP_ADD, OP_SUB, OP_MUL, OP_XOR, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U, OP_AND, OP_OR, OP_SHL, OP_SHR_S, OP_SHR_U => .{ .pop = 2, .push = 1 },
+        OP_FADD, OP_FSUB, OP_FMUL, OP_FDIV, OP_FADD32, OP_FSUB32, OP_FMUL32, OP_FDIV32 => .{ .pop = 2, .push = 1 },
+        OP_CMP_EQ, OP_CMP_LT, OP_CMP_LT_U, OP_FCMP, OP_FCMP32, OP_FPCLASS => .{ .pop = 2, .push = 1 },
+        OP_ADD_N, OP_SUB_N, OP_MUL_N, OP_AND_N, OP_OR_N, OP_XOR_N, OP_MAX_N, OP_MIN_N => .{ .pop = 2, .push = 1 },
+        OP_FSHL_N, OP_FSHR_N, OP_USUB_SAT_N, OP_SHL_N, OP_SHR_U_N, OP_SHR_S_N => .{ .pop = 2, .push = 1 },
+        OP_DIV_S_N, OP_DIV_U_N, OP_REM_S_N, OP_REM_U_N => .{ .pop = 2, .push = 1 },
+        OP_FMA, OP_FMA32 => .{ .pop = 3, .push = 1 },
+        OP_MEMCPY, OP_MEMSET => .{ .pop = 3, .push = 0 },
+        OP_VA_COPY, OP_LONGJMP => .{ .pop = 2, .push = 0 },
+        OP_SETJMP => .{ .pop = 1, .push = 0 },
+        OP_JMP => .{ .pop = 0, .push = 0 },
+        OP_JZ, OP_JNZ => .{ .pop = 1, .push = 0 },
+        OP_CALL => blk: {
+            const fidx: usize = std.mem.readInt(u16, code[at + 1 ..][0..2], .little);
+            if (fidx >= funcs.len) return error.BadFunction;
+            break :blk .{ .pop = funcs[fidx].param_count, .push = 1 };
+        },
+        // CIPL owns the argument/return shape and the module loader does not
+        // read it, so these cannot be sized here. `.unknown` makes the walk
+        // stop rather than guess.
+        OP_CALL_NATIVE, OP_CALL_VARARG, OP_CALL_INDIRECT_NATIVE => return error.UnsizedCall,
+        OP_CALL_INDIRECT => .{ .pop = 1, .push = 1 },
+        OP_CALL_VARIADIC, OP_CALL_VARIADIC_TYPED => blk: {
+            const total = std.mem.readInt(u16, code[at + 3 ..][0..2], .little);
+            break :blk .{ .pop = total, .push = 1 };
+        },
+        else => return error.BadOpcode,
+    };
+}
+
+/// Byte length of one instruction, mirroring the VM's own decoding.
+fn loadInstrLen(opcode: u8, code: []const u8, at: usize, funcs: []const Function) !usize {
+    const operands: usize = switch (opcode) {
+        OP_RET, OP_RET_VOID, OP_ADD, OP_SUB, OP_MUL, OP_DUP, OP_POP, OP_SWAP, OP_XOR, OP_DIV_S, OP_DIV_U,
+        OP_REM_S, OP_REM_U, OP_AND, OP_OR, OP_SHL, OP_SHR_S, OP_SHR_U, OP_FPTOSI, OP_SITOFP,
+        OP_FADD, OP_FSUB, OP_FMUL, OP_FDIV, OP_FADD32, OP_FSUB32, OP_FMUL32, OP_FDIV32,
+        OP_CMP_EQ, OP_CMP_LT, OP_CMP_LT_U, OP_FPEXT, OP_FPTRUNC, OP_FPTOSI32, OP_SITOFP32,
+        OP_CALL_INDIRECT, OP_MEMCPY, OP_MEMSET, OP_FPTOUI, OP_UITOFP, OP_FPTOUI32, OP_UITOFP32,
+        OP_CALLBACK_RELEASE, OP_LONGJMP, OP_VA_START, OP_VA_COPY, OP_STACKSAVE, OP_STACKRESTORE,
+        OP_FMA, OP_FMA32,
+        => 0,
+        OP_FCMP, OP_FCMP32, OP_FPCLASS, OP_LOAD_MEM, OP_STORE_MEM, OP_NORMALIZE,
+        OP_ADD_N, OP_SUB_N, OP_MUL_N, OP_AND_N, OP_OR_N, OP_XOR_N, OP_MAX_N, OP_MIN_N,
+        OP_ABS_N, OP_CTTZ_N, OP_CTLZ_N, OP_CTPOP_N, OP_BSWAP_N, OP_BITREV_N, OP_FSHL_N,
+        OP_FSHR_N, OP_USUB_SAT_N, OP_SHL_N, OP_SHR_U_N, OP_SHR_S_N, OP_DIV_S_N, OP_DIV_U_N,
+        OP_REM_S_N, OP_REM_U_N, OP_ALLOCA_DYN_ALIGN,
+        => 1,
+        OP_LOAD_LOCAL, OP_STORE_LOCAL, OP_CALL, OP_FUNC_ADDR, OP_ALLOCA, OP_SETJMP,
+        OP_ADDR_EXTERN, OP_CALL_NATIVE, OP_CALL_VARARG, OP_CALL_INDIRECT_NATIVE,
+        => 2,
+        OP_ALLOCA_ALIGNED => 3,
+        OP_JMP, OP_JZ, OP_JNZ, OP_ADDR_CONST, OP_SET_MEM_TOP, OP_LOAD_CONST_POOL,
+        OP_CALLBACK_ACQUIRE, OP_CALL_VARIADIC => 4,
+        OP_CREATE_CALLBACK => 6,
+        OP_LOAD_CONST_I64 => 8,
+        OP_CALL_VARIADIC_TYPED => blk: {
+            if (at + 5 > code.len) return error.TruncatedCode;
+            const fidx: usize = std.mem.readInt(u16, code[at + 1 ..][0..2], .little);
+            const total = std.mem.readInt(u16, code[at + 3 ..][0..2], .little);
+            if (fidx >= funcs.len) return error.BadFunction;
+            const named: u16 = funcs[fidx].param_count;
+            var pos = at + 5;
+            var i: u16 = named;
+            while (i < total) : (i += 1) {
+                if (pos >= code.len) return error.TruncatedCode;
+                const tag = code[pos];
+                pos += 1;
+                if (tag == 3) {
+                    if (pos + 2 > code.len) return error.TruncatedCode;
+                    pos += 2;
+                }
+            }
+            break :blk pos - at - 1;
+        },
+        else => return error.BadOpcode,
+    };
+    return 1 + operands;
+}
+
+/// Re-derive the operand-stack bound of one function from its bytecode. Used
+/// only while loading: the dispatch loop trusts the stored bound, so a package
+/// that understates it must be rejected here.
+fn analyzeMaxStack(code: []const u8, funcs: []const Function) !?u16 {
+    if (code.len == 0) return 0;
+    const unknown = std.math.maxInt(u32);
+    const allocator = std.heap.page_allocator;
+    const depth = try allocator.alloc(u32, code.len);
+    defer allocator.free(depth);
+    @memset(depth, unknown);
+
+    var work = std.ArrayList(usize).init(allocator);
+    defer work.deinit();
+    depth[0] = 0;
+    try work.append(0);
+
+    var max_depth: u32 = 0;
+    while (work.popOrNull()) |at| {
+        const cur = depth[at];
+        if (cur == unknown) continue;
+        if (cur > max_depth) max_depth = cur;
+        const opcode = code[at];
+        const effect = loadStackEffect(opcode, code, at, funcs) catch |err| switch (err) {
+            error.UnsizedCall => return null,
+            else => return err,
+        };
+        const len = try loadInstrLen(opcode, code, at, funcs);
+        if (at + len > code.len) return error.TruncatedCode;
+        if (effect.pop > cur) return error.StackUnderflow;
+        const after = cur - effect.pop + effect.push;
+        if (after > max_depth) max_depth = after;
+
+        switch (opcode) {
+            OP_RET, OP_RET_VOID, OP_LONGJMP => {},
+            OP_JMP => try enqueue(depth, &work, code, at, after),
+            OP_JZ, OP_JNZ => {
+                try enqueue(depth, &work, code, at, after);
+                if (at + len < code.len and depth[at + len] == unknown) {
+                    depth[at + len] = after;
+                    try work.append(at + len);
+                }
+            },
+            else => {
+                if (at + len < code.len and depth[at + len] == unknown) {
+                    depth[at + len] = after;
+                    try work.append(at + len);
+                }
+            },
+        }
+    }
+    if (max_depth > std.math.maxInt(u16)) return error.StackTooDeep;
+    return @intCast(max_depth);
+}
+
+fn enqueue(depth: []u32, work: *std.ArrayList(usize), code: []const u8, at: usize, value: u32) !void {
+    const target: usize = std.mem.readInt(u32, code[at + 1 ..][0..4], .little);
+    if (target >= code.len or depth[target] != std.math.maxInt(u32)) return;
+    depth[target] = value;
+    try work.append(target);
 }
 
 fn readU8(code: []const u8, ip: *usize) !u8 {

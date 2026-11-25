@@ -57,21 +57,23 @@ def module_span(data: bytes) -> tuple[int, int] | None:
 
 def functions(data: bytes, start: int, length: int) -> list[dict]:
     module = data[start : start + length]
-    if len(module) < 10 or module[:4] != b"CIVM" or module[4] != 2:
+    if len(module) < 10 or module[:4] != b"CIVM" or module[4] != 3:
         return []
     count = struct.unpack_from("<H", module, 6)[0]
     pos = 10
     out = []
     for index in range(count):
-        if pos + 8 > len(module):
+        if pos + 10 > len(module):
             break
         params_off = pos
         params = struct.unpack_from("<H", module, pos)[0]
         locals_off = pos + 2
         locals_count = struct.unpack_from("<H", module, pos + 2)[0]
-        code_len_off = pos + 4
-        code_len = struct.unpack_from("<I", module, pos + 4)[0]
-        code_off = pos + 8
+        max_stack_off = pos + 4
+        max_stack = struct.unpack_from("<H", module, pos + 4)[0]
+        code_len_off = pos + 6
+        code_len = struct.unpack_from("<I", module, pos + 6)[0]
+        code_off = pos + 10
         pos = code_off + code_len
         if pos > len(module):
             break
@@ -79,11 +81,13 @@ def functions(data: bytes, start: int, length: int) -> list[dict]:
             "index": index,
             "params_off": start + params_off,
             "locals_off": start + locals_off,
+            "max_stack_off": start + max_stack_off,
             "code_len_off": start + code_len_off,
             "code_off": start + code_off,
             "code_len": code_len,
             "params": params,
             "locals": locals_count,
+            "max_stack": max_stack,
         })
     return out
 
@@ -103,7 +107,7 @@ def mutate(data: bytes, rng: random.Random) -> bytes | None:
     funcs = functions(buf, start, length)
     if not funcs:
         return None
-    kind = rng.randrange(7)
+    kind = rng.randrange(8)
     fn = rng.choice(funcs)
     if kind == 0 and fn["code_len"] > 0:
         pos = fn["code_off"] + rng.randrange(fn["code_len"])
@@ -121,6 +125,11 @@ def mutate(data: bytes, rng: random.Random) -> bytes | None:
     elif kind == 5 and fn["code_len"] > 1:
         pos = fn["code_off"] + rng.randrange(fn["code_len"] - 1)
         buf[pos : pos + 2] = bytes([rng.choice(OPCODES), rng.randrange(256)])
+    elif kind == 6:
+        # CIVM v3 records the per-function operand-stack bound. A too-small
+        # value must not let a body run past its frame, so mutating it is a
+        # first-class fuzz target alongside locals.
+        struct.pack_into("<H", buf, fn["max_stack_off"], rng.choice([0, 1, 0xFFFF, fn["max_stack"], rng.getrandbits(16)]))
     else:
         pos = fn["code_off"] + rng.randrange(fn["code_len"] or 1)
         buf[pos] ^= 1 << rng.randrange(8)

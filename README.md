@@ -9,7 +9,7 @@
 - **编译器**：Zig + `zig cc`，支持 C17 常用子集、结构体 FFI、varargs 和 callback。
 - **运行时**：Zig 0.13，栈式 VM + 线性内存；提供 `cinterp-run` 和 C 嵌入库。
 - **目标平台**：Linux x86-64、Linux AArch64、Windows x86-64、Windows x86。
-- **包格式**：`CIPKG` v4（trusted），由 CIVM v2、CIPL、CIPI 和 CIPC 常量/字符串池组成。
+- **包格式**：`CIPKG` v4（trusted），由 CIVM v3、CIPL、CIPI 和 CIPC 常量/字符串池组成。
   0.1.7 已发布，但仍不保证 CIB 格式兼容，可能随实现直接调整。
 
 ## 2. 特性

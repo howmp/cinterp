@@ -53,6 +53,11 @@ pub const Function = struct {
     param_attrs: [][]const u8,
     is_varargs: bool = false,
     local_count: u16,
+    /// Upper bound of the operand stack this function can reach above its own
+    /// frame base (so `frame_base + max_stack` is the highest slot it can
+    /// touch). The runtime validates it once when entering the frame, which
+    /// lets the dispatch loop drop its per-instruction stack checks.
+    max_stack: u16 = 0,
     code: std.ArrayList(u8),
 };
 

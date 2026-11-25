@@ -62,7 +62,7 @@ CIPC 是必需的 section。名称池保存 CIPL 计划名、CIPI data 名、pro
 ```
 offset size field
 0      4    magic = "CIPC"
-4      1    version = 2
+4      1    version = 3
 5      1    flags：bit0=1 表示 name_blob/data 已 XOR；bit1..7 必须为 0
 6      2    name_count (u16 LE)
 8      4    name_blob_len (u32 LE)
@@ -138,14 +138,14 @@ provider[]:
 - **运行期 fallback**：索引未收录的符号不写 plan entry，运行期从进程符号、宿主显式库、默认 CRT 库（Linux `libc.so.6`/`libm.so.6`/`libdl.so.2`/`libpthread.so.0`/`librt.so.1`/`libutil.so.1`/`libresolv.so.2`，Windows `msvcrt.dll`/`ucrtbase.dll`/`ntdll.dll`）继续解析。
 - `--no-auto-link` 关闭自动 provider 生成；自定义符号继续使用 `ci_vm_load_library`/运行期 fallback。
 
-## 3. CIVM 模块（v2）
+## 3. CIVM 模块（v3）
 
 ### 3.1 头部
 
 ```
 offset size field
 0      4    magic = "CIVM"
-4      1    version = 2
+4      1    version = 3
 5      1    arch = 1          # VM 字节码架构，不是宿主 CPU
 6      2    func_count (u16)
 8      2    entry_func_index (u16；0xffff = 没有入口)
@@ -157,6 +157,7 @@ offset size field
 size  field
 2     param_count (u16)
 2     local_count (u16)
+2     max_stack (u16)
 4     code_len (u32)
 M     code bytes
 ```
@@ -164,6 +165,11 @@ M     code bytes
 - 函数记录不保存名称；运行时只通过 `entry_func_index` 进入模块。CLI 的默认入口别名仍是 `main`，非 `main` 入口不再按名字查找。
 - `param_count` 是函数参数个数；参数占用函数局部槽的**前 `param_count` 个**。
 - `local_count` 包含参数槽和后续 alloca/SSA 槽；必须 `>= param_count`。
+- `max_stack` 是函数体内操作数栈相对帧基址（`base`）的深度上界。运行时在建立帧时
+  校验一次 `base + local_count + max_stack <= stack_limit`，dispatch 循环因此不再
+  逐指令检查 push/pop 越界。`0` 表示“未记录”，此时只做帧入口检查；编译器总是写入
+  精确值（至少含 `RET` 弹栈所需的深度）。上界必须覆盖所有可达控制流路径，超过 8192
+  的包在加载期被拒绝（`BadStackBound`）。
 - 函数数上限 `MAX_FUNCS = 512`；code 是字节流，跳转目标是**当前函数 code 内的绝对字节偏移**。
 
 ### 3.3 槽、栈与返回值
@@ -191,7 +197,7 @@ VM 默认有 1 MiB 线性内存（`mem`，`ci_vm_config.memory_size=0` 选默认
 
 ## 4. Opcode
 
-> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xC0 的全部常量，`POP`（0x15）/`SWAP`（0x16）也由运行时解码；`SWAP` 现在用于搬运宽浮点返回值。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。新增 opcode 不改变 CIVM v2 容器版本；旧 runtime 解码到未知 opcode 会返回 `BadOpcode`，因此 `.cib` 必须与配套 runtime 一起分发。
+> **单一来源**：opcode 编号的权威定义是 `compiler/src/opcodes.zig`（编译器实际发出的字节）与 `runtime/src/vm.zig` 顶部的 `OP_*` 常量及 `run` 中的 dispatch（运行时实际解码的字节）。下表已按当前代码逐项核对：它覆盖 `compiler/src/opcodes.zig` 中 0x01–0xC0 的全部常量，`POP`（0x15）/`SWAP`（0x16）也由运行时解码；`SWAP` 现在用于搬运宽浮点返回值。若今后新增/删除 opcode，必须同步此表；无法保证同步时应把本节改为只链接源码，不要保留过期快照。新增 opcode 不改变 CIVM v3 容器版本；旧 runtime 解码到未知 opcode 会返回 `BadOpcode`，因此 `.cib` 必须与配套 runtime 一起分发。
 
 栈效果按“先压入的值在下面”描述，例如 `a, b -> result` 表示先压 `a`、再压 `b`，opcode 弹 `b` 再弹 `a`。
 
@@ -511,7 +517,7 @@ xxd -g1 build/hello.cib
 ./scripts/tools/cib_dump.py --asm build/ffi_callback.cib
 ```
 
-`cib_dump.py` 支持 CIPKG v4、CIVM v2、CIPC v2（读取包头 key，解密 name/data 后展示）、紧凑 CIPL/CIPI；会打印 section
+`cib_dump.py` 支持 CIPKG v4、CIVM v3、CIPC v2（读取包头 key，解密 name/data 后展示）、紧凑 CIPL/CIPI；会打印 section
 偏移/长度、CIPC 名称索引与解密后的 data hexdump、CIPL/CIPI 的 `name_ref`/`lib_ref`/`symbol_ref`、
 函数与计划表、import provider，以及每个函数的 opcode 反汇编。默认最多显示 256 字节
 CIPC data，`--full-data` 显示全部，`--data-limit N` 可调整上限。`civm_lint.py` 同样会

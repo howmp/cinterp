@@ -223,7 +223,7 @@ def parse_civm(module: bytes) -> dict:
     if len(module) < 10:
         raise Bad("CIVM header truncated")
     version = read_u8(module, 4)
-    if version != 2:
+    if version != 3:
         raise Bad(f"unsupported CIVM version {version}")
     arch = read_u8(module, 5)
     count = read_u16(module, 6)
@@ -235,14 +235,16 @@ def parse_civm(module: bytes) -> dict:
     for index in range(count):
         params = read_u16(module, pos)
         locals_ = read_u16(module, pos + 2)
-        code_len = read_u32(module, pos + 4)
-        pos += 8
+        max_stack = read_u16(module, pos + 4)
+        code_len = read_u32(module, pos + 6)
+        pos += 10
         code, pos = take(module, pos, code_len)
         functions.append(
             {
                 "index": index,
                 "params": params,
                 "locals": locals_,
+                "max_stack": max_stack,
                 "code": code,
                 "code_offset": pos - code_len,
             }
@@ -516,7 +518,7 @@ def header_text(cib: dict, data_limit: int | None = 256) -> str:
     for fn in civm["functions"]:
         lines.append(
             f"  [{fn['index']}] params={fn['params']} "
-            f"locals={fn['locals']} code={len(fn['code'])} bytes "
+            f"locals={fn['locals']} max_stack={fn['max_stack']} code={len(fn['code'])} bytes "
             f"code_off=0x{fn['code_offset']:04x}"
         )
     if cipl["omitted"]:
@@ -675,7 +677,7 @@ def asm_text(cib: dict) -> str:
         code = fn["code"]
         marker = " entry" if fn["index"] == cib["civm"]["entry"] else ""
         lines.append(
-            f"\nfn{fn['index']}{marker}: params={fn['params']} locals={fn['locals']} code={len(code)}"
+            f"\nfn{fn['index']}{marker}: params={fn['params']} locals={fn['locals']} max_stack={fn['max_stack']} code={len(code)}"
         )
         pos = 0
         while pos < len(code):

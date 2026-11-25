@@ -42,7 +42,7 @@ C 源码
   → zig cc -S -emit-llvm -O2
   → compiler/src/ir（typed lexer/parser/AST/verifier）
   → lower_ast.zig（CIVM 字节码 + FFI 计划）
-  → main.zig（CIPKG v4：CIVM v2 + CIPL + CIPI + CIPC）
+  → main.zig（CIPKG v4：CIVM v3 + CIPL + CIPI + CIPC）
   → cinterp-cc（可选 --dump/--dump-ast/--dump-imports）
 ```
 
@@ -112,7 +112,9 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。默认为 `-O2`，并追�
 
 ### 6.2 帧与线性内存
 
-- VM 使用固定槽栈（默认/上限 `MAX_STACK=8192`，`ci_vm_config.stack_size` 只能下调）、帧数 `MAX_FRAMES=512`。
+- VM 使用固定槽栈（默认/上限 `MAX_STACK=8192`，`ci_vm_config.stack_size` 只能下调）、帧数 `MAX_FRAMES=512`。栈上界由 CIVM 的每函数 `max_stack` 承载：建立帧时校验一次
+  `base + local_count + max_stack`，dispatch 内的 push/pop 不再逐指令检查；Releases 额外在
+  `values` 之上保留 64 个 guard 槽吸收越界写，Debug 构建在加载期整体重算 `max_stack` 并拒绝偏小的记录。
 - 线性内存默认 1 MiB，可由 `ci_vm_config.memory_size` 调小/调大，上限 16 MiB；`mem_top` 是 bump pointer，函数返回时回退 alloca 区域。
 - `argv/envp` 位于线性内存顶部；所有 alloca/`SET_MEM_TOP`/`STACKRESTORE` 受 `memLimit()` 限制，不能覆盖参数区。
 - VLA 使用 `STACKSAVE/STACKRESTORE` 恢复 `mem_top`；`alloca` 的零大小和大对象分别用固定/动态 opcode 处理。
@@ -298,7 +300,7 @@ int main(void) {
 
 ### 10.1 包格式
 
-- **CIVM v2**：magic/版本/arch、函数表、代码、入口函数索引；不保存函数名；模块上限 2 MiB，函数上限 512。
+- **CIVM v3**：magic/版本/arch、函数表（含每函数 `max_stack`）、代码、入口函数索引；不保存函数名；模块上限 2 MiB，函数上限 512。
 - **CIPL v4**：CallPlan 表，计划名通过 CIPC 名称引用；CIPC 头含 data_base。计划上限 1024，每 plan 64 args、8 ret locs、每 arg 8 locs，名称上限 128。
 - **CIPKG v4（trusted）**：22 字节头（magic + version + module/plan/import/const 四个 u32 长度）+ CIVM + CIPL + CIPI + CIPC；不写目标元数据，运行时不做目标校验，包必须由匹配的运行时加载。
 - **CIPC v2**：名称池 + data（只读 globals、字符串、标量/宽浮点常量、mutable 初始化 chunk 值）；默认用包内随机 16 字节 key XOR `name_blob`/`data`，key 在 CIPC 头内；名称在加载时解密，data 在每次 run 拷贝时整块解密。`cinterp-cc --no-xor-const-pool` 输出明文。mutable globals 镜像仍在 VM 内存 `0..data_base` 由 `main` 安装。XOR 只是防 `strings` 的混淆，key 随包，不构成保密/完整性边界。
@@ -349,7 +351,7 @@ const char *ci_version(void);
 
 ### 10.3 运行时上限
 
-`MAX_FUNCS=512`、`MAX_FRAMES=512`、`MAX_STACK=8192`、`MAX_MODULE=2 MiB`、`MAX_PLANS=1024`、`MAX_ARGS=64`、`MAX_LOCS=8`、`MAX_NAME=128`、`MAX_IMPORTS=512`、`MAX_PROVIDERS=8`；编译期还会拒绝 `local_count > 8192` 和 `data_base + const_data > 16 MiB`，避免生成运行时必然 OOM 的包。native target 注册表 256，超出返回 `TooManyNativeTargets`。进程级 `MAX_PROCESS_VMS=64`，超出返回 `ProcessFull`（`CI_E_RESOURCE`）。callback trampoline 池固定 256 个进程级静态槽。
+`MAX_FUNCS=512`、`MAX_FRAMES=512`、`MAX_STACK=8192`、`MAX_MODULE=2 MiB`、`MAX_PLANS=1024`、`MAX_ARGS=64`、`MAX_LOCS=8`、`MAX_NAME=128`、`MAX_IMPORTS=512`、`MAX_PROVIDERS=8`；编译期还会拒绝 `local_count > 8192`、`max_stack > 8192` 和 `data_base + const_data > 16 MiB`，避免生成运行时必然 OOM 的包。native target 注册表 256，超出返回 `TooManyNativeTargets`。进程级 `MAX_PROCESS_VMS=64`，超出返回 `ProcessFull`（`CI_E_RESOURCE`）。callback trampoline 池固定 256 个进程级静态槽。
 
 ## 11. 目录与关键文件
 

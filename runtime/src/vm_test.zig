@@ -41,6 +41,8 @@ const FunctionSpec = struct {
     name: []const u8,
     params: u16,
     locals: u16,
+    /// CIVM v3 operand-stack bound; 0 for bodies that only use locals.
+    max_stack: u16 = 0,
     code: []const u8,
 };
 
@@ -51,13 +53,14 @@ fn buildModule(buf: []u8, funcs: []const FunctionSpec) []const u8 {
         if (std.mem.eql(u8, f.name, "main")) entry = @intCast(i);
     }
     a.bytes("CIVM");
-    a.u8v(2);
+    a.u8v(3);
     a.u8v(1);
     a.u16v(@intCast(funcs.len));
     a.u16v(entry);
     for (funcs) |f| {
         a.u16v(f.params);
         a.u16v(f.locals);
+        a.u16v(f.max_stack);
         a.u32v(@intCast(f.code.len));
         a.bytes(f.code);
     }
@@ -261,7 +264,7 @@ test "CIVM module returns 42" {
     var p: usize = 0;
     @memcpy(module[0..4], "CIVM");
     p = 4;
-    module[p] = 2;
+    module[p] = 3;
     p += 1;
     module[p] = 1;
     p += 1;
@@ -270,6 +273,7 @@ test "CIVM module returns 42" {
 
     putU16(&module, &p, 0);
     putU16(&module, &p, 0);
+    putU16(&module, &p, 1);
     putU32(&module, &p, 10);
 
     module[p] = vm.OP_LOAD_CONST_I64;
