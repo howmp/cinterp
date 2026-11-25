@@ -1,16 +1,38 @@
 #!/bin/sh
-# `cinterp` runs a built package: it wraps the runtime, not the compiler. The
-# runtime ships in `bin/` next to this script when a package puts both tools
-# there, and at the package root in runtime layouts, so check both.
+# `cinterp` is a convenience wrapper over the two tools in this package:
+#
+#   cinterp compile app.c -o app.cib    -> bin/cinterp-cc (the compiler)
+#   cinterp app.cib [-- args...]        -> cinterp-run     (the runtime)
+#
+# The compiler takes a subcommand as its first argument; anything else is a
+# package for the runtime to execute. The runtime ships in `bin/` in layouts
+# that colocate both tools and at the package root in runtime layouts, so both
+# are searched.
 set -eu
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-for candidate in \
-    "$SELF_DIR/cinterp-run" \
-    "$SELF_DIR/../cinterp-run"
-do
-    if [ -x "$candidate" ]; then
-        exec "$candidate" "$@"
-    fi
-done
+
+find_tool() {
+    for candidate in "$SELF_DIR/$1" "$SELF_DIR/../$1"; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+case "${1:-}" in
+    compile)
+        if tool=$(find_tool cinterp-cc); then
+            exec "$tool" "$@"
+        fi
+        echo "cinterp: cinterp-cc not found next to $0 or in its parent directory" >&2
+        exit 127
+        ;;
+esac
+
+if tool=$(find_tool cinterp-run); then
+    exec "$tool" "$@"
+fi
 echo "cinterp: cinterp-run not found next to $0 or in its parent directory" >&2
 exit 127

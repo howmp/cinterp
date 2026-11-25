@@ -28,13 +28,13 @@ libffi，没有 JIT，也没有可执行内存。本 tarball 是 **@TARGET@** �
 | 路径 | 内容 |
 | --- | --- |
 | `bin/cinterp-cc` | C 到 CIB 的编译器（编译期调用 `zig cc` 作为其前端） |
-| `bin/cinterp` | 执行运行时的包装脚本（转发到随附的 `@RUNNER@`） |
+| `bin/cinterp` | 便捷包装：`cinterp compile ...` 走编译器，`cinterp pkg.cib` 走运行时 |
 | `THIRD_PARTY_NOTICES.md` | 下文所述派生外部符号数据的署名信息 |
 
 编译并运行随附的示例：
 
 ```sh
-./bin/cinterp-cc compile examples/basics/hello.c -o hello.cib
+./bin/cinterp compile examples/basics/hello.c -o hello.cib
 ./bin/cinterp hello.cib
 # result: 42
 ```
