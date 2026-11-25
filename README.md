@@ -21,7 +21,7 @@
    cdecl/stdcall/fastcall/thiscall 和 AArch64 AAPCS64 上的原生调用与 callback；
    `CI_NATIVE_PLAN(T)` 可为 dlsym 等动态函数指针声明可调用的 native 计划；
    用法见 [`dev.md`](dev.md#ci-native-plan)。
-3. **运行时紧凑，约 100 KiB**（ReleaseSmall，各目标略有差异）。
+3. **运行时紧凑，约 70 KiB**（ReleaseSmall 发布物）。
 
 4. **可用于替代 BOF 场景**：直接编译普通 C 源文件（包括直接 `#include <windows.h>`），
    不再需要手动声明 WinAPI 函数原型。参见 [`examples/bof`](examples/bof/) 和

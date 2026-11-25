@@ -550,7 +550,7 @@ CIPC data，`--full-data` 显示全部，`--data-limit N` 可调整上限。`civ
 
 - `CIVM` 当前 v2；`CIPKG` 当前 v4；`CIPL` 当前 v4；`CIPI` 当前 v2；`CIPC` 当前 v2。运行时不读取 CIPC v1，也不提供旧包迁移。
 - `CIVM` 函数数上限 512、模块上限 2097152 字节；CIPC 名称数上限 65535，名称引用为 u16（0xFFFF 为 CIPI 哨兵），`data_base` 为 u32。槽栈默认/上限 16384（`ci_vm_config.stack_size` 只能下调，`0` 表示默认 16384）、帧 512、线性内存默认 1 MiB（`memory_size=0`；上限 16 MiB，32 字节对齐）。
-- 每个进程最多 64 个 VM（`MAX_PROCESS_VMS`）；第 65 个 `ci_process_load_package` 返回 `ProcessFull`（`CI_E_RESOURCE`）。每个 VM 默认约 2.1 MiB（VM 记录 + 16384 槽值栈 + 1 MiB 线性内存）。
+- 每个进程最多 64 个 VM（`MAX_PROCESS_VMS`）；第 65 个 `ci_process_load_package` 返回 `ProcessFull`（`CI_E_RESOURCE`）。每个 VM 默认约 2.2 MiB（VM 结构 + 16384 槽值栈 + 1 MiB 线性内存，实测 RSS）。
 - callback trampoline 是进程级固定的 256 个静态槽（不生成可执行内存）：自动 `OP_CREATE_CALLBACK` 槽在 VM 生命周期内保留、跨重复运行复用，VM 销毁/计划重载后退休；显式 `OP_CALLBACK_ACQUIRE` 槽在 `OP_CALLBACK_RELEASE` 后回到可复用集合，未释放的显式槽在 VM 销毁/重载时退休。释放后的旧指针不得再次调用。
 - `CIPL` 计划上限 1024、每计划参数 64、每计划返回 loc 8、每参数 loc 8、名称有效上限 128；FFI arg/stack/ret 缓冲区各 4096 字节（`stack_size` 也受 4096 限制）。
 - 包不携带目标声明；运行时只根据 CIPL ABI id 和当前平台选择引擎，调用方必须保证包与运行时目标匹配。musl 运行时在 load 阶段显式返回 `UnsupportedLibc`，不会回退到 Linux glibc。

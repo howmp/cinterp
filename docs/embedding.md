@@ -146,10 +146,11 @@ ci_vm_config cfg = {
 ci_vm *vm = ci_vm_create_ex(&cfg);
 ```
 
-VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划存储。默认 VM 是一个约
-0.9 MiB 的 VM 记录，加上一个 16384 槽的值栈（128 KiB）和 1 MiB 线性内存 —— 总计约
-2 MiB；原先固定的约 10 MiB 占用（其中包括 6.5 MiB 的计划表）已不复存在。对于小包，
-可以调低 `memory_size`。
+VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划存储。默认 VM 是约
+0.9 MiB 的 `VM` 结构（主要是 512 个帧槽和导入/provider 句柄表），加上一个 16384 槽
+的值栈（128 KiB）和 1 MiB 线性内存 —— 创建后实测 RSS 约 **2.2 MiB**；原先固定的约
+10 MiB 占用（其中包括 6.5 MiB 的计划表）已不复存在。对于小包，可以调低
+`memory_size`，以及通过 `ci_vm_config.stack_size` 调低值栈。
 
 每个 VM 每次 `ci_vm_run*` 都从全新镜像开始：值栈、线性内存、`mem_top`/帧和
 `setjmp` 目标都会重置，`main` 开头的全局安装代码会重新执行；`native` 计划缓存保留，
