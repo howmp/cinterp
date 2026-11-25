@@ -871,6 +871,15 @@ pub const VM = struct {
     /// regions are recomputed from it so `resetRunImage` does not have to zero
     /// the whole image (1 MiB of `@memset` dominated a run of a small program).
     mem_dirty_high: usize = 0,
+    /// Staging buffers for `invokeFfi`. They live on the VM instead of the
+    /// C stack so a native call does not push 12 KiB of frame per call: a
+    /// 2.1M-call loop spent measurable time just moving the stack pointer.
+    /// `invokeFfi` never runs concurrently with itself on one VM (a callback
+    /// entering the VM uses `dispatchCallbackEntry`'s own scratch buffer), so
+    /// sharing them is safe.
+    ffi_arg_block: [platform.block_size]u8 align(16) = undefined,
+    ffi_stack_buf: [platform.block_size]u8 align(16) = undefined,
+    ffi_ret_block: [platform.block_size]u8 align(16) = undefined,
     plan_store: ?*plan_loader.Store = null,
     imports: link_loader.Table = .{},
     import_handles: [link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS]?*anyopaque = [_]?*anyopaque{null} ** (link_loader.MAX_PROVIDERS * link_loader.MAX_IMPORTS),
@@ -965,6 +974,22 @@ pub const VM = struct {
         if (new_store.abi_id != platform.abi_id) {
             new_store.deinit(std.heap.page_allocator);
             return error.BadAbi;
+        }
+        // Validate every plan once, here, instead of on each `CALL_NATIVE`.
+        // `invokeFfi` runs in hot loops (fft makes 2.1M native calls), and the
+        // checks are pure metadata validation against fixed limits.
+        {
+            var pi: usize = 0;
+            while (pi < new_store.count) : (pi += 1) {
+                const p = new_store.planAt(pi) orelse {
+                    new_store.deinit(std.heap.page_allocator);
+                    return error.BadPlan;
+                };
+                platform.validate(new_store.callPlan(p)) catch {
+                    new_store.deinit(std.heap.page_allocator);
+                    return error.BadPlan;
+                };
+            }
         }
         if (self.plan_store) |old| {
             // Callback plans point into the old store. Retire their trampolines
@@ -1406,13 +1431,20 @@ pub const VM = struct {
     }
 
     fn invokeFfi(self: *VM, plan: abi.CallPlan, target: *const anyopaque) !void {
-        try platform.validate(plan);
-        var arg_block: [4096]u8 align(16) = undefined;
-        // `marshal` reads a full 8-byte word for every GPR argument and
-        // plan validation keeps those offsets below 256. Staging writes every
-        // other byte it reads, so only this window needs zero padding instead
-        // of clearing all 4 KiB on every call.
-        @memset(arg_block[0..256], 0);
+        // The plan was validated when the store was loaded (`loadPlans`), so
+        // re-checking it on every call only added fixed cost to hot loops.
+        const arg_block = &self.ffi_arg_block;
+        // `marshal` reads a full 8-byte word for every argument loc, so every
+        // byte it can read has to be deterministic. The high end is the largest
+        // `offset + 8` over the plan's locs, which validation already bounds by
+        // 256; compute it instead of always clearing the worst case.
+        var arg_high: usize = 0;
+        for (plan.args) |arg| {
+            const off: usize = @intCast(arg.locs[0].offset);
+            const end = off + @max(@as(usize, arg.locs[0].size), 8);
+            if (end > arg_high) arg_high = end;
+        }
+        @memset(arg_block[0..@min(arg_high, arg_block.len)], 0);
         var sret_ptr: ?*anyopaque = null;
 
         var i: usize = plan.args.len;
@@ -1440,7 +1472,7 @@ pub const VM = struct {
             }
         }
 
-        var stack_buf: [4096]u8 align(16) = undefined;
+        const stack_buf = &self.ffi_stack_buf;
         // The callee only observes the `stack_size` image; zero that (typically
         // a few words) so unwritten padding is deterministic.
         @memset(stack_buf[0..plan.stack_size], 0);
@@ -1452,14 +1484,14 @@ pub const VM = struct {
             const block = try self.allocTemp(rs, 16);
             sret_dest = @ptrCast(block.ptr);
         }
-        platform.configure(&frame, plan, &stack_buf, sret_dest);
-        platform.marshal(&frame, plan, &arg_block, &stack_buf);
+        platform.configure(&frame, plan, stack_buf, sret_dest);
+        platform.marshal(&frame, plan, arg_block, stack_buf);
         platform.invoke(&frame, target);
 
-        var ret_block: [4096]u8 align(16) = undefined;
+        const ret_block = &self.ffi_ret_block;
         // Multi-location returns copy `ret_size` bytes; zero only that span.
         @memset(ret_block[0..plan.ret_size], 0);
-        platform.readRet(&frame, plan, &ret_block);
+        platform.readRet(&frame, plan, ret_block);
 
         if (plan.sret) {
             // sret calls in C are void; the callee wrote through the caller's pointer.

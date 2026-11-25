@@ -327,6 +327,26 @@ test "plan validation rejects bad ABI locations" {
     try std.testing.expectError(error.BadPlan, platform.validate(plan));
 }
 
+test "loadPlans rejects an unloadable plan up front" {
+    // `invokeFfi` no longer validates on every call, so a plan the platform
+    // cannot marshal has to be rejected when the store is installed.
+    // `stack_size` above the staging block is one such plan.
+    var buf: [64]u8 = undefined;
+    var a = Asm{ .buf = &buf };
+    a.u8v(platform.abi_id);
+    a.u16v(1);
+    a.u16v(0); // name_ref
+    a.u8v(0); // args
+    a.u8v(0); // rets
+    a.u16v(@intCast(platform.block_size + 1)); // stack_size: too large
+    a.u8v(0); // flags
+    a.u16v(0); // ret_size
+
+    var machine = vm.VM{};
+    const names = [_][]const u8{"cb"};
+    try std.testing.expectError(error.BadPlan, machine.loadPlans(a.code(), &names));
+}
+
 test "Win32 decorated names retry the PE export spelling" {
     var out: [vm.MAX_SYMBOL_CANDIDATES][]const u8 = undefined;
 

@@ -160,7 +160,8 @@ clang 已经在 LLVM IR 中完成大部分 ABI lowering：
 - `marshal` 按 `CallPlan` 把 VM 值拷贝到 GPR/XMM/vec/stack/sret，结构体按 Loc 拷贝字节，保持位模式。
 - 每个 ABI 一段 `.S`：装载寄存器/栈、调用目标、捕获返回值；不解析签名，不生成动态代码。
 - 返回值按 `ret_locs` 读取；Win32 i64 用 EAX:EDX 合并，float 从 ST0 读取并转 f32。
-- plan 校验覆盖 loc 索引、offset/size、stack/sret 一致性、返回寄存器合法性和 4096 字节 staging block；损坏计划在调用前失败。
+- plan 校验覆盖 loc 索引、offset/size、stack/sret 一致性、返回寄存器合法性和 4096 字节 staging block；损坏计划在 **plan store 安装时**失败（`loadPlans` 逐条校验），而不是每次调用时重验——`invokeFfi` 位于热循环，fft 有 210 万次原生调用。`OP_CREATE_CALLBACK`/`ci_callback_acquire` 仍各自校验，因为它们需要区分具体错误。
+- `invokeFfi` 的 staging buffer（arg/stack/ret）是 `VM` 字段而非调用栈局部变量，避免每次调用压 12 KiB 栈帧；同一 VM 的回调重入由 `dispatchCallbackEntry` 的独立 scratch 隔离。
 
 ### 7.3 Callback
 
