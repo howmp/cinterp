@@ -430,7 +430,7 @@ make check-version        # VERSION 单一来源校验
 
 `make bench` 在当前主机上编译并预热 7 个示例，再为每个示例记录 20 次独立
 `cinterp-run` 进程的耗时，结果写入 `build/benchmark.json`。当前 native Linux x64
-ReleaseSmall 基线约为 **5.24–5.45 ms/run**（median；mean 5.27–5.48 ms，当前
+ReleaseSmall 基线约为 **2.76–2.87 ms/run**（median；mean 2.76–2.85 ms，当前
 `build/benchmark.json` 采样）；这个数字包含进程启动、包加载和一次执行，
 适合做同一机器上的前后回归比较，不是纯 VM 指令吞吐。
 
@@ -441,8 +441,26 @@ benchmark 加 c-testsuite `00040`），默认分别以 `--cc-opt 0,2` 各编译�
 O0/O2 在同一核内串行，用例之间并行；`BENCH_LONG_JOBS=1` 回到顺序模式，
 `BENCH_LONG_CC_OPT=2` 只跑 O2。绝对耗时只应与相同 jobs/锁核设置的结果比较。
 顺序基线（1.477x O2/O0；`vmach` 0.948x）记录在
-`build/bench-long-o2-base.json`。当前并发基线（10 个物理核）：O2/O0 **1.700x**；
-最终编译器/runtime 相对 Phase 4.2 的 matched A/B 为 **1.149x**（min）。
+`build/bench-long-o2-base.json`。当前并发基线（10 个物理核）：O2/O0 **1.750x**。
+
+#### 0.1.8 的性能结论
+
+0.1.8 之后，长用例的吞吐收益主要来自三处，都能用同机锁核 A/B 复核：
+
+- **CIVM v3 的每函数 `max_stack`**：dispatch 不再逐指令检查 push/pop 越界，
+  长用例 1.11–1.15x（qsort 1.13x、fft 1.15x、mandelbrot 1.11x）。
+- **进程级环境快照**：`buildArgArea` 不再每次 run 重新读取环境。
+  进程内每 run 固定成本 856 → 15 µs；`make bench` 口径整例 ~1.9x。
+- **线性内存按高水位清零**：只清上次 run 写过的区间。
+  1 MiB 3.8x、4 MiB 12x、16 MiB 87x（每 run 固定成本口径）。
+
+**后续在主 dispatch 循环里做局部微调已不划算**。0.1.8 期间试过并回退的几项：
+浮点常量融合（`LOAD_CONST_POOL`+FADD/FSUB/FMUL/FDIV）、删除常量池加载的第二次
+边界检查、`Frame` 瘦身（避免 256 字节整块复制 + 条件拷贝 varargs 数组）——实测
+geomean 分别 0.991x / 0.965x / 0.982x，而**同一二进制自比的噪声基线是 1.003x
+（单例 ±1%）**。结论是增删热循环代码的收益/损失都被布局扰动淹没，除非改动消除的是
+每条指令的真实开销（如 `lshr` 的冗余 `NORMALIZE`）。要继续提升，需要换执行模型
+（超指令、寄存器直通或直接线程化 dispatch），属于另一个量级的工程。
 
 ### 12.1 命令行与构建选项
 
@@ -520,7 +538,7 @@ SPDX SBOM 和 `SHA256SUMS`。CI 在打包后用 Sigstore keyless 签名 `SHA256S
 
 | 压缩包 | 内容 |
 | --- | --- |
-| `cinterp-<version>-sysv-x86_64` | 编译器 + 运行时，Linux x86-64（`bin/cinterp-cc`、`bin/cinterp`） |
+| `cinterp-<version>-sysv-x86_64` | 编译器 + 运行时，Linux x86-64（`bin/cinterp-cc`、`bin/cinterp`、`cinterp-run`） |
 | `cinterp-<version>-win64-x86_64` | 仅运行时，Windows x64 |
 | `cinterp-<version>-win32-x86` | 仅运行时，Windows x86 |
 | `cinterp-<version>-arm64` | 仅运行时，Linux AArch64 |

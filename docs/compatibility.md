@@ -1,11 +1,11 @@
 # 版本与兼容性策略
 
-本文记录 cinterp 当前的版本和二进制格式。0.1.7 已发布，但仍不保证格式兼容；
+本文记录 cinterp 当前的版本和二进制格式。0.1.8 已发布，但仍不保证格式兼容；
 运行时只接受当前 `CIPKG` v4 trusted 格式，旧包格式和迁移路径不保留。
 
 ## 单一版本源
 
-- 仓库根目录 `VERSION` 是唯一版本源，格式为语义化版本（当前 `0.1.7`）。
+- 仓库根目录 `VERSION` 是唯一版本源，格式为语义化版本（当前 `0.1.8`）。
 - 编译器 `compiler/build.zig` 在构建时读取仓库根目录 `VERSION`；`cinterp-cc --version`
   输出 `cinterp-cc <VERSION>`。
 - 运行时在构建时读取仓库根目录 `VERSION`，写入 `ci_version()`
@@ -29,6 +29,10 @@
 `CIPKG` v4 只包含 22 字节头、CIVM、CIPL、CIPI 和 CIPC，不携带目标声明。包必须由与
 编译目标匹配的运行时加载；运行时保留 CIPL `abi_id` 检查，用于拒绝明显的 ABI 混用。
 CIPC v2 的 `name_blob`/`data` 默认 XOR 混淆；项目不保留 CIPC v1 读取、旧包迁移或兼容层。
+
+0.1.8 把 CIVM 从 v2 升到 v3：每个函数记录新增 `u16 max_stack`（操作数栈深度上界），
+运行时在建立帧时校验一次，dispatch 循环因此不再逐指令检查 push/pop 越界。旧包在加载
+阶段以 `BadVersion` 拒绝，需要重新编译；这与本文开始时说明的「不保证格式兼容」一致。
 
 ## C ABI
 
