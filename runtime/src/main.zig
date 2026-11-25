@@ -53,6 +53,30 @@ fn installTraceAtExit() void {
     if (comptime builtin.os.tag != .windows) _ = atexit(&traceAtExit);
 }
 
+/// Size the linear memory to the package instead of the library default. A
+/// package's global image may legitimately reach past `DEFAULT_MEMORY`
+/// (yarpgen seed 100 places 12 KiB of data at base 0xfec70), and the runner
+/// exists to execute whatever package it is handed, so grow the image to the
+/// next power of two above the static data. Load failures and packages that
+/// fit the default keep it.
+fn createMachine(package_bytes: []const u8) ?*vm.VM {
+    const need = vm.packageImageEnd(package_bytes);
+    if (need == 0 or need < vm.DEFAULT_MEMORY) return vm.ci_vm_create(0);
+    // Grow past the image, not up to it: `runEntryIndex` builds the argv/envp
+    // block below `mem.len`, so an image that exactly fills the memory leaves
+    // it no room.
+    var size: usize = vm.DEFAULT_MEMORY;
+    while (size <= need) size *= 2;
+    if (size > vm.MAX_MEMORY) return vm.ci_vm_create(0);
+    var cfg = vm.CiVmConfig{
+        .struct_size = @sizeOf(vm.CiVmConfig),
+        .flags = 0,
+        .stack_size = 0,
+        .memory_size = size,
+    };
+    return vm.ci_vm_create_ex(&cfg);
+}
+
 fn initFpu() void {
     if (comptime @import("builtin").cpu.arch == .x86 or
         @import("builtin").cpu.arch == .x86_64)
@@ -106,7 +130,7 @@ pub fn main() u8 {
     };
     defer allocator.free(bytes);
 
-    const machine = vm.ci_vm_create(0) orelse outOfMemory();
+    const machine = createMachine(bytes) orelse outOfMemory();
     machine.setTrace(trace);
     const load_status = vm.ci_vm_load_package(machine, bytes.ptr, bytes.len);
     if (load_status != 0) {

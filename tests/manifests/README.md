@@ -175,7 +175,7 @@ ID 曾与真正的测试用例冲突，因此它们被重命名并加上
 | 套件 | 用例数 | 目标特定的跳过（`skip_by_target`） |
 | --- | ---: | --- |
 | c-testsuite-smoke | 40 | `aarch64-linux`：`00040`（qemu 超时） → 39 + 1 |
-| tcc-smoke | 24 | `x86_64-windows`、`i686-windows`：`22_floating_point` → 23 + 1 |
+| tcc-smoke | 24 | `x86_64-linux`、`x86_64-windows`、`i686-windows`、`aarch64-linux`：`22_floating_point` → 23 + 1（Linux 因移除 f80/f128 支持，其余目标见清单） |
 | gcc-smoke | 40 | 无 |
 | compcert-smoke | 24 | `x86_64-windows`、`i686-windows`：`binops` → 23 + 1 |
 

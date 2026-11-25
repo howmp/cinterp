@@ -4236,6 +4236,16 @@ const Lowerer = struct {
 
         const callee = &self.ctx.module.functions[idx];
         const callee_params = self.ctx.func_params[idx];
+        // A non-prototype declaration (`void foo();`) lets a call site pass
+        // fewer arguments than the definition takes; C leaves the missing
+        // parameters undefined. OP_CALL pops `param_count` slots, so pass
+        // zeros for the gap: the frame the callee runs in then holds exactly
+        // the parameter count the runtime and the stack-effect walk agree on
+        // (gcc-torture pr71109 calls a 3-parameter `foo` with 2 arguments).
+        if (!callee.sig.is_varargs and callee_params.len > call.args.len) {
+            var pad: usize = call.args.len;
+            while (pad < callee_params.len) : (pad += 1) try self.emitConst(0);
+        }
         if (callee.sig.is_varargs) {
             try self.emitU8(op.OP_CALL_VARIADIC_TYPED);
             try self.emitU16(idx);
@@ -5783,6 +5793,38 @@ test "initializer mentioning a global name keeps the global allocated" {
     try testing.expect(std.mem.indexOf(u8, result.functions[0].code.items, &.{ op.OP_ADDR_CONST, 12, 0, 0, 0 }) != null);
 
     try expectGolden(allocator, goldenCase("global_name_in_initializer"));
+}
+
+/// The pr71109 shape: a call through a non-prototype declaration `void ()`
+/// passes two arguments to a definition that takes three.
+const non_prototype_short_call_ir =
+    \\define void @bar() {
+    \\entry:
+    \\  call void (...) @foo(i64 1, i64 2)
+    \\  ret void
+    \\}
+    \\
+    \\define internal void @foo(i64 %x, i64 %y, i64 %z) {
+    \\entry:
+    \\  ret void
+    \\}
+    \\
+;
+
+test "a non-prototype call pads missing parameters with zeros" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var module = try parseFixture(allocator, non_prototype_short_call_ir);
+    const result = try compile(allocator, &module, 1, 8);
+    const bar = result.functions[0];
+    try testing.expectEqualStrings("bar", bar.name);
+    // Two real arguments plus one zero for the parameter the call site omitted.
+    // Without the pad the stack-effect walk sees OP_CALL pop three slots from a
+    // depth of two and rejects the function with StackUnderflow.
+    try testing.expectEqual(@as(u16, 3), result.functions[1].param_count);
+    try testing.expect(bar.code.items.len != 0);
 }
 
 test "call result is kept when the callee name ends in null" {

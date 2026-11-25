@@ -4207,6 +4207,31 @@ pub export fn ci_vm_load_plans(machine: ?*VM, data: [*]const u8, size: usize) c_
     return fail(m, error.PlansRequireCipc);
 }
 
+/// Linear memory a package needs before `main` runs: the static image the
+/// loader installs at `data_base`, which must fit below the argv/envp block
+/// `runEntryIndex` builds at the top of the image. `0` means the header could
+/// not be read. Hosts that hand a freshly read package to a new VM use this to
+/// size it (cinterp-run), so a program whose globals fill more than
+/// `DEFAULT_MEMORY` still runs while the library default stays 1 MiB.
+pub fn packageImageEnd(bytes: []const u8) usize {
+    if (bytes.len < 22) return 0;
+    if (!std.mem.eql(u8, bytes[0..5], "CIPKG") or bytes[5] != 4) return 0;
+    const module_len: usize = readU32At(bytes, 6);
+    const plan_len: usize = readU32At(bytes, 10);
+    const import_len: usize = readU32At(bytes, 14);
+    const const_len: usize = readU32At(bytes, 18);
+    if (22 + module_len + plan_len + import_len + const_len != bytes.len) return 0;
+    const pool_start = 22 + module_len + plan_len + import_len;
+    const pool = cipc.Pool.parse(std.heap.page_allocator, bytes[pool_start..]) catch return 0;
+    defer {
+        var p = pool;
+        p.deinit(std.heap.page_allocator);
+    }
+    const end = @as(usize, pool.data_base) + pool.data.len;
+    if (end > MAX_MEMORY) return 0;
+    return end;
+}
+
 pub export fn ci_vm_load_package(machine: ?*VM, data: [*]const u8, size: usize) c_int {
     const m = machine orelse return CI_E_INVALID_ARGUMENT;
     if (size != 0 and @intFromPtr(data) == 0) return fail(m, error.InvalidArgument);

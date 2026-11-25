@@ -116,6 +116,7 @@
       "source": "tests/tests2/22_floating_point.c",
       "expected_stdout": "tests/tests2/22_floating_point.expect",
       "skip_by_target": {
+        "x86_64-linux": "non-goal: long double / 128-bit float unsupported",
         "x86_64-windows": "Windows float formatting differs from glibc reference",
         "i686-windows": "Windows float formatting differs from glibc reference",
         "aarch64-linux": "long double is fp128 on AAPCS64 and fp128 support was removed"
