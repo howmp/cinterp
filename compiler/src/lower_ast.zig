@@ -3700,8 +3700,13 @@ const Lowerer = struct {
                     try self.emitNormalizedOperand(b.ty, b.lhs, bits, shift_signed);
                     try self.emitValueOf(b.ty, b.rhs);
                     if (narrowWidthCode(bits)) |width_code| {
+                        // `lshr` is a logical shift: the result must be
+                        // zero-extended, so the param carries no sign bit.
+                        // Setting 0x80 here made the opcode sign-extend, which
+                        // then needed a trailing NORMALIZE to undo; that pair
+                        // cost an extra dispatch per shift in every hot loop.
                         try self.emitU8(if (shift_signed) op.OP_SHR_S_N else op.OP_SHR_U_N);
-                        try self.emitU8(width_code | 0x80);
+                        try self.emitU8(width_code | (if (shift_signed) @as(u8, 0x80) else 0));
                     } else {
                         try self.emitU8(if (shift_signed) op.OP_SHR_S else op.OP_SHR_U);
                         try self.normalizeInt(bits, true);
@@ -3869,7 +3874,18 @@ const Lowerer = struct {
                     try self.emitU8(op.OP_F128_TO_F64);
                 } else return error.BadCast;
             },
-            .trunc => try self.normalizeInt(dst_bits orelse 64, true),
+            .trunc => {
+                // `trunc` to the same width is a no-op. clang still emits it
+                // for `(unsigned)s` on an already-unsigned `i32`, and the
+                // unconditional normalize that followed cost one extra dispatch
+                // per iteration in the hottest loop of nsievebits.
+                const dst = dst_bits orelse 64;
+                if (src_bits) |bits| {
+                    if (bits != dst) try self.normalizeInt(dst, true);
+                } else {
+                    try self.normalizeInt(dst, true);
+                }
+            },
             .zext => {
                 if (src_bits) |bits| {
                     if (bits < 64) try self.normalizeInt(bits, false);
@@ -6164,7 +6180,9 @@ test "production narrow shift/div/rem use narrow opcodes" {
     );
     const result = try compileWithOptions(allocator, &module, 1, 8, .{ .legacy_codegen = false });
     try testing.expect(std.mem.indexOf(u8, codeOf(result, "shl"), &.{ op.OP_SHL_N, 0x80 }) != null);
-    try testing.expect(std.mem.indexOf(u8, codeOf(result, "lshr"), &.{ op.OP_SHR_U_N, 0x80 }) != null);
+    // `lshr` must zero-extend its result, so the param carries no sign bit;
+    // `ashr` keeps it to sign-extend.
+    try testing.expect(std.mem.indexOf(u8, codeOf(result, "lshr"), &.{ op.OP_SHR_U_N, 0x00 }) != null);
     try testing.expect(std.mem.indexOf(u8, codeOf(result, "ashr"), &.{ op.OP_SHR_S_N, 0x80 }) != null);
     try testing.expect(std.mem.indexOf(u8, codeOf(result, "sdiv"), &.{ op.OP_DIV_S_N, 0x80 }) != null);
     try testing.expect(std.mem.indexOf(u8, codeOf(result, "srem"), &.{ op.OP_REM_S_N, 0x80 }) != null);
