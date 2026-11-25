@@ -575,6 +575,8 @@ plan/provider 引用、函数/plan 数量、plan 参数数量、ABI 位置索引
 - **`_Atomic` / `_Thread_local`**：原子 load/store/RMW、内存序，以及每线程/每 VM 的 TLS 语义。
 - **原生库卸载**：`dlclose`/`FreeLibrary`、按包/VM 的句柄引用计数，以及卸载与仍存活的函数指针之间的关系。
 - **宿主堆生命周期**：跨 run 的 `malloc` 累积、宿主分配跟踪/释放策略；`atexit`/`signal` 目前仍是进程全局状态。
+- **环境变量快照**：`envp` 由进程级快照提供（首次使用时一次分配），首次 `ci_vm_run*` 之后
+  的 `setenv`/`putenv` 对后续运行不可见。快照按进程存活，`ci_vm_destroy` 不释放。
 - **进程内沙箱 / Safe 模式**：不可信 CIB 的隔离；如果要支持，还需配套包校验/签名和资源限额。
 - **平台扩展**：macOS、musl、Windows ARM64、Linux i386/ARM32；当前这些平台在编译或加载阶段显式拒绝。
 

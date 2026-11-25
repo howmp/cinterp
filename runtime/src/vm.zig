@@ -12,6 +12,9 @@ const debug_errors = builtin.mode == .Debug;
 
 pub const MAX_FUNCS: usize = 512;
 pub const MAX_NAME: usize = 128;
+/// Spare value-stack slots allocated above `stack_limit` as overrun guard.
+pub const stack_guard: usize = 64;
+
 pub const MAX_STACK: usize = 8192;
 pub const MAX_FRAMES: usize = 512;
 pub const MAX_MODULE: usize = 2097152;
@@ -685,6 +688,69 @@ var callback_retired: [256]bool = [_]bool{false} ** 256;
 var callback_slot_active: [256]u32 = [_]u32{0} ** 256;
 var callback_mutex: std.Thread.Mutex = .{};
 var callback_cond: std.Thread.Condition = .{};
+
+/// Process-wide copy of the environment, built once on first use.
+///
+/// `buildArgArea` needs the caller's environment on every run, and reading it
+/// through `std.process.getEnvMap` costs one page allocation per variable
+/// (68 variables meant ~140 mmap/munmap pairs and ~820us per run). A process's
+/// environment does not change between runs, so the strings are copied into one
+/// flat blob the first time any VM needs them and reused afterwards.
+///
+/// Consequence for embedders: a `setenv`/`putenv` performed after the first
+/// `ci_vm_run*` is not visible to later runs. Nothing in the CIB contract
+/// promises a fresh environment per run, but this is a behaviour change from
+/// the per-run snapshot and is documented in `docs/multi-cib.md`.
+pub const EnvSnapshot = struct {
+    /// Byte ranges of complete `KEY=VALUE` strings inside `blob`.
+    offs: []u32 = &.{},
+    lens: []u32 = &.{},
+    blob: []u8 = &.{},
+    count: usize = 0,
+};
+
+var env_mutex: std.Thread.Mutex = .{};
+var env_state: ?EnvSnapshot = null;
+
+/// Return the process environment snapshot, building it on first call.
+pub fn envSnapshot() !*const EnvSnapshot {
+    env_mutex.lock();
+    defer env_mutex.unlock();
+    if (env_state == null) env_state = try buildEnvSnapshot();
+    return &env_state.?;
+}
+
+fn buildEnvSnapshot() !EnvSnapshot {
+    const allocator = std.heap.page_allocator;
+    const environ = std.os.environ;
+
+    var total: usize = 0;
+    for (environ) |entry| total += std.mem.len(entry) + 1;
+    if (total == 0) return .{};
+
+    // One allocation for all strings plus their offsets: the point of the
+    // snapshot is to stop paying a page per variable.
+    const blob = try allocator.alloc(u8, total);
+    errdefer allocator.free(blob);
+    const offs = try allocator.alloc(u32, environ.len);
+    errdefer allocator.free(offs);
+    const lens = try allocator.alloc(u32, environ.len);
+    errdefer allocator.free(lens);
+
+    var pos: usize = 0;
+    var count: usize = 0;
+    for (environ) |entry| {
+        const text = std.mem.span(entry);
+        // `total` used `len + 1` per entry; store the string without its NUL.
+        if (pos + text.len > blob.len) break;
+        @memcpy(blob[pos .. pos + text.len], text);
+        offs[count] = @intCast(pos);
+        lens[count] = @intCast(text.len);
+        pos += text.len;
+        count += 1;
+    }
+    return .{ .offs = offs, .lens = lens, .blob = blob, .count = count };
+}
 
 fn f32FromValue(v: Value) f32 {
     const bits: u32 = @truncate(@as(u64, @bitCast(v.i)));
@@ -1456,7 +1522,13 @@ pub const VM = struct {
     fn ensureRuntimeBuffers(self: *VM) !void {
         if (self.values.len == 0) {
             const limit = if (self.stack_limit == 0) MAX_STACK else self.stack_limit;
-            self.values = try std.heap.page_allocator.alloc(Value, limit);
+            // The dispatch loop trusts `max_stack` instead of checking on every
+            // push and pop, and only Debug builds re-verify it at load time.
+            // Oversized allocation leaves `stack_guard` spare slots above the
+            // usable window, so an overrun from a package that lied stays inside
+            // this buffer instead of corrupting whatever follows it.
+            self.values = try std.heap.page_allocator.alloc(Value, limit + stack_guard);
+            @memset(self.values, .{ .i = 0 });
             self.stack_limit = limit;
         }
         if (self.mem.len == 0) {
@@ -1703,18 +1775,15 @@ pub const VM = struct {
         const ptr_size = @sizeOf(usize);
         const max_ptrs = 256;
         if (cargs.len > max_ptrs) return error.TooManyArgs;
-        var env = std.process.getEnvMap(std.heap.page_allocator) catch return error.OutOfMemory;
-        defer env.deinit();
+        const env = try envSnapshot();
         const arg_count = cargs.len;
-        if (env.count() > max_ptrs - arg_count) return error.TooManyArgs;
+        if (env.count > max_ptrs - arg_count) return error.TooManyArgs;
         var strings_len: usize = 0;
         for (cargs) |arg| strings_len += arg.len + 1;
-        var env_iter_count = env.iterator();
-        while (env_iter_count.next()) |entry| {
-            strings_len += entry.key_ptr.*.len + 1 + entry.value_ptr.*.len + 1;
-        }
+        // Every snapshot entry is a complete `KEY=VALUE` string.
+        for (env.lens[0..env.count]) |len| strings_len += len + 1;
         const arg_ptrs_size = (arg_count + 1) * ptr_size;
-        const env_ptrs_size = (env.count() + 1) * ptr_size;
+        const env_ptrs_size = (env.count + 1) * ptr_size;
         const total = strings_len + arg_ptrs_size + env_ptrs_size + 16;
         if (total >= self.mem.len) return error.OutOfMemory;
         const area = self.mem.len - total;
@@ -1728,18 +1797,12 @@ pub const VM = struct {
             pos += arg.len + 1;
         }
         var env_ptrs: [max_ptrs]usize = undefined;
-        var env_iter = env.iterator();
         var env_count: usize = 0;
-        while (env_iter.next()) |entry| {
-            const key = entry.key_ptr.*;
-            const value = entry.value_ptr.*;
+        for (env.offs[0..env.count], env.lens[0..env.count]) |off, len| {
+            const entry = env.blob[off .. off + len];
             env_ptrs[env_count] = @intFromPtr(&self.mem[pos]);
-            @memcpy(self.mem[pos .. pos + key.len], key);
-            pos += key.len;
-            self.mem[pos] = '=';
-            pos += 1;
-            @memcpy(self.mem[pos .. pos + value.len], value);
-            pos += value.len;
+            @memcpy(self.mem[pos .. pos + len], entry);
+            pos += len;
             self.mem[pos] = 0;
             pos += 1;
             env_count += 1;

@@ -298,6 +298,21 @@ test "bad package" {
     try std.testing.expectError(error.BadPackage, machine.loadPackage("x"));
 }
 
+test "environment snapshot is stable across calls" {
+    // `buildArgArea` reuses a process-wide snapshot instead of re-reading the
+    // environment on every run; the same call must therefore return the same
+    // entries, and each entry must be a complete `KEY=VALUE` string.
+    const first = try vm.envSnapshot();
+    const second = try vm.envSnapshot();
+    try std.testing.expectEqual(first.count, second.count);
+    try std.testing.expect(first.blob.ptr == second.blob.ptr);
+    for (first.offs[0..first.count], first.lens[0..first.count]) |off, len| {
+        const entry = first.blob[off .. off + len];
+        try std.testing.expect(std.mem.indexOfScalar(u8, entry, '=') != null);
+        try std.testing.expect(std.mem.indexOfScalar(u8, entry, 0) == null);
+    }
+}
+
 test "plan validation rejects bad ABI locations" {
     const ret = [_]abi.Loc{.{ .kind = .rax, .index = 0, .size = 8, .offset = 0 }};
     var arg_locs = [_]abi.Loc{.{ .kind = .gpr, .index = 0, .size = 8, .offset = 0 }};
