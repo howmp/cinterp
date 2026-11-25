@@ -168,7 +168,7 @@ M     code bytes
 - `max_stack` 是函数体内操作数栈相对帧基址（`base`）的深度上界。运行时在建立帧时
   校验一次 `base + local_count + max_stack <= stack_limit`，dispatch 循环因此不再
   逐指令检查 push/pop 越界。`0` 表示“未记录”，此时只做帧入口检查；编译器总是写入
-  精确值（至少含 `RET` 弹栈所需的深度）。上界必须覆盖所有可达控制流路径，超过 8192
+  精确值（至少含 `RET` 弹栈所需的深度）。上界必须覆盖所有可达控制流路径，超过 16384
   的包在加载期被拒绝（`BadStackBound`）。
 - 函数数上限 `MAX_FUNCS = 512`；code 是字节流，跳转目标是**当前函数 code 内的绝对字节偏移**。
 
@@ -179,7 +179,7 @@ M     code bytes
   `callee_base = sp - param_count` 建立被调帧，清零 `callee_base+param_count`
   到 `callee_base+local_count-1`。
 - `OP_RET` 弹出一个值并返回给调用者；入口/Callback 的 `RET` 直接结束执行。
-- 运行时槽栈默认/上限 `MAX_STACK = 8192`（`ci_vm_config.stack_size` 只能把它调小；`0` 表示使用默认 8192），帧上限 `MAX_FRAMES = 512`。
+- 运行时槽栈默认/上限 `MAX_STACK = 16384`（`ci_vm_config.stack_size` 只能把它调小；`0` 表示使用默认 16384），帧上限 `MAX_FRAMES = 512`。
 - 函数返回后，`OP_ALLOCA` 在 `mem_mark` 之后的线性内存会回收；调用者分配的内存保留。
 
 ### 3.4 线性内存与 globals
@@ -549,8 +549,8 @@ CIPC data，`--full-data` 显示全部，`--data-limit N` 可调整上限。`civ
 ## 8. 限制与兼容性
 
 - `CIVM` 当前 v2；`CIPKG` 当前 v4；`CIPL` 当前 v4；`CIPI` 当前 v2；`CIPC` 当前 v2。运行时不读取 CIPC v1，也不提供旧包迁移。
-- `CIVM` 函数数上限 512、模块上限 2097152 字节；CIPC 名称数上限 65535，名称引用为 u16（0xFFFF 为 CIPI 哨兵），`data_base` 为 u32。槽栈默认/上限 8192（`ci_vm_config.stack_size` 只能下调，`0` 表示默认 8192）、帧 512、线性内存默认 1 MiB（`memory_size=0`；上限 16 MiB，32 字节对齐）。
-- 每个进程最多 64 个 VM（`MAX_PROCESS_VMS`）；第 65 个 `ci_process_load_package` 返回 `ProcessFull`（`CI_E_RESOURCE`）。每个 VM 默认约 2 MiB（VM 记录 + 8192 槽值栈 + 1 MiB 线性内存）。
+- `CIVM` 函数数上限 512、模块上限 2097152 字节；CIPC 名称数上限 65535，名称引用为 u16（0xFFFF 为 CIPI 哨兵），`data_base` 为 u32。槽栈默认/上限 16384（`ci_vm_config.stack_size` 只能下调，`0` 表示默认 16384）、帧 512、线性内存默认 1 MiB（`memory_size=0`；上限 16 MiB，32 字节对齐）。
+- 每个进程最多 64 个 VM（`MAX_PROCESS_VMS`）；第 65 个 `ci_process_load_package` 返回 `ProcessFull`（`CI_E_RESOURCE`）。每个 VM 默认约 2.1 MiB（VM 记录 + 16384 槽值栈 + 1 MiB 线性内存）。
 - callback trampoline 是进程级固定的 256 个静态槽（不生成可执行内存）：自动 `OP_CREATE_CALLBACK` 槽在 VM 生命周期内保留、跨重复运行复用，VM 销毁/计划重载后退休；显式 `OP_CALLBACK_ACQUIRE` 槽在 `OP_CALLBACK_RELEASE` 后回到可复用集合，未释放的显式槽在 VM 销毁/重载时退休。释放后的旧指针不得再次调用。
 - `CIPL` 计划上限 1024、每计划参数 64、每计划返回 loc 8、每参数 loc 8、名称有效上限 128；FFI arg/stack/ret 缓冲区各 4096 字节（`stack_size` 也受 4096 限制）。
 - 包不携带目标声明；运行时只根据 CIPL ABI id 和当前平台选择引擎，调用方必须保证包与运行时目标匹配。musl 运行时在 load 阶段显式返回 `UnsupportedLibc`，不会回退到 Linux glibc。

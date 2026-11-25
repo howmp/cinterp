@@ -91,7 +91,7 @@ C 宿主。`Error` 携带三个字段：
 
 int main(void) {
     /* package_bytes/package_size: contents of app.cib */
-    ci_vm *vm = ci_vm_create(0);      /* 0 = default 8192-slot value stack */
+    ci_vm *vm = ci_vm_create(0);      /* 0 = default 16384-slot value stack */
     if (!vm) return 1;
 
     if (ci_vm_load_package(vm, package_bytes, package_size) != CI_OK) {
@@ -129,8 +129,8 @@ callback acquire/release 见 [`multi-cib.md`](multi-cib.md)；CLI 只保留单�
 必须覆盖到 `stack_size`（若要传入 `memory_size`，请将其设为 `sizeof(ci_vm_config)`），
 并且 `flags` 必须为零。
 
-- `stack_size` 是以 VM 值槽为单位的上界。`0` 选择默认的 **8192 个槽**，这同时也是
-  最大值；大于 8192 的值会使创建失败（NULL）。它只能降低栈大小，绝不能提高。
+- `stack_size` 是以 VM 值槽为单位的上界。`0` 选择默认的 **16384 个槽**，这同时也是
+  最大值；大于 16384 的值会使创建失败（NULL）。它只能降低栈大小，绝不能提高。
 - `memory_size` 是线性内存大小，单位为字节。`0` 选择默认的 **1 MiB**，最大值是
   **16 MiB**；更大的值会使创建失败。
 
@@ -140,14 +140,14 @@ callback acquire/release 见 [`multi-cib.md`](multi-cib.md)；CLI 只保留单�
 ci_vm_config cfg = {
     .struct_size = sizeof(cfg),
     .flags = 0,
-    .stack_size = 0,           /* 0 = default 8192 slots */
+    .stack_size = 0,           /* 0 = default 16384 slots */
     .memory_size = 256 * 1024  /* 0 = default 1 MiB */
 };
 ci_vm *vm = ci_vm_create_ex(&cfg);
 ```
 
 VM 按实例/包分配其值栈、线性内存、模块缓冲区和 FFI 计划存储。默认 VM 是一个约
-0.9 MiB 的 VM 记录，加上一个 8192 槽的值栈（64 KiB）和 1 MiB 线性内存 —— 总计约
+0.9 MiB 的 VM 记录，加上一个 16384 槽的值栈（128 KiB）和 1 MiB 线性内存 —— 总计约
 2 MiB；原先固定的约 10 MiB 占用（其中包括 6.5 MiB 的计划表）已不复存在。对于小包，
 可以调低 `memory_size`。
 

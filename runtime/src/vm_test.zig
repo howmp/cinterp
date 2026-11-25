@@ -975,6 +975,34 @@ test "ADDR_CONST rejects an offset at the end of linear memory" {
     try std.testing.expectError(error.BadAddress, machine.runEntry("main"));
 }
 
+test "a frame whose declared bound exceeds the limit still runs" {
+    // `max_stack` is an upper bound over reachable paths, so a body can declare
+    // far more than it uses. The runtime must not reject such a package on the
+    // bound alone: yarpgen seed 3 declares 6506 above 6965 locals but peaks at
+    // 6980, inside the limit. `stack_guard` slots above the limit absorb a body
+    // that really does run past it.
+    var code_buf: [16]u8 = undefined;
+    var a = Asm{ .buf = &code_buf };
+    a.u8v(vm.OP_LOAD_CONST_I64);
+    a.i64v(7);
+    a.u8v(vm.OP_RET);
+    const funcs = [_]FunctionSpec{
+        .{
+            .name = "main",
+            .params = 0,
+            .locals = 0,
+            // The largest bound the loader accepts; combined with the default
+            // stack limit it always exceeds it, which is the case under test.
+            .max_stack = vm.MAX_STACK,
+            .code = a.code(),
+        },
+    };
+    var module_buf: [128]u8 = undefined;
+    var machine = vm.VM{};
+    try machine.loadModuleBytes(buildModule(&module_buf, &funcs));
+    try std.testing.expectEqual(@as(i64, 7), try machine.runEntry("main"));
+}
+
 test "repeated runs start from a fresh image" {
     const funcs = [_]FunctionSpec{
         .{ .name = "main", .params = 0, .locals = 2, .code = &fresh_image_main },

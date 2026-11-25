@@ -66,7 +66,10 @@ pub const Limits = struct {
     pub const provider_symbol: usize = 64;
     pub const provider_version: usize = 32;
     pub const module_bytes: usize = 2 * 1024 * 1024;
-    pub const vm_stack_slots: usize = 8192;
+    /// Must match `runtime/src/vm.zig`'s `MAX_STACK`: the runtime rejects a
+    /// frame whose locals exceed it, so compiling past it only produces
+    /// packages that cannot load.
+    pub const vm_stack_slots: usize = 16384;
     pub const vm_memory: usize = 16 * 1024 * 1024;
 };
 
@@ -105,7 +108,7 @@ fn limitMessage(err: LimitError) []const u8 {
         error.ProviderNameTooLong => "provider library name longer than 64 bytes",
         error.ProviderSymbolTooLong => "provider symbol longer than 64 bytes",
         error.ProviderVersionTooLong => "provider version string longer than 32 bytes",
-        error.StackTooDeep => "function local_count exceeds the VM stack limit (8192 slots)",
+        error.StackTooDeep => "function local_count or max_stack exceeds the VM stack limit (16384 slots)",
         error.VmMemoryTooLarge => "static data exceeds the VM maximum linear memory (16 MiB)",
     };
 }

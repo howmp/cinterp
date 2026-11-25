@@ -18,7 +18,7 @@
 - 同一 CIB 可以在其 VM 上通过 `ci_vm_run*` 重复运行，不需要重新加载包。每次运行都是
   **全新镜像**：线性内存清零、值栈/帧重置、`setjmp` 目标和 native target 重新登记，
   `main` 开头的全局安装代码会重新执行（详见第 4 节）。
-- 每个 VM 默认约 2 MiB：约 0.9 MiB 的 VM 记录、8192 槽值栈（64 KiB）和 1 MiB 线性
+- 每个 VM 默认约 2.1 MiB：约 0.9 MiB 的 VM 记录、16384 槽值栈（128 KiB）和 1 MiB 线性
   内存。小包可以通过 `ci_vm_config.memory_size` 调低线性内存。
 - `ci_vm_load_package` 和 `ci_process_load_package` 都会复制包字节，调用方可以在
   成功后释放自己的缓冲区。

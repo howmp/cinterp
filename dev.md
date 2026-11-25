@@ -112,7 +112,7 @@ Windows 目标按需加 `-fms-extensions -fdeclspec`。默认为 `-O2`，并追�
 
 ### 6.2 帧与线性内存
 
-- VM 使用固定槽栈（默认/上限 `MAX_STACK=8192`，`ci_vm_config.stack_size` 只能下调）、帧数 `MAX_FRAMES=512`。栈上界由 CIVM 的每函数 `max_stack` 承载：建立帧时校验一次
+- VM 使用固定槽栈（默认/上限 `MAX_STACK=16384`，`ci_vm_config.stack_size` 只能下调）、帧数 `MAX_FRAMES=512`。栈上界由 CIVM 的每函数 `max_stack` 承载：建立帧时校验一次
   `base + local_count + max_stack`，dispatch 内的 push/pop 不再逐指令检查；Releases 额外在
   `values` 之上保留 64 个 guard 槽吸收越界写，Debug 构建在加载期整体重算 `max_stack` 并拒绝偏小的记录。
 - 线性内存默认 1 MiB，可由 `ci_vm_config.memory_size` 调小/调大，上限 16 MiB；`mem_top` 是 bump pointer，函数返回时回退 alloca 区域。
@@ -346,13 +346,13 @@ const char *ci_version(void);
 - `ci_vm_last_error_code()` 返回同一类别；`ci_vm_last_error()` 只在 Debug 构建返回具体错误名，Release 构建返回空字符串并仅使用状态码；`ci_vm_clear_error()` 清除两者（以及 callback dispatch 错误）。
 - `ci_vm_run`/`ci_vm_run_args` 返回状态而不是 C `main` 返回值；结果用 `ci_vm_result` 读取。另一线程运行中返回 `CI_E_BUSY`，同线程嵌套返回 `CI_E_RUNTIME`。
 - loader 是事务性的；失败不会替换已加载包。loader 和 `ci_vm_load_library` 在 VM 执行期间返回 `CI_E_BUSY`。
-- `ci_vm_config` 的 `struct_size` 兼容旧调用方；`stack_size=0` 使用默认 8192 槽，`memory_size=0` 使用默认 1 MiB（最大 16 MiB）。
+- `ci_vm_config` 的 `struct_size` 兼容旧调用方；`stack_size=0` 使用默认 16384 槽，`memory_size=0` 使用默认 1 MiB（最大 16 MiB）。
 - 每个 VM 单执行上下文；不同 VM 可在不同线程并行。`ci_vm_busy` 查询状态，`ci_vm_destroy` 等待空闲，`ci_vm_destroy_ex(vm, CI_DESTROY_TRY)` 在另一线程运行期间立即返回 `CI_E_BUSY`。
 - `ci_process_*` 是进程级注册表：每个 `ci_process_load_package` 创建独立 VM，返回的句柄是借出的，必须用 `ci_process_unload_package` 释放；busy VM 上的卸载和 `ci_process_destroy` 返回 `CI_E_BUSY`，宿主 join 线程后重试。
 
 ### 10.3 运行时上限
 
-`MAX_FUNCS=512`、`MAX_FRAMES=512`、`MAX_STACK=8192`、`MAX_MODULE=2 MiB`、`MAX_PLANS=1024`、`MAX_ARGS=64`、`MAX_LOCS=8`、`MAX_NAME=128`、`MAX_IMPORTS=512`、`MAX_PROVIDERS=8`；编译期还会拒绝 `local_count > 8192`、`max_stack > 8192` 和 `data_base + const_data > 16 MiB`，避免生成运行时必然 OOM 的包。native target 注册表 256，超出返回 `TooManyNativeTargets`。进程级 `MAX_PROCESS_VMS=64`，超出返回 `ProcessFull`（`CI_E_RESOURCE`）。callback trampoline 池固定 256 个进程级静态槽。
+`MAX_FUNCS=512`、`MAX_FRAMES=512`、`MAX_STACK=16384`、`MAX_MODULE=2 MiB`、`MAX_PLANS=1024`、`MAX_ARGS=64`、`MAX_LOCS=8`、`MAX_NAME=128`、`MAX_IMPORTS=512`、`MAX_PROVIDERS=8`；编译期还会拒绝 `local_count > 16384`、`max_stack > 16384` 和 `data_base + const_data > 16 MiB`，避免生成运行时必然 OOM 的包。native target 注册表 256，超出返回 `TooManyNativeTargets`。进程级 `MAX_PROCESS_VMS=64`，超出返回 `ProcessFull`（`CI_E_RESOURCE`）。callback trampoline 池固定 256 个进程级静态槽。
 
 ## 11. 目录与关键文件
 
