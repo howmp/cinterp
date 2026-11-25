@@ -26,6 +26,13 @@ for source in "$DIR"/*.c; do
         skip=$((skip + 1))
         continue
     fi
+    if [[ -f "$ROOT/tests/manifests/csuite.skip" ]] && \
+        awk -F '\t' -v n="$name" '$1 == n { found = 1 } END { exit(found ? 0 : 1) }' \
+            "$ROOT/tests/manifests/csuite.skip"; then
+        echo "SKIP $name (csuite.skip)"
+        skip=$((skip + 1))
+        continue
+    fi
     cib="$OUT/$name.cib"
     if ! "$COMPILER" compile "$source" -o "$cib" >/dev/null 2>"$OUT/$name.compile.log"; then
         echo "FAIL $name (compile)"
